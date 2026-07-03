@@ -1,0 +1,38 @@
+[
+  {
+    "id": "SLA-001",
+    "name": "Critical Priority Ticket SLA",
+    "priority": "critical",
+    "response_time_hours": 1,
+    "resolution_time_hours": 4,
+    "escalation_path": ["L1 Support", "L2 Support", "Team Lead", "CTO"],
+    "notes": "System outages and security incidents. Requires immediate escalation if not acknowledged within 30 minutes."
+  },
+  {
+    "id": "SLA-002",
+    "name": "High Priority Ticket SLA",
+    "priority": "high",
+    "response_time_hours": 4,
+    "resolution_time_hours": 8,
+    "escalation_path": ["L1 Support", "L2 Support", "Team Lead"],
+    "notes": "Business-impacting issues. Escalate to L2 if unresolved after 4 hours."
+  },
+  {
+    "id": "SLA-003",
+    "name": "Medium Priority Ticket SLA",
+    "priority": "medium",
+    "response_time_hours": 8,
+    "resolution_time_hours": 24,
+    "escalation_path": ["L1 Support", "L2 Support"],
+    "notes": "Standard service requests. No weekend escalation required."
+  },
+  {
+    "id": "SLA-004",
+    "name": "Low Priority Ticket SLA",
+    "priority": "low",
+    "response_time_hours": 24,
+    "resolution_time_hours": 72,
+    "escalation_path": ["L1 Support"],
+    "notes": "Minor issues and general enquiries. Batch processing acceptable."
+  }
+]

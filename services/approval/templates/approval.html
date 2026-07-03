@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AKEA — Action Approval</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0a0c12;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+    }
+
+    .card {
+      background: #13151f;
+      border: 1px solid #1e2235;
+      border-radius: 14px;
+      max-width: 660px;
+      width: 100%;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+
+    /* ── Header ── */
+    .header {
+      background: linear-gradient(135deg, #6d28d9 0%, #4338ca 100%);
+      padding: 1.75rem 2rem 1.5rem;
+      position: relative;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      color: #fde68a;
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 0.28rem 0.65rem;
+      border-radius: 5px;
+      margin-bottom: 0.85rem;
+    }
+
+    .header h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.3rem;
+    }
+
+    .header p {
+      font-size: 0.84rem;
+      color: rgba(255, 255, 255, 0.65);
+    }
+
+    /* ── Timer bar ── */
+    .timer-bar {
+      height: 3px;
+      background: rgba(255, 255, 255, 0.15);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .timer-fill {
+      height: 100%;
+      width: 100%;
+      background: linear-gradient(90deg, #34d399, #fbbf24);
+      transform-origin: left;
+      animation: drain linear forwards;
+      animation-duration: var(--timeout-ms, 900000ms);
+    }
+
+    @keyframes drain { to { transform: scaleX(0); } }
+
+    /* ── Body ── */
+    .body { padding: 2rem; }
+
+    .field { margin-bottom: 1.35rem; }
+
+    .field-label {
+      display: block;
+      font-size: 0.67rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 0.4rem;
+    }
+
+    .field-value {
+      background: #0a0c12;
+      border: 1px solid #1e2235;
+      border-radius: 7px;
+      padding: 0.65rem 0.9rem;
+      font-size: 0.88rem;
+      color: #e2e8f0;
+      line-height: 1.55;
+    }
+
+    .field-value.mono {
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+      font-size: 0.79rem;
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+    }
+
+    .field-value.mono::-webkit-scrollbar { width: 4px; }
+    .field-value.mono::-webkit-scrollbar-thumb { background: #2d3148; border-radius: 4px; }
+
+    /* ── Risk banner ── */
+    .risk-banner {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.8rem;
+      background: rgba(245, 158, 11, 0.07);
+      border: 1px solid rgba(245, 158, 11, 0.25);
+      border-radius: 7px;
+      padding: 0.9rem 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .risk-icon { font-size: 1.1rem; flex-shrink: 0; padding-top: 1px; }
+
+    .risk-text {
+      font-size: 0.81rem;
+      color: #fcd34d;
+      line-height: 1.55;
+    }
+
+    .risk-text strong { color: #fef3c7; }
+
+    /* ── Actions ── */
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
+
+    .action-form { display: contents; }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 0.8rem 1rem;
+      border: none;
+      border-radius: 9px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s ease, transform 0.1s ease;
+      letter-spacing: 0.01em;
+    }
+
+    .btn:hover  { opacity: 0.88; transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+
+    .btn-approve {
+      background: linear-gradient(135deg, #059669 0%, #10b981 100%);
+      color: #fff;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+    }
+
+    .btn-reject {
+      background: transparent;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      color: #f87171;
+    }
+
+    .btn-reject:hover { background: rgba(239, 68, 68, 0.06); }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 1.5rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid #1e2235;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .approval-id {
+      font-family: monospace;
+      font-size: 0.68rem;
+      color: #334155;
+    }
+
+    .timeout-label {
+      font-size: 0.72rem;
+      color: #475569;
+    }
+
+    #timer-display {
+      color: #fbbf24;
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <!-- Header -->
+    <div class="header">
+      <div class="badge">&#9888; WRITE Action — Human Approval Required</div>
+      <h1>Review Pending Action</h1>
+      <p>An autonomous agent is requesting permission to write a file. Decide below.</p>
+    </div>
+
+    <!-- Countdown bar -->
+    <div class="timer-bar">
+      <div class="timer-fill" style="--timeout-ms: {{ (action.get('timeout_seconds', 900) * 1000) }}ms;"></div>
+    </div>
+
+    <!-- Body -->
+    <div class="body">
+
+      <div class="field">
+        <span class="field-label">Action requested</span>
+        <div class="field-value">{{ action.get("action_name", "unknown") }}</div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">Agent reasoning</span>
+        <div class="field-value">{{ action.get("reasoning", "No reasoning provided.") }}</div>
+      </div>
+
+      <div class="field">
+        <span class="field-label">Payload (what will be written)</span>
+        <div class="field-value mono">{{ action.get("payload", {}) | tojson(indent=2) }}</div>
+      </div>
+
+      <!-- Risk banner -->
+      <div class="risk-banner">
+        <span class="risk-icon">&#9888;&#65039;</span>
+        <p class="risk-text">
+          This action will <strong>write a .json file to disk</strong>.
+          A timestamped backup is created automatically if the file already exists.
+          <strong>Only approve if the payload above matches what you expect.</strong>
+        </p>
+      </div>
+
+      <!-- Approve / Reject buttons -->
+      <div class="actions">
+        <form method="POST" action="/approve/{{ approval_id }}/decision">
+          <input type="hidden" name="decision" value="approve" />
+          <button type="submit" class="btn btn-approve">&#10003;&ensp;Approve</button>
+        </form>
+        <form method="POST" action="/approve/{{ approval_id }}/decision">
+          <input type="hidden" name="decision" value="reject" />
+          <button type="submit" class="btn btn-reject">&#10005;&ensp;Reject</button>
+        </form>
+      </div>
+
+      <!-- Footer -->
+      <div class="footer">
+        <span class="approval-id">id: {{ approval_id }}</span>
+        <span class="timeout-label">Expires in <span id="timer-display">--:--</span></span>
+      </div>
+
+    </div><!-- /body -->
+  </div><!-- /card -->
+
+  <script>
+    // Client-side countdown from expires_at
+    const expiresAt = new Date("{{ action.get('expires_at', '') }}");
+    const display   = document.getElementById("timer-display");
+
+    function tick() {
+      const remaining = Math.max(0, expiresAt - Date.now());
+      const m = Math.floor(remaining / 60000);
+      const s = Math.floor((remaining % 60000) / 1000);
+      display.textContent = `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;
+      if (remaining <= 0) {
+        display.textContent = "EXPIRED";
+        display.style.color = "#ef4444";
+        clearInterval(timer);
+      }
+    }
+
+    const timer = setInterval(tick, 1000);
+    tick();
+  </script>
+</body>
+</html>
