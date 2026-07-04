@@ -16,7 +16,7 @@ import structlog
 
 from shared.config import get_settings
 from shared.models.knowledge import KnowledgeSource, RetrievalRequest
-from ..graph.state import GraphState
+from services.orchestrator.graph.state import GraphState
 
 log = structlog.get_logger(__name__)
 settings = get_settings()

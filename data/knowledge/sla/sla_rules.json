@@ -1,38 +1,38 @@
 [
   {
     "id": "SLA-001",
-    "name": "Critical Priority Ticket SLA",
+    "name": "Critical Severity Incident/Finding SLA",
     "priority": "critical",
     "response_time_hours": 1,
     "resolution_time_hours": 4,
-    "escalation_path": ["L1 Support", "L2 Support", "Team Lead", "CTO"],
-    "notes": "System outages and security incidents. Requires immediate escalation if not acknowledged within 30 minutes."
+    "escalation_path": ["Tier 1 Associate", "Tier 2 Senior", "Tier 3 Principal Architect", "Tier 4 CTO"],
+    "notes": "Applicable to active system compromise, data breaches, or verified critical vulnerabilities (RCE, SQLi, Auth Bypass) in customer environments."
   },
   {
     "id": "SLA-002",
-    "name": "High Priority Ticket SLA",
+    "name": "High Severity Security Finding SLA",
     "priority": "high",
     "response_time_hours": 4,
     "resolution_time_hours": 8,
-    "escalation_path": ["L1 Support", "L2 Support", "Team Lead"],
-    "notes": "Business-impacting issues. Escalate to L2 if unresolved after 4 hours."
+    "escalation_path": ["Tier 1 Associate", "Tier 2 Senior", "Tier 3 Principal Architect"],
+    "notes": "Applicable to severe security vulnerabilities like privilege escalation, IDOR, and high-impact authentication weaknesses. Requires L2/Tier 2 attention within 4 hours."
   },
   {
     "id": "SLA-003",
-    "name": "Medium Priority Ticket SLA",
+    "name": "Medium Severity Review/Query SLA",
     "priority": "medium",
     "response_time_hours": 8,
     "resolution_time_hours": 24,
-    "escalation_path": ["L1 Support", "L2 Support"],
-    "notes": "Standard service requests. No weekend escalation required."
+    "escalation_path": ["Tier 1 Associate", "Tier 2 Senior"],
+    "notes": "Applicable to draft pentest report reviews, compliance gap analysis queries, and medium-severity findings (CSRF, outdated software versions)."
   },
   {
     "id": "SLA-004",
-    "name": "Low Priority Ticket SLA",
+    "name": "Low Severity General Support SLA",
     "priority": "low",
     "response_time_hours": 24,
     "resolution_time_hours": 72,
-    "escalation_path": ["L1 Support"],
-    "notes": "Minor issues and general enquiries. Batch processing acceptable."
+    "escalation_path": ["Tier 1 Associate"],
+    "notes": "Applicable to general inquiries, quote requests, scoping questionnaires, and low-severity findings (missing security headers, TLS configuration recommendations)."
   }
 ]

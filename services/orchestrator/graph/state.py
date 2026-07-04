@@ -36,6 +36,7 @@ class GraphState(TypedDict, total=False):
     selected_action: str | None   # action name from registry, or "respond_only"
     action_payload:  dict[str, Any] | None
     risk_level:      str | None   # "SAFE" | "CRITICAL"
+    evidence:        str | None   # verbatim citation from knowledge base
 
     # ── HITL ──────────────────────────────────────────────────────────────────
     approval_id:     str | None

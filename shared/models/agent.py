@@ -22,6 +22,7 @@ class AgentState(TypedDict, total=False):
     session_id: str
     user_id: str
     user_message: str
+    trace_id: str | None
 
     # ── Conversation history (short-term memory) ──────────────────────────────
     messages: list[dict[str, str]]          # [{role, content}, ...]
@@ -63,6 +64,7 @@ class QueryRequest(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=64)
     message: str = Field(..., min_length=1, max_length=4096)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    trace_id: str | None = Field(default=None, description="Unique request trace ID for distributed tracing")
 
 
 class QueryResponse(BaseModel):
@@ -74,3 +76,5 @@ class QueryResponse(BaseModel):
     action_result: Any | None = None
     sources: list[str] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    trace_id: str | None = Field(default=None, description="Unique request trace ID for distributed tracing")
+

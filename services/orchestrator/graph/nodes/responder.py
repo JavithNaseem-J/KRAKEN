@@ -16,21 +16,20 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 import structlog
 
-from ..graph.state import GraphState
-from ..llm import get_llm
+from services.orchestrator.graph.state import GraphState
+from services.orchestrator.llm import get_llm
 
 log = structlog.get_logger(__name__)
 
-_SYSTEM_PROMPT = """You are a helpful IT helpdesk agent.
+_SYSTEM_PROMPT = """You are a professional security operations assistant for Xiarch security consultancy.
 
-Compose a clear, friendly response to the user based on:
-1. What knowledge was found and analysed.
-2. What action was taken (if any) and its result.
-3. Whether human approval was required and what the outcome was.
+Compose a clear, structured response to the user based on:
+1. What security policies, pentesting rules, or ticket details were analyzed.
+2. What action was taken (e.g., auto_respond, escalate, request_info, close) and its results.
+3. The specific evidence and facts from the knowledge base that led to the action or decision. You MUST explicitly list the cited evidence/facts in a dedicated section titled "EVIDENCE CITED:".
+4. Whether human approval was required and the approval status.
 
-Keep the response concise and professional. Explain what you did and why.
-If an action was rejected or cancelled, explain that and offer alternatives.
-Do not mention internal system details (node names, session IDs, etc.).
+Make sure to be concise, professional, and clear. Under a separate section "EVIDENCE CITED:", point out the exact facts from the SLA guidelines, policy files, or ticketing system that directly justified this triage decision.
 """
 
 
@@ -44,16 +43,20 @@ def responder_node(state: GraphState) -> dict:
 
     user_message     = state.get("user_message", "")
     reasoning        = state.get("reasoning", "")
-    selected_action  = state.get("selected_action", "respond_only")
+    selected_action  = state.get("selected_action", "auto_respond")
     action_result    = state.get("action_result")
     approval_status  = state.get("approval_status")
+    evidence         = state.get("evidence")
     error            = state.get("error")
 
     # Build context for the LLM
     context_parts = [f"User request: {user_message}", f"\nReasoning:\n{reasoning}"]
 
-    if selected_action and selected_action != "respond_only":
-        context_parts.append(f"\nAction taken: {selected_action}")
+    if evidence:
+        context_parts.append(f"\nEvidence found in knowledge base: {evidence}")
+
+    if selected_action:
+        context_parts.append(f"\nAction selected: {selected_action}")
         if approval_status:
             context_parts.append(f"Approval status: {approval_status}")
         if action_result:
@@ -79,7 +82,7 @@ def responder_node(state: GraphState) -> dict:
         )
 
     # Build action explanation (used in audit log)
-    explanation = f"Action '{selected_action}' was selected based on the reasoning above."
+    explanation = f"Action '{selected_action}' was selected. Evidence: {evidence}."
     if approval_status:
         explanation += f" Human approval status: {approval_status}."
 
@@ -90,3 +93,4 @@ def responder_node(state: GraphState) -> dict:
         "action_explanation": explanation,
         "messages": [{"role": "assistant", "content": final_answer}],
     }
+

@@ -25,6 +25,8 @@ def get_llm(temperature: float = 0.0) -> ChatOpenAI:
     Works with Groq, NVIDIA NIM, or any OpenAI-compatible endpoint.
     """
     s = get_settings()
+    if not s.llm_api_key or s.llm_api_key.strip() in ("", "your_api_key_here"):
+        raise ValueError("llm_api_key must be configured in environment variables to call the LLM service.")
     return ChatOpenAI(
         model=s.llm_model,
         base_url=s.llm_base_url,
@@ -33,6 +35,7 @@ def get_llm(temperature: float = 0.0) -> ChatOpenAI:
         max_tokens=s.llm_max_tokens,
         timeout=s.llm_timeout_seconds,
     )
+
 
 
 def get_structured_llm(schema: type) -> object:

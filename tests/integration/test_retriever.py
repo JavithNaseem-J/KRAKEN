@@ -6,15 +6,17 @@ from __future__ import annotations
 
 import pytest
 import chromadb
+from chromadb import EmbeddingFunction, Documents, Embeddings
 
 from shared.models.knowledge import KnowledgeSource, RetrievalRequest
 from services.knowledge.retriever import KnowledgeRetriever, _source_to_collection_name
 
 
-class FakeEmbedder:
+class FakeEmbedder(EmbeddingFunction[Documents]):
     """Returns a fixed 3-dim vector — avoids loading sentence-transformers in tests."""
-    def __call__(self, input):  # noqa: A002
+    def __call__(self, input: Documents) -> Embeddings:  # noqa: A002
         return [[0.1, 0.2, 0.3]] * len(input)
+
 
 
 @pytest.fixture

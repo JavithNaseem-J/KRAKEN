@@ -15,19 +15,19 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 import structlog
 
-from ..graph.state import GraphState
-from ..llm import get_llm
+from services.orchestrator.graph.state import GraphState
+from services.orchestrator.llm import get_llm
 
 log = structlog.get_logger(__name__)
 
-_SYSTEM_PROMPT = """You are a reasoning agent for an internal IT helpdesk system.
+_SYSTEM_PROMPT = """You are a security reasoning analyst for Xiarch, a cybersecurity consultancy.
 
 You will receive a user's request and a set of retrieved knowledge chunks.
 Your task is to analyse the chunks and produce clear, structured reasoning.
 
 Structure your response as:
 RELEVANT INFORMATION:
-(bullet points of what the chunks tell you)
+(bullet points of what the chunks tell you, citing specific SLA rules, policy lines, pentesting rules, or ticket status)
 
 GAPS OR CONFLICTS:
 (note anything missing or contradictory — write "None" if all is clear)

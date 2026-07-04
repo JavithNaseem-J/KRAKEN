@@ -20,7 +20,7 @@ log = structlog.get_logger(__name__)
 CHUNK_SIZE    = 800   # characters — balances context vs. precision
 CHUNK_OVERLAP = 100   # characters — preserves sentence continuity across boundaries
 
-FAQ_DIR = Path(__file__).resolve().parents[4] / "data" / "knowledge" / "faq"
+FAQ_DIR = Path(__file__).resolve().parents[3] / "data" / "knowledge" / "faq"
 
 
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:

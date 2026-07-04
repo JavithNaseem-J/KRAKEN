@@ -1,69 +1,42 @@
-# IT Support Policy and Frequently Asked Questions
+# Xiarch Security Consultancy — Policy and FAQ
 
-## 1. Ticket Submission Policy
+## 1. Scope of Services
+Xiarch is a premier cybersecurity consultancy specializing in:
+- **Penetration Testing**: Web Applications, Mobile Apps (iOS/Android), Cloud Infrastructure (AWS/Azure/GCP), Network Pentesting, and Source Code Reviews.
+- **Compliance Audits**: ISO 27001 certification prep, SOC 2 Type I/II readiness, PCI-DSS compliance, and HIPAA reviews.
+- **Vulnerability Assessments**: Automated scanning, manual verification, and configuration auditing.
 
-All support requests must be submitted through the internal ticketing system.
-Walk-up requests are not accepted for tracking purposes.
-Users must include a clear description, affected system, and business impact.
+## 2. Rules of Engagement for Pentesting
+- Testing can only commence once a signed Authorization Letter and Rules of Engagement (RoE) document are in place.
+- Production testing must occur within agreed maintenance windows, typically between 10:00 PM and 04:00 AM local time, to minimize business interruption.
+- Exploitation of Critical vulnerabilities (e.g., Remote Code Execution, SQL Injection, Authentication Bypass) must be halted immediately once confirmed. The findings must be reported to the client's designated security contact within 1 hour.
 
-## 2. Priority Levels
+## 3. SLA and Response Times
+Xiarch categorizes client inquiries and reported security findings into four priority levels:
+- **Critical Severity**: Active data breaches, Remote Code Execution (RCE) findings, or active system compromise. 
+  - **SLA Commitment**: Response within 1 hour, mitigation plan within 4 hours.
+  - **Escalation**: Immediate escalation to Tier 3 (Principal Security Architect) and notification to Technical Director.
+- **High Severity**: SQLi, IDOR, Privilege Escalation, and authentication flaws in scope.
+  - **SLA Commitment**: Response within 4 hours, mitigation advice within 8 hours.
+  - **Escalation**: Escalate to Tier 2 (Senior Security Consultant) if unresolved in 4 hours.
+- **Medium Severity**: Information disclosure, CSRF, and out-of-date service versions.
+  - **SLA Commitment**: Response within 8 hours, resolution advice within 24 hours.
+- **Low Severity**: SSL/TLS configuration issues, missing security headers, and best-practice recommendations.
+  - **SLA Commitment**: Response within 24 hours, resolution within 72 hours.
 
-| Level    | Definition                                     | Examples                        |
-|----------|------------------------------------------------|---------------------------------|
-| Critical | System-wide outage affecting all users         | VPN down, email server offline  |
-| High     | Major function unavailable for one department  | Shared drive inaccessible       |
-| Medium   | Individual user productivity impacted          | Outlook sync broken, slow PC    |
-| Low      | Minor inconvenience, workaround available      | Printer offline, USB not found  |
+## 4. Support and Escalation Tiers
+- **Tier 1 (Associate Security Consultant)**: Handles initial ticket triaging, basic vulnerability questions, and simple compliance checklist lookup.
+- **Tier 2 (Senior Security Consultant)**: Handles complex validation, manual exploit verification, and draft report reviews.
+- **Tier 3 (Principal Security Architect / Technical Director)**: Handles critical findings, custom exploit chain reviews, and high-stakes client escalation.
+- **Tier 4 (CTO)**: Oversees critical SLA breaches, legal/compliance blockages, and emergency incident response coordination.
 
-## 3. Response and Resolution Commitments
+## 5. Report Deliverables
+- **Draft Pentest Report**: Delivered within 5 business days of testing completion.
+- **Final Pentest Report**: Delivered within 2 business days of receiving client feedback on the draft.
+- **Re-testing Policy**: One complimentary re-testing cycle is provided within 30 days of the draft report delivery.
 
-- Critical: Response within 1 hour, resolution within 4 hours.
-- High: Response within 4 hours, resolution within 8 hours (business hours).
-- Medium: Response within 8 hours, resolution within 24 hours.
-- Low: Response within 24 hours, resolution within 72 hours.
-
-## 4. Escalation Policy
-
-If a ticket is not resolved within its SLA window, it is automatically escalated
-to the next support tier. Users will be notified at each escalation step.
-
-Escalation tiers:
-  L1 Support → L2 Support → Team Lead → Manager (Critical only)
-
-## 5. Ticket Lifecycle
-
-1. Submitted — ticket received and assigned a priority
-2. In Progress — engineer is actively working on the issue
-3. Pending User — waiting for user to provide additional information
-4. Resolved — fix confirmed, ticket closed after 48-hour verification window
-5. Closed — permanently closed; can be reopened within 7 days
-
-## 6. Remote Work Support
-
-VPN issues are classified as High or Critical depending on scope.
-Engineers should first verify the user's OS, VPN client version, and network adapter settings.
-Standard troubleshooting steps are documented in the VPN Runbook (TK-VPN-001).
-
-## 7. Hardware Replacement
-
-Hardware replacement requests require manager approval.
-Processing time is 5-7 business days after approval.
-Loaner devices are available for Critical and High priority hardware failures.
-
-## 8. Software Installation
-
-All software must be approved by IT Security before installation.
-Users cannot self-install software on company devices.
-Submit a Medium-priority ticket with the software name, vendor, and business justification.
-
-## 9. Data Loss or Corruption
-
-Report immediately as a Critical ticket.
-Do not attempt self-recovery — this may overwrite backup states.
-IT will engage the Data Recovery team within 1 hour.
-
-## 10. Out-of-Hours Support
-
-Critical issues are supported 24/7.
-High, Medium, and Low priority tickets are handled during business hours (9am–6pm, Mon–Fri).
-On-call engineer contact is available in the internal directory for Critical issues only.
+## 6. Compliance Auditing Guidelines
+- **ISO 27001 Audit**: Requires evidence review of all Annex A controls. No audits will proceed without a signed Scope Statement.
+- **SOC 2 Type II**: Requires a minimum 3-month (preferably 6-month) observation window of operational logs and policy adherence evidence.
+- **HIPAA Compliance**: Requires a signed Business Associate Agreement (BAA) prior to reviewing any systems containing Protected Health Information (PHI).
+- **PCI-DSS Audits**: Conducted by a Qualified Security Assessor (QSA). Full Self-Assessment Questionnaire (SAQ) support is available.

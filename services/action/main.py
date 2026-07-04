@@ -29,8 +29,12 @@ from shared.exceptions import (
 )
 from shared.models.action import ActionRequest, ActionResult, ActionType
 from .registry import get_action
-from .handlers.read_handler import read_ticket, read_ticket_list
-from .handlers.write_handler import write_json_file
+from .handlers.ticket_handler import (
+    execute_auto_respond,
+    execute_escalate,
+    execute_request_info,
+    execute_close,
+)
 from .audit_client import fire_audit_log
 
 log = structlog.get_logger(__name__)
@@ -148,30 +152,42 @@ def _dispatch(action_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     Route action name to the correct handler function.
     Raises ActionExecutionError on missing required parameters.
     """
-    if action_name == "read_ticket":
-        ticket_id = payload.get("ticket_id")
+    evidence = payload.get("evidence")
+    if not evidence:
+        raise ActionExecutionError(f"Action '{action_name}' requires 'evidence' parameter.")
+
+    ticket_id = payload.get("ticket_id")
+
+    if action_name == "auto_respond":
+        response_text = payload.get("response_text")
+        if not response_text:
+            raise ActionExecutionError("auto_respond requires 'response_text' in payload.")
+        return execute_auto_respond(ticket_id, response_text, evidence)
+
+    elif action_name == "escalate":
+        reason = payload.get("reason")
         if not ticket_id:
-            raise ActionExecutionError("read_ticket requires 'ticket_id' in payload.")
-        ticket = read_ticket(str(ticket_id))
-        return {"ticket": ticket}
+            raise ActionExecutionError("escalate requires 'ticket_id' in payload.")
+        if not reason:
+            raise ActionExecutionError("escalate requires 'reason' in payload.")
+        return execute_escalate(ticket_id, reason, evidence)
 
-    elif action_name == "read_ticket_list":
-        tickets = read_ticket_list(
-            status=payload.get("status"),
-            priority=payload.get("priority"),
-            category=payload.get("category"),
-            limit=int(payload.get("limit", 10)),
-        )
-        return {"tickets": tickets, "count": len(tickets)}
+    elif action_name == "request_info":
+        info_requested = payload.get("info_requested")
+        if not ticket_id:
+            raise ActionExecutionError("request_info requires 'ticket_id' in payload.")
+        if not info_requested:
+            raise ActionExecutionError("request_info requires 'info_requested' in payload.")
+        return execute_request_info(ticket_id, info_requested, evidence)
 
-    elif action_name == "write_json_file":
-        target_path = payload.get("target_path")
-        content     = payload.get("content")
-        if not target_path:
-            raise ActionExecutionError("write_json_file requires 'target_path' in payload.")
-        if not isinstance(content, dict):
-            raise ActionExecutionError("write_json_file requires 'content' to be a JSON object.")
-        return write_json_file(str(target_path), content)
+    elif action_name == "close":
+        reason = payload.get("reason")
+        if not ticket_id:
+            raise ActionExecutionError("close requires 'ticket_id' in payload.")
+        if not reason:
+            raise ActionExecutionError("close requires 'reason' in payload.")
+        return execute_close(ticket_id, reason, evidence)
 
     else:
         raise ActionExecutionError(f"No handler registered for action '{action_name}'.")
+

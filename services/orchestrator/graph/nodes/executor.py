@@ -20,7 +20,7 @@ from langgraph.types import interrupt
 
 from shared.config import get_settings
 from shared.models.action import ActionRequest
-from ..graph.state import GraphState
+from services.orchestrator.graph.state import GraphState
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -28,7 +28,7 @@ settings = get_settings()
 
 def executor_node(state: GraphState) -> dict:
     session_id      = state.get("session_id", "")
-    action_name     = state.get("selected_action", "respond_only")
+    action_name     = state.get("selected_action", "auto_respond")
     action_payload  = state.get("action_payload") or {}
     risk_level      = state.get("risk_level", "SAFE")
     reasoning       = state.get("reasoning", "")

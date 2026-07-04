@@ -11,39 +11,56 @@ from __future__ import annotations
 from shared.models.action import ActionDefinition, ActionType, RiskLevel
 
 REGISTRY: dict[str, ActionDefinition] = {
-    "read_ticket": ActionDefinition(
-        name="read_ticket",
-        description="Read a single ticket record by ID from the ticket database.",
-        action_type=ActionType.READ,
-        risk_level=RiskLevel.SAFE,
-        requires_hitl=False,
-        parameter_schema={"ticket_id": "str"},
-    ),
-    "read_ticket_list": ActionDefinition(
-        name="read_ticket_list",
-        description="List tickets filtered by status, priority, or category.",
+    "auto_respond": ActionDefinition(
+        name="auto_respond",
+        description="Resolve a ticket automatically or answer a general query by sending a drafted response backed by specific knowledge chunks. Safe to execute without human approval.",
         action_type=ActionType.READ,
         risk_level=RiskLevel.SAFE,
         requires_hitl=False,
         parameter_schema={
-            "status": "str | None",
-            "priority": "str | None",
-            "category": "str | None",
-            "limit": "int",
+            "ticket_id": "str | None",
+            "response_text": "str",
+            "evidence": "str"
         },
     ),
-    "write_json_file": ActionDefinition(
-        name="write_json_file",
-        description=(
-            "Write a JSON file to the sandboxed workspace directory. "
-            "Path is validated and a backup is created before writing."
-        ),
+    "escalate": ActionDefinition(
+        name="escalate",
+        description="Escalate a ticket to senior security consultants or architects due to complexity, critical severity, or customer SLA urgency.",
         action_type=ActionType.WRITE,
         risk_level=RiskLevel.CRITICAL,
-        requires_hitl=True,   # Hardcoded True — never set to False
-        parameter_schema={"target_path": "str", "content": "dict"},
+        requires_hitl=True,
+        parameter_schema={
+            "ticket_id": "str",
+            "reason": "str",
+            "evidence": "str"
+        },
+    ),
+    "request_info": ActionDefinition(
+        name="request_info",
+        description="Request additional technical details or configuration parameters from the client before continuing testing or auditing.",
+        action_type=ActionType.WRITE,
+        risk_level=RiskLevel.CRITICAL,
+        requires_hitl=True,
+        parameter_schema={
+            "ticket_id": "str",
+            "info_requested": "str",
+            "evidence": "str"
+        },
+    ),
+    "close": ActionDefinition(
+        name="close",
+        description="Permanently close a ticket after the customer confirms the security vulnerability is resolved and fix is verified.",
+        action_type=ActionType.WRITE,
+        risk_level=RiskLevel.CRITICAL,
+        requires_hitl=True,
+        parameter_schema={
+            "ticket_id": "str",
+            "reason": "str",
+            "evidence": "str"
+        },
     ),
 }
+
 
 
 def get_action(name: str) -> ActionDefinition:

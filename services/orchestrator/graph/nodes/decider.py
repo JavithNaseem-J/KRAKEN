@@ -20,48 +20,52 @@ from pydantic import BaseModel, Field
 import structlog
 
 from shared.config import get_settings
-from ..graph.state import GraphState
-from ..llm import get_llm
+from services.orchestrator.graph.state import GraphState
+from services.orchestrator.llm import get_llm
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
 
 # ── Action registry snapshot (imported here to avoid circular import) ─────────
 _AVAILABLE_ACTIONS = """
-respond_only        — Answer the user question with no file changes. Risk: SAFE.
-read_ticket         — Read a single ticket by ID. Parameters: {ticket_id: str}. Risk: SAFE.
-read_ticket_list    — List tickets by filter. Parameters: {status?, priority?, category?, limit?}. Risk: SAFE.
-write_json_file     — Write data to a .json file in the workspace. Parameters: {target_path: str, content: dict}. Risk: CRITICAL — requires human approval.
+auto_respond        — Resolve a ticket automatically or answer a general query by sending a drafted response backed by specific knowledge chunks. Parameters: {ticket_id: str | None, response_text: str, evidence: str}. Risk: SAFE.
+escalate            — Escalate a ticket to senior security consultants or architects due to complexity, critical severity, or customer SLA urgency. Parameters: {ticket_id: str, reason: str, evidence: str}. Risk: CRITICAL — requires human approval.
+request_info        — Request additional technical details or configuration parameters from the client before continuing testing or auditing. Parameters: {ticket_id: str, info_requested: str, evidence: str}. Risk: CRITICAL — requires human approval.
+close               — Permanently close a ticket after the customer confirms the security vulnerability is resolved and fix is verified. Parameters: {ticket_id: str, reason: str, evidence: str}. Risk: CRITICAL — requires human approval.
 """
 
 
 class DecisionOutput(BaseModel):
     selected_action: str = Field(
-        description="Exact action name from the available list. Use 'respond_only' if no action is needed."
+        description="Exact action name from the available list."
     )
     action_payload: dict = Field(
         default_factory=dict,
-        description="Parameters for the action. Empty dict for respond_only.",
+        description="Parameters for the action. You must populate the parameters matching the schema of the selected action, including 'evidence'."
+    )
+    evidence: str = Field(
+        description="Verbatim citation or specific facts from the retrieved knowledge base that led to this decision (e.g. specific SLA guidelines, security policies, audit details, or ticket status)."
     )
     explanation: str = Field(
-        description="One sentence explaining why this action was selected."
+        description="A detailed explanation justifying why this action was chosen based on the retrieved evidence. Do not summarize; show your step-by-step reasoning."
     )
 
 
-_SYSTEM_PROMPT = f"""You are a decision agent for an internal IT helpdesk system.
+_SYSTEM_PROMPT = f"""You are the lead security triage decider for Xiarch, a cybersecurity consultancy.
 
-Based on the user's request and the analysis provided, select ONE action to take.
+Based on the user request, the ticket details, and the retrieved knowledge base chunks, choose the most appropriate action and provide the specific facts (evidence) and explanation justifying your choice.
 
 Available actions:
 {_AVAILABLE_ACTIONS}
 
 Rules:
-- If the user is asking a question or seeking information → respond_only.
-- If the user wants to update a ticket record → write_json_file with the updated data.
-- If the user wants to look up a specific ticket → read_ticket.
-- If the user wants to list tickets → read_ticket_list.
-- Never invent actions not in the list above.
-- For write_json_file, target_path must be a filename ending in .json (no directory traversal).
+1. CITATION REQUIREMENT: You MUST locate and extract specific, verbatim facts from the retrieved knowledge chunks (e.g., SLA response times, pentesting rules of engagement, scoping requirements) to justify your choice. Put this in the 'evidence' field.
+2. ACTION SELECTION CRITERIA:
+   - Use 'auto_respond' when the inquiry is a general compliance, SLA, policy, or pentesting FAQ, or when a ticket can be resolved automatically using the retrieved facts.
+   - Use 'escalate' if a ticket contains a critical vulnerability (e.g., RCE, SQLi, Auth Bypass), represents an active security incident, requires Tier 2/Senior/L3 review, or has breached SLA.
+   - Use 'request_info' if the ticket details are insufficient (e.g., missing signed Rules of Engagement (RoE), missing IP ranges, missing configuration files).
+   - Use 'close' if the client confirms that a security vulnerability is mitigated and the Associate/Consultant has verified the fix.
+3. INJECT EVIDENCE IN PAYLOAD: You must always inject the extracted evidence into the 'evidence' key of the 'action_payload' dictionary.
 """
 
 
@@ -91,6 +95,11 @@ def decider_node(state: GraphState) -> dict:
 
         action_name = decision.selected_action.strip()
 
+        # Inject evidence and explanation into the payload if not set
+        payload = decision.action_payload or {}
+        payload["evidence"] = decision.evidence
+        payload["explanation"] = decision.explanation
+
         # ── Risk level from registry — LLM's word is not trusted ──────────────
         risk_level = _resolve_risk_level(action_name)
         requires_hitl = risk_level == "CRITICAL"
@@ -105,16 +114,18 @@ def decider_node(state: GraphState) -> dict:
 
         return {
             "selected_action": action_name,
-            "action_payload":  decision.action_payload,
+            "action_payload":  payload,
             "risk_level":      risk_level,
+            "evidence":        decision.evidence,
         }
 
     except Exception as exc:
         log.error("decider.error", session_id=session_id, error=str(exc))
         return {
-            "selected_action": "respond_only",
-            "action_payload":  {},
+            "selected_action": "auto_respond",
+            "action_payload":  {"response_text": "Error encountered during decision process.", "evidence": "System fallback"},
             "risk_level":      "SAFE",
+            "evidence":        "System fallback due to error.",
             "error":           str(exc),
         }
 
@@ -125,13 +136,14 @@ def _resolve_risk_level(action_name: str) -> str:
     Unknown actions default to CRITICAL as a fail-safe.
     """
     _RISK_MAP: dict[str, str] = {
-        "respond_only":     "SAFE",
-        "read_ticket":      "SAFE",
-        "read_ticket_list": "SAFE",
-        "write_json_file":  "CRITICAL",
+        "auto_respond":     "SAFE",
+        "escalate":         "CRITICAL",
+        "request_info":     "CRITICAL",
+        "close":            "CRITICAL",
     }
     level = _RISK_MAP.get(action_name)
     if level is None:
         log.warning("decider.unknown_action", action=action_name)
         return "CRITICAL"   # Unknown = treat as dangerous
     return level
+

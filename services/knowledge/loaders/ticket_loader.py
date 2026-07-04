@@ -20,7 +20,7 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-TICKETS_DIR = Path(__file__).resolve().parents[4] / "data" / "knowledge" / "tickets"
+TICKETS_DIR = Path(__file__).resolve().parents[3] / "data" / "knowledge" / "tickets"
 
 
 def _ticket_to_text(ticket: dict[str, Any]) -> str:

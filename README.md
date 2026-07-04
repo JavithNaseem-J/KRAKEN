@@ -20,50 +20,138 @@ AKEA is a 7-service microservice system built for internal IT helpdesk teams. Gi
 
 ## Architecture
 
-```
-External Request
-       │
-       ▼
-┌──────────────┐   Auth + Rate Limit
-│   Gateway    │ ──────────────────── Redis
-│  :8000       │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐   LangGraph Agent (7 nodes)
-│ Orchestrator │ ──────────────────── MemorySaver
-│  :8001       │
-└──┬──────┬────┘
-   │      │
-   ▼      ▼
-┌─────┐ ┌────────┐
-│Know │ │ Action │
-│ledge│ │  :8003 │
-│:8002│ └──┬─────┘
-└─────┘    │
-           ▼ (WRITE only)
-     ┌──────────┐   Redis Queue
-     │ Approval │ ──────────────── Human Browser UI
-     │  :8004   │
-     └──────────┘
+### 1. System Overview
 
-Shared infrastructure:
-  PostgreSQL + pgvector  ← Audit log (append-only) + Episodic memory
-  Redis                  ← Session memory + Rate limiting + Approval queue
-  ChromaDB               ← Vector knowledge store (FAQ / Tickets / SLA)
+![System Overview — 7 services, 3 infrastructure stores, external boundaries](docs/images/01_system_overview.png)
+
+```mermaid
+graph TD
+    %% Styling
+    classDef service fill:#e1f5fe,stroke:#039be5,stroke-width:2px;
+    classDef db fill:#efebe9,stroke:#8d6e63,stroke-width:2px;
+    classDef client fill:#f1f8e9,stroke:#7cb342,stroke-width:2px;
+    classDef hitl fill:#fffde7,stroke:#fbc02d,stroke-width:2px;
+
+    %% Clients & UI
+    Client["Client / User API Request"]:::client
+    HITL_UI["Human-in-the-Loop Browser UI"]:::hitl
+
+    %% API Gateway
+    Gateway["API Gateway (Port 8000)<br/>- Auth Check (X-API-Key)<br/>- Sliding Window Rate Limiting<br/>- Request Routing"]:::service
+
+    %% Microservices
+    Orchestrator["Orchestrator Service (Port 8001)<br/>- LangGraph State Machine (7 nodes)<br/>- HITL Pause & Resume Control"]:::service
+    Knowledge["Knowledge Service (Port 8002)<br/>- Multi-Source Parallel Query Fan-out<br/>- Local Embedding Generation"]:::service
+    Action["Action Service (Port 8003)<br/>- Safe Triage Registry<br/>- Sandbox Executor<br/>- Path/Extension Validation"]:::service
+    Approval["Approval Service (Port 8004)<br/>- Pending Action Registry<br/>- Countdown Timer (15m TTL)"]:::service
+    Memory["Memory Service (Port 8005)<br/>- Short-Term Session Cache<br/>- Long-Term Epistemic Store"]:::service
+    Audit["Audit Service (Port 8006)<br/>- Append-Only Write Log<br/>- Structlog ingestion"]:::service
+
+    %% Databases & Storage
+    ChromaDB["ChromaDB Vector Store<br/>Collections: faq, tickets, sla"]:::db
+    Redis["Redis Cache & Queue<br/>- Rate Limiting ZSET<br/>- Session JSON List<br/>- Approval Queue"]:::db
+    PostgreSQL["PostgreSQL Database<br/>- audit_log (immutable table)<br/>- episodic_memory (pgvector)"]:::db
+    Workspace["Local Filesystem<br/>Workspace Sandbox (tickets.json)"]:::db
+
+    %% Flows
+    Client -->|1. Submit Query| Gateway
+    Gateway -->|2. Route Request| Orchestrator
+    Gateway <-->|Rate Limit / Session Cache| Redis
+    
+    Orchestrator -->|3. Retrieve Knowledge| Knowledge
+    Knowledge -->|4. Search Vectors| ChromaDB
+    
+    Orchestrator -->|5. Triage Decision| Action
+    Orchestrator <-->|6. Pause / Resume via interrupt()| Approval
+    
+    Approval <-->|Register Pending / Check Timeout| Redis
+    HITL_UI <-->|7. Approve / Reject| Approval
+    
+    Action -->|8. Read/Write Tickets| Workspace
+    
+    Orchestrator -->|9. Summarize & Save| Memory
+    Memory -->|Session Storage| Redis
+    Memory -->|Episodic Insert| PostgreSQL
+    
+    Orchestrator -->|10. Write Audit Trail| Audit
+    Audit -->|Insert Append-Only| PostgreSQL
 ```
 
-### Services
+**Services:**
 
 | Service | Port | Role |
 |---|---|---|
-| `gateway` | 8000 | Auth, rate limiting, request routing |
-| `orchestrator` | 8001 | LangGraph agent graph execution |
-| `knowledge` | 8002 | ChromaDB retrieval (3 sources) |
-| `action` | 8003 | Read/write handler with path safety |
-| `approval` | 8004 | HITL queue (Redis) + browser approval UI |
-| `memory` | 8005 | Redis session + pgvector episodic memory |
-| `audit` | 8006 | Append-only PostgreSQL audit log |
+| `gateway` | 8000 | Auth (X-API-Key), sliding window rate limit, request proxy |
+| `orchestrator` | 8001 | LangGraph 7-node agent, HITL interrupt/resume |
+| `knowledge` | 8002 | ChromaDB retrieval, 3-source parallel fanout |
+| `action` | 8003 | Registry dispatch, read/write handlers, sandbox safety |
+| `approval` | 8004 | Redis approval queue, browser HITL UI, timeout checker |
+| `memory` | 8005 | Redis short-term session + pgvector long-term episodic |
+| `audit` | 8006 | Append-only PostgreSQL audit log (structlog first, then DB) |
+
+**Infrastructure:**
+
+| Store | Purpose |
+|---|---|
+| **Redis** | Session memory (TTL=24h), rate limiting (sorted set), approval queue (TTL=15min) |
+| **PostgreSQL + pgvector** | Audit log (append-only, CREATE RULE blocks UPDATE/DELETE), episodic memory (vector 384-dim) |
+| **ChromaDB** | Vector knowledge store — 3 collections: `faq`, `tickets`, `sla` |
+
+---
+
+### 2. Agent Graph (LangGraph)
+
+![Agent Graph — 7 nodes from Planner to AuditLogger with HITL branch](docs/images/02_agent_graph.png)
+
+**Node details:**
+
+| Node | What it does |
+|---|---|
+| **Planner** | LLM decomposes the user query into numbered steps |
+| **Retriever** | HTTP POST to Knowledge service → ChromaDB fanout across all 3 sources |
+| **Reasoner** | LLM analyses chunks → structured output: RELEVANT INFO / GAPS / CONCLUSION |
+| **Decider** | LLM proposes action + payload (Pydantic structured output). Risk resolved from REGISTRY — LLM self-assessment is ignored |
+| **ApprovalGate** | CRITICAL (WRITE) actions only → `interrupt()` pauses graph → human browser UI → `Command(resume=)` |
+| **Executor** | SAFE: direct call to action service. CRITICAL: only after human approval |
+| **Responder** | LLM synthesises final answer from reasoning + action result |
+| **MemoryWriter** | POST to memory service: Redis session append + pgvector episodic INSERT. Never raises |
+| **AuditLogger** | Fire-and-forget POST to audit service (daemon thread). structlog first, then PostgreSQL |
+
+---
+
+### 3. HITL Approval Flow (WRITE Actions Only)
+
+![HITL Approval Flow — sequence from interrupt to approval to execution](docs/images/03_hitl_flow.png)
+
+**Step-by-step:**
+
+1. Executor detects CRITICAL risk → POST `/pending` to Approval service
+2. Approval service enqueues in Redis with TTL=15min, returns `approval_id` + browser URL
+3. `interrupt()` — LangGraph pauses the graph
+4. Human opens the browser URL → sees payload, reasoning, and live countdown timer
+5. Human clicks **Approve** or **Reject** → POST `/decision`
+6. Approval service → POST `/approval-callback` to Orchestrator
+7. `Command(resume={"decision": "approve"})` — graph resumes
+8. Executor → POST `/execute` → write_handler: validate path → backup → atomic write
+9. **Timeout path**: if no human action in 15 min, background checker auto-rejects
+
+---
+
+### 4. Data Layer
+
+![Data Layer — ChromaDB, Redis, PostgreSQL, File System](docs/images/04_data_layer.png)
+
+**Key design decisions:**
+
+| Store | Key pattern / Schema | Notes |
+|---|---|---|
+| ChromaDB | `faq`, `tickets`, `sla` collections | BAAI/bge-small-en 384-dim, cosine distance, top_k=5 per source |
+| Redis `akea:session:{id}` | JSON list of messages | TTL=24h, atomic append |
+| Redis `akea:rl:{user_id}` | ZSET of timestamps | Sliding window rate limiter, TTL=70s |
+| Redis `akea:approval:{id}` | JSON approval entry | TTL=15min |
+| PostgreSQL `audit_log` | 12-column append-only table | `CREATE RULE` blocks UPDATE and DELETE at DB level |
+| PostgreSQL `episodic_memory` | content + vector(384) + metadata JSONB | `ORDER BY embedding <=> $query_vec` cosine search |
+| File system | `./data/workspace/` | Hardcoded root, `.json` only, atomic write via `os.replace()` |
 
 ---
 
@@ -84,9 +172,7 @@ cp .env.example .env
 
 Edit `.env` and set your API key:
 ```env
-LLM_API_KEY=your_groq_or_nvidia_api_key
-LLM_BASE_URL=https://api.groq.com/openai/v1   # or NVIDIA NIM URL
-LLM_MODEL=gpt-oss-120b
+LLM_API_KEY=your_actual_groq_or_nvidia_key_here
 ```
 
 ### 2. Install dev dependencies
@@ -114,7 +200,7 @@ Embeds all documents in `data/knowledge/` into ChromaDB. Run once, or after addi
 ### 5. Seed sample data (optional)
 
 ```bash
-python scripts/seed_data.py
+make seed
 ```
 
 Creates 3 sample tickets in `data/knowledge/tickets/sample_tickets.json`.
@@ -137,7 +223,7 @@ make test
 ### 8. Run the evaluation harness (requires live system)
 
 ```bash
-python tests/evals/eval_harness.py --api-key dev-key-alice
+make eval
 ```
 
 ---
@@ -191,25 +277,26 @@ Content-Type: application/json
 ```json
 {
   "session_id": "abc-123",
-  "answer": "Critical priority tickets have a 1-hour response time...",
-  "reasoning": "RELEVANT INFORMATION:\n- ...",
-  "action_taken": "respond_only",
-  "action_result": null,
+  "answer": "Critical priority tickets have a 1-hour response time according to SLA-001...\n\nEVIDENCE CITED:\n- SLA-001 response time is 1 hour.",
+  "reasoning": "RELEVANT INFORMATION:\n- SLA-001 specifies critical priority response time = 1 hour.",
+  "action_taken": "auto_respond",
+  "action_result": {
+    "status_updated_to": "resolved",
+    "ticket_id": null
+  },
   "sources": ["faq", "sla"]
 }
 ```
 
-**Response (HITL triggered — WRITE action):**
+**Response (HITL triggered — CRITICAL action):**
 ```json
 {
   "status": "pending_approval",
   "approval_id": "uuid",
   "session_id": "abc-123",
-  "message": "A WRITE action requires human approval. Check the approval service."
+  "message": "A CRITICAL triage action (escalate) requires human approval. Check the approval service."
 }
 ```
-
-When `pending_approval` is returned, open the URL printed in the approval service terminal.
 
 ### `POST /v1/approval-callback`
 
@@ -228,16 +315,12 @@ Submit an approval decision after reviewing at the HITL UI.
 
 ### Write Sandbox
 
-All file writes are restricted to `data/workspace/`. This path is **hardcoded** in `services/action/safety/path_validator.py` and cannot be changed via environment variables or configuration. Every write target is validated with:
-
-1. `Path.resolve()` to canonicalise — no symlink tricks
-2. `str(resolved).startswith(str(WORKSPACE_ROOT))` — no directory traversal
-3. Extension allowlist: `.json` only — no executable uploads
+All ticket mutations are restricted to `data/workspace/tickets.json`. This file path is locked and cannot be manipulated by client payloads to overwrite arbitrary system files. Every modification runs under strict validation to prevent path traversal or target file hijacking.
 
 ### Human-in-the-Loop
 
-- **READ actions** (respond_only, read_ticket, read_ticket_list): execute automatically
-- **WRITE actions** (write_json_file): unconditionally trigger HITL
+- **SAFE actions** (`auto_respond`): execute automatically to resolve tickets or answer policy questions.
+- **CRITICAL actions** (`escalate`, `request_info`, `close`): unconditionally trigger the HITL gate.
 
 The HITL gate cannot be disabled. It is implemented using LangGraph's `interrupt()` function which suspends the graph — the action service is never called until `Command(resume=...)` resumes execution after a human decision.
 
@@ -280,8 +363,8 @@ Every action is written to the `audit_log` PostgreSQL table. The table has `CREA
 
 ```bash
 make test                    # All tests
-make test -k unit            # Unit tests only
-make test -k integration     # Integration tests only
+pytest tests/ -k unit        # Unit tests only
+pytest tests/ -k integration # Integration tests only
 ```
 
 ### Linting and type checking
@@ -304,38 +387,6 @@ docker compose logs orchestrator   # Single service
 ```bash
 make down       # Stop containers (preserves volumes)
 make clean      # Stop + delete volumes (resets all data)
-```
-
----
-
-## Data Flow
-
-```
-User Request
-  → Gateway (auth + rate limit)
-    → Orchestrator /run
-      → Planner    (LLM: decompose into steps)
-      → Retriever  (HTTP → Knowledge /retrieve → ChromaDB)
-      → Reasoner   (LLM: analyse chunks → RELEVANT / GAPS / CONCLUSION)
-      → Decider    (LLM structured output → action + payload)
-        │
-        ├─ SAFE  ──→ Executor → Action /execute → Read Handler
-        │                     ↓
-        │              Audit /log (fire-and-forget)
-        │
-        └─ CRITICAL → Executor → Approval /pending (Redis enqueue)
-                               → [interrupt() — graph paused]
-                               → Human opens browser URL
-                               → Human clicks Approve/Reject
-                               → Approval /decision
-                               → Orchestrator /approval-callback
-                               → [Command(resume=) — graph resumes]
-                               → Action /execute → Write Handler
-                               → (validate → backup → atomic write)
-      → Responder  (LLM: compose final answer)
-      → MemoryWriter (Redis session + pgvector episode)
-    ← Final answer (or pending_approval)
-  ← Response with X-RateLimit-* headers
 ```
 
 ---
@@ -365,29 +416,31 @@ Exit code `0` = all cases pass. Exit code `1` = any case below threshold.
 
 ```
 .
+├── docs/
+│   └── images/            # Architecture diagrams (PNG)
 ├── services/
-│   ├── gateway/       # Auth, rate limiting, routing
-│   ├── orchestrator/  # LangGraph agent (7 nodes)
+│   ├── gateway/           # Auth, rate limiting, routing
+│   ├── orchestrator/      # LangGraph agent (7 nodes)
 │   │   └── graph/
-│   │       └── nodes/ # planner, retriever, reasoner, decider,
-│   │                  # executor, responder, memory_writer
-│   ├── knowledge/     # ChromaDB retrieval + /retrieve endpoint
-│   │   └── loaders/   # faq_loader, ticket_loader, sla_loader
-│   ├── action/        # Read/write handlers + audit integration
-│   │   ├── handlers/  # read_handler, write_handler
-│   │   └── safety/    # path_validator, backup
-│   ├── approval/      # Redis queue + HITL web UI
-│   ├── memory/        # Redis short-term + pgvector long-term
-│   └── audit/         # Append-only PostgreSQL audit log
-├── shared/            # Config, models, exceptions (shared across services)
+│   │       └── nodes/     # planner, retriever, reasoner, decider,
+│   │                      # executor, responder, memory_writer
+│   ├── knowledge/         # ChromaDB retrieval + /retrieve endpoint
+│   │   └── loaders/       # faq_loader, ticket_loader, sla_loader
+│   ├── action/            # Read/write handlers + audit integration
+│   │   ├── handlers/      # read_handler, write_handler
+│   │   └── safety/        # path_validator, backup
+│   ├── approval/          # Redis queue + HITL web UI
+│   ├── memory/            # Redis short-term + pgvector long-term
+│   └── audit/             # Append-only PostgreSQL audit log
+├── shared/                # Config, models, exceptions (shared across services)
 ├── data/
-│   ├── knowledge/     # faq/ tickets/ sla/ — source documents
-│   └── workspace/     # WRITE SANDBOX — agent can only write here
-├── scripts/           # ingest_knowledge.py, seed_data.py, init.sql
+│   ├── knowledge/         # faq/ tickets/ sla/ — source documents
+│   └── workspace/         # WRITE SANDBOX — agent can only write here
+├── scripts/               # ingest_knowledge.py, seed_data.py, init.sql
 ├── tests/
-│   ├── unit/          # Zero-infra unit tests
-│   ├── integration/   # In-memory or mocked infra tests
-│   └── evals/         # Golden dataset + eval harness
+│   ├── unit/              # Zero-infra unit tests
+│   ├── integration/       # In-memory or mocked infra tests
+│   └── evals/             # Golden dataset + eval harness
 ├── docker-compose.yml
 ├── Makefile
 └── pyproject.toml

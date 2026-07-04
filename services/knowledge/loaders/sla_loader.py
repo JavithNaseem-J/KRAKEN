@@ -25,7 +25,7 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-SLA_DIR = Path(__file__).resolve().parents[4] / "data" / "knowledge" / "sla"
+SLA_DIR = Path(__file__).resolve().parents[3] / "data" / "knowledge" / "sla"
 
 
 def _rule_to_text(rule: dict[str, Any]) -> str:

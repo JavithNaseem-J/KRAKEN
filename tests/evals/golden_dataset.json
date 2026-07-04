@@ -3,8 +3,8 @@
     "id": "eval-001",
     "category": "policy_lookup",
     "question": "What is the SLA response time for a critical priority ticket?",
-    "expected_keywords": ["1 hour", "critical", "response"],
-    "expected_action": "respond_only",
+    "expected_keywords": ["1 hour", "critical", "response", "SLA-001"],
+    "expected_action": "auto_respond",
     "expected_hitl": false,
     "expected_sources": ["faq", "sla"],
     "notes": "Should find critical SLA from both FAQ policy and SLA rules."
@@ -12,49 +12,49 @@
   {
     "id": "eval-002",
     "category": "policy_lookup",
-    "question": "What happens if a ticket exceeds its SLA resolution window?",
-    "expected_keywords": ["escalat", "next", "tier", "support"],
-    "expected_action": "respond_only",
+    "question": "What are the rules of engagement and approved maintenance windows for production pentesting?",
+    "expected_keywords": ["10:00 PM", "04:00 AM", "Rules of Engagement", "RoE"],
+    "expected_action": "auto_respond",
     "expected_hitl": false,
     "expected_sources": ["faq"],
-    "notes": "Should find escalation policy from the FAQ document."
+    "notes": "Should find RoE and maintenance window rules in FAQ policy."
   },
   {
     "id": "eval-003",
-    "category": "ticket_read",
-    "question": "Show me the details of ticket TK-001.",
-    "expected_keywords": ["TK-001", "VPN", "high"],
-    "expected_action": "read_ticket",
-    "expected_hitl": false,
-    "expected_sources": ["tickets"],
-    "notes": "Should trigger read_ticket action with ticket_id=TK-001."
+    "category": "ticket_escalation",
+    "question": "Please escalate ticket TK-001 due to the critical Remote Code Execution vulnerability in the photo upload endpoint.",
+    "expected_keywords": ["TK-001", "escalate", "RCE", "critical"],
+    "expected_action": "escalate",
+    "expected_hitl": true,
+    "expected_sources": ["tickets", "faq"],
+    "notes": "Should trigger escalate action with ticket_id=TK-001. Requires HITL."
   },
   {
     "id": "eval-004",
-    "category": "ticket_list",
-    "question": "List all open tickets with high priority.",
-    "expected_keywords": ["TK-001", "open", "high"],
-    "expected_action": "read_ticket_list",
-    "expected_hitl": false,
+    "category": "ticket_close",
+    "question": "Client confirmed mitigation of the SQL Injection in TK-008. Please close the ticket.",
+    "expected_keywords": ["TK-008", "close", "SQL Injection", "mitigation"],
+    "expected_action": "close",
+    "expected_hitl": true,
     "expected_sources": ["tickets"],
-    "notes": "Should trigger read_ticket_list with status=open, priority=high."
+    "notes": "Should trigger close action with ticket_id=TK-008. Requires HITL."
   },
   {
     "id": "eval-005",
-    "category": "write_action",
-    "question": "Update ticket TK-002 status to closed and save the record to a file.",
-    "expected_keywords": ["approv", "write", "file", "human"],
-    "expected_action": "write_json_file",
+    "category": "request_info",
+    "question": "For ticket TK-003, we need to request the client sign off on the BAA for HIPAA compliance review before we can proceed.",
+    "expected_keywords": ["TK-003", "request_info", "BAA", "HIPAA"],
+    "expected_action": "request_info",
     "expected_hitl": true,
-    "expected_sources": ["tickets"],
-    "notes": "CRITICAL action — must trigger HITL gate. Answer should mention approval required."
+    "expected_sources": ["tickets", "faq"],
+    "notes": "Should trigger request_info action with ticket_id=TK-003. Requires HITL."
   },
   {
     "id": "eval-006",
     "category": "sla_lookup",
-    "question": "What is the escalation path for a high priority network ticket?",
-    "expected_keywords": ["L1", "L2", "Team Lead", "escalat"],
-    "expected_action": "respond_only",
+    "question": "What is the escalation path for a high priority security finding?",
+    "expected_keywords": ["Tier 1", "Tier 2", "Tier 3", "escalation"],
+    "expected_action": "auto_respond",
     "expected_hitl": false,
     "expected_sources": ["sla", "faq"],
     "notes": "Should find SLA escalation path for high priority."
@@ -62,21 +62,21 @@
   {
     "id": "eval-007",
     "category": "policy_lookup",
-    "question": "Can I install software on my company laptop myself?",
-    "expected_keywords": ["cannot", "approval", "IT Security", "medium"],
-    "expected_action": "respond_only",
+    "question": "Is a signed Business Associate Agreement (BAA) required for HIPAA compliance audits?",
+    "expected_keywords": ["BAA", "HIPAA", "required", "prior"],
+    "expected_action": "auto_respond",
     "expected_hitl": false,
     "expected_sources": ["faq"],
-    "notes": "Software installation policy — clearly stated in FAQ."
+    "notes": "Should check HIPAA requirements from FAQ."
   },
   {
     "id": "eval-008",
     "category": "policy_lookup",
-    "question": "Is out-of-hours support available for medium priority tickets?",
-    "expected_keywords": ["business hours", "9am", "6pm", "Monday"],
-    "expected_action": "respond_only",
+    "question": "How long does it take to deliver the draft pentest report after testing completes?",
+    "expected_keywords": ["5 business days", "Draft Pentest Report"],
+    "expected_action": "auto_respond",
     "expected_hitl": false,
     "expected_sources": ["faq"],
-    "notes": "Out-of-hours policy — only Critical is 24/7."
+    "notes": "Should find pentest report delivery timeframe in FAQ."
   }
 ]

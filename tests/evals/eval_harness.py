@@ -106,7 +106,7 @@ def run_case(
 
     # Score
     kw_score  = keyword_score(answer, case.get("expected_keywords", []))
-    act_score = action_match(actual_action, case.get("expected_action", "respond_only"))
+    act_score = action_match(actual_action, case.get("expected_action", "auto_respond"))
     hl_score  = hitl_match(body, case.get("expected_hitl", False))
     src_score = source_coverage(actual_sources, case.get("expected_sources", []))
     overall   = (kw_score + act_score + hl_score + src_score) / 4.0

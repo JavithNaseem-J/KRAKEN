@@ -72,16 +72,19 @@ class TestReasonerNode:
 
 # ── Decider risk resolver ──────────────────────────────────────────────────────
 class TestRiskResolver:
-    def test_respond_only_is_safe(self) -> None:
-        assert _resolve_risk_level("respond_only") == "SAFE"
+    def test_auto_respond_is_safe(self) -> None:
+        assert _resolve_risk_level("auto_respond") == "SAFE"
 
-    def test_read_actions_are_safe(self) -> None:
-        assert _resolve_risk_level("read_ticket") == "SAFE"
-        assert _resolve_risk_level("read_ticket_list") == "SAFE"
+    def test_escalate_is_critical(self) -> None:
+        assert _resolve_risk_level("escalate") == "CRITICAL"
 
-    def test_write_is_critical(self) -> None:
-        assert _resolve_risk_level("write_json_file") == "CRITICAL"
+    def test_request_info_is_critical(self) -> None:
+        assert _resolve_risk_level("request_info") == "CRITICAL"
+
+    def test_close_is_critical(self) -> None:
+        assert _resolve_risk_level("close") == "CRITICAL"
 
     def test_unknown_defaults_to_critical(self) -> None:
         """Unknown actions are treated as CRITICAL — fail-safe behaviour."""
         assert _resolve_risk_level("invented_action") == "CRITICAL"
+
