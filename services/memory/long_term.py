@@ -12,6 +12,7 @@ Operations:
   store()  → INSERT with embedding
   search() → cosine similarity search filtered by user_id
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,7 @@ from typing import Any
 
 import asyncpg
 import structlog
-from sentence_transformers import SentenceTransformer
+from langchain_huggingface import HuggingFaceEmbeddings
 
 log = structlog.get_logger(__name__)
 
@@ -37,20 +38,24 @@ class LongTermMemory:
         device: str = "cpu",
     ) -> None:
         log.info("long_term.loading_embedder", model=embedding_model)
-        self._pool  = pool
-        self._model = SentenceTransformer(embedding_model, device=device)
+        self._pool = pool
+        self._model = HuggingFaceEmbeddings(
+            model_name=embedding_model,
+            model_kwargs={"device": device},
+            encode_kwargs={"normalize_embeddings": True},
+        )
         log.info("long_term.embedder_ready")
 
     def _embed(self, text: str) -> list[float]:
         """Embed a single string, returning a normalised float list."""
-        return self._model.encode(text, normalize_embeddings=True).tolist()
+        return self._model.embed_query(text)
 
     async def store(
         self,
         session_id: str,
-        user_id:    str,
-        content:    str,
-        metadata:   dict[str, Any] | None = None,
+        user_id: str,
+        content: str,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         """
         Store an episodic memory entry with its embedding.
@@ -70,7 +75,7 @@ class LongTermMemory:
                 session_id,
                 user_id,
                 content,
-                embedding,          # pgvector codec encodes list → '[x,y,z]'
+                embedding,  # pgvector codec encodes list → '[x,y,z]'
                 meta_json,
             )
 
@@ -80,9 +85,9 @@ class LongTermMemory:
 
     async def search(
         self,
-        query:   str,
+        query: str,
         user_id: str,
-        top_k:   int = 3,
+        top_k: int = 3,
     ) -> list[dict[str, Any]]:
         """
         Retrieve the top_k most similar past memories for this user.
@@ -113,11 +118,11 @@ class LongTermMemory:
 
         results = [
             {
-                "id":         row["id"],
+                "id": row["id"],
                 "session_id": row["session_id"],
-                "content":    row["content"],
-                "metadata":   json.loads(row["metadata"]),
-                "timestamp":  row["timestamp"].isoformat(),
+                "content": row["content"],
+                "metadata": json.loads(row["metadata"]),
+                "timestamp": row["timestamp"].isoformat(),
                 "similarity": float(row["similarity"]),
             }
             for row in rows

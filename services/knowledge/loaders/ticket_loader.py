@@ -9,6 +9,7 @@ Returns:
   chunks  — ChromaDB-ready dicts (for semantic search)
   records — raw ticket dicts (for PostgreSQL upsert)
 """
+
 from __future__ import annotations
 
 import csv
@@ -93,17 +94,19 @@ def load_ticket_chunks() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         ticket_id = str(ticket.get("id", ""))
         if not ticket_id:
             continue
-        chunks.append({
-            "id":       f"ticket_{ticket_id}",
-            "document": _ticket_to_text(ticket),
-            "metadata": {
-                "source":    "tickets",
-                "ticket_id": ticket_id,
-                "status":    str(ticket.get("status", "")),
-                "priority":  str(ticket.get("priority", "")),
-                "category":  str(ticket.get("category", "")),
-            },
-        })
+        chunks.append(
+            {
+                "id": f"ticket_{ticket_id}",
+                "document": _ticket_to_text(ticket),
+                "metadata": {
+                    "source": "tickets",
+                    "ticket_id": ticket_id,
+                    "status": str(ticket.get("status", "")),
+                    "priority": str(ticket.get("priority", "")),
+                    "category": str(ticket.get("category", "")),
+                },
+            }
+        )
 
     log.info(
         "ticket_loader.complete",

@@ -25,10 +25,10 @@ altering past records is rejected by the rule.
 
 The pool is created externally (in lifespan) and passed in.
 """
+
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -48,17 +48,17 @@ class AuditStore:
 
     async def log_action(
         self,
-        session_id:    str,
-        user_id:       str,
-        action_type:   str,
-        action_name:   str,
-        risk_level:    str,
+        session_id: str,
+        user_id: str,
+        action_type: str,
+        action_name: str,
+        risk_level: str,
         hitl_required: bool,
-        status:        str,
-        reasoning:     str | None       = None,
-        payload:       dict | None      = None,
-        result:        dict | None      = None,
-        hitl_decision: str | None       = None,
+        status: str,
+        reasoning: str | None = None,
+        payload: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
+        hitl_decision: str | None = None,
     ) -> int:
         """
         Insert one audit record. Returns the new row id.
@@ -101,7 +101,7 @@ class AuditStore:
             status=status,
             risk=risk_level,
         )
-        return row_id
+        return int(row_id)
 
     async def get_session_history(
         self,
@@ -125,15 +125,41 @@ class AuditStore:
 
         return [
             {
-                "id":            row["id"],
-                "timestamp":     row["timestamp"].isoformat(),
-                "action_type":   row["action_type"],
-                "action_name":   row["action_name"],
-                "risk_level":    row["risk_level"],
+                "id": row["id"],
+                "timestamp": row["timestamp"].isoformat(),
+                "action_type": row["action_type"],
+                "action_name": row["action_name"],
+                "risk_level": row["risk_level"],
                 "hitl_required": row["hitl_required"],
                 "hitl_decision": row["hitl_decision"],
-                "status":        row["status"],
-                "user_id":       row["user_id"],
+                "status": row["status"],
+                "user_id": row["user_id"],
             }
             for row in rows
         ]
+
+    async def get_user_history(
+        self,
+        user_id: str,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Return recent audit records for a user across all sessions."""
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, timestamp, session_id, action_name, risk_level,
+                       hitl_required, hitl_decision, status
+                FROM   audit_log
+                WHERE  user_id = $1
+                ORDER  BY timestamp DESC
+                LIMIT  $2
+                """,
+                user_id,
+                limit,
+            )
+
+        records = [dict(r) for r in rows]
+        for r in records:
+            if "timestamp" in r:
+                r["timestamp"] = r["timestamp"].isoformat()
+        return records

@@ -10,6 +10,7 @@ HITL Gate:
 
 For "respond_only" actions, execution is skipped entirely.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -18,21 +19,25 @@ import httpx
 import structlog
 from langgraph.types import interrupt
 
+from services.orchestrator.graph.state import GraphState
 from shared.config import get_settings
 from shared.models.action import ActionRequest
-from services.orchestrator.graph.state import GraphState
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
+# Module-level client for connection reuse
+_http_client = httpx.Client(timeout=30.0)
+
+
 def executor_node(state: GraphState) -> dict:
-    session_id      = state.get("session_id", "")
-    action_name     = state.get("selected_action", "auto_respond")
-    action_payload  = state.get("action_payload") or {}
-    risk_level      = state.get("risk_level", "SAFE")
-    reasoning       = state.get("reasoning", "")
-    user_id         = state.get("user_id", "system")
+    session_id = state.get("session_id", "")
+    action_name = state.get("selected_action")
+    action_payload = state.get("action_payload") or {}
+    risk_level = state.get("risk_level", "SAFE")
+    reasoning = state.get("reasoning", "")
+    user_id = state.get("user_id", "system")
 
     log.info(
         "executor.start",
@@ -41,25 +46,38 @@ def executor_node(state: GraphState) -> dict:
         risk=risk_level,
     )
 
-    # ── Respond-only: no action service call needed ────────────────────────────
-    if action_name == "respond_only":
-        log.info("executor.respond_only", session_id=session_id)
+    if not action_name:
+        log.info("executor.skip_no_action", session_id=session_id)
         return {"action_result": None, "approval_status": None}
 
     # ── CRITICAL: pause graph until human approves ─────────────────────────────
     if risk_level == "CRITICAL":
-        approval_id = _register_approval(
-            action_name=action_name,
-            payload=action_payload,
-            reasoning=reasoning,
-            session_id=session_id,
-        )
+        try:
+            approval_id = _register_approval(
+                action_name=action_name,
+                payload=action_payload,
+                reasoning=reasoning,
+                session_id=session_id,
+            )
+        except Exception as exc:
+            log.error("executor.approval_register_failed", error=str(exc))
+            return {
+                "approval_status": "failed",
+                "action_result": {
+                    "success": False,
+                    "error": f"Failed to register approval request: {exc}",
+                },
+                "error": f"Failed to register approval request: {exc}",
+            }
+
         # interrupt() suspends graph here — resumes via Command(resume=decision)
-        decision: dict[str, str] = interrupt({
-            "approval_id": approval_id,
-            "action_name": action_name,
-            "payload":     action_payload,
-        })
+        decision: dict[str, str] = interrupt(
+            {
+                "approval_id": approval_id,
+                "action_name": action_name,
+                "payload": action_payload,
+            }
+        )
 
         decision_value = decision.get("decision", "reject")
         log.info(
@@ -71,15 +89,15 @@ def executor_node(state: GraphState) -> dict:
 
         if decision_value != "approve":
             return {
-                "approval_id":     approval_id,
+                "approval_id": approval_id,
                 "approval_status": decision_value,
-                "action_result":   {"cancelled": True, "reason": "Human rejected or timed out"},
+                "action_result": {"cancelled": True, "reason": f"Human decision: {decision_value}"},
             }
 
         return {
-            "approval_id":     approval_id,
+            "approval_id": approval_id,
             "approval_status": "approved",
-            "action_result":   _call_action_service(
+            "action_result": _call_action_service(
                 action_name, action_payload, session_id, user_id, reasoning
             ),
         }
@@ -87,7 +105,7 @@ def executor_node(state: GraphState) -> dict:
     # ── SAFE: call action service directly ────────────────────────────────────
     return {
         "approval_status": None,
-        "action_result":   _call_action_service(
+        "action_result": _call_action_service(
             action_name, action_payload, session_id, user_id, reasoning
         ),
     }
@@ -100,22 +118,19 @@ def _register_approval(
     session_id: str,
 ) -> str:
     """Call approval service to register pending action. Returns approval_id."""
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(
-                f"{settings.approval_url}/pending",
-                json={
-                    "action_name": action_name,
-                    "payload":     payload,
-                    "reasoning":   reasoning,
-                    "session_id":  session_id,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()["approval_id"]
-    except Exception as exc:
-        log.error("executor.approval_register_failed", error=str(exc))
-        raise
+    resp = _http_client.post(
+        f"{settings.approval_url}/pending",
+        json={
+            "action_name": action_name,
+            "payload": payload,
+            "reasoning": reasoning,
+            "session_id": session_id,
+        },
+        headers={"X-Service-Token": settings.hitl_service_token},
+        timeout=10.0,
+    )
+    resp.raise_for_status()
+    return resp.json()["approval_id"]
 
 
 def _call_action_service(
@@ -134,13 +149,14 @@ def _call_action_service(
         reasoning=reasoning,
     )
     try:
-        with httpx.Client(timeout=30.0) as client:
-            resp = client.post(
-                f"{settings.action_url}/execute",
-                json=request.model_dump(),
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = _http_client.post(
+            f"{settings.action_url}/execute",
+            json=request.model_dump(),
+            headers={"X-Service-Token": settings.hitl_service_token},
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        return resp.json()
     except Exception as exc:
         log.error("executor.action_failed", action=action_name, error=str(exc))
         return {"success": False, "error": str(exc)}

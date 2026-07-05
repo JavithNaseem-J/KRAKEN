@@ -2,21 +2,22 @@
 Integration tests for the knowledge retriever.
 Uses an in-memory ChromaDB client — no disk I/O, no embedder model needed.
 """
+
 from __future__ import annotations
 
-import pytest
 import chromadb
-from chromadb import EmbeddingFunction, Documents, Embeddings
+import pytest
+from chromadb import Documents, EmbeddingFunction, Embeddings
 
-from shared.models.knowledge import KnowledgeSource, RetrievalRequest
 from services.knowledge.retriever import KnowledgeRetriever, _source_to_collection_name
+from shared.models.knowledge import KnowledgeSource, RetrievalRequest
 
 
 class FakeEmbedder(EmbeddingFunction[Documents]):
     """Returns a fixed 3-dim vector — avoids loading sentence-transformers in tests."""
+
     def __call__(self, input: Documents) -> Embeddings:  # noqa: A002
         return [[0.1, 0.2, 0.3]] * len(input)
-
 
 
 @pytest.fixture
@@ -39,7 +40,9 @@ def in_memory_retriever() -> KnowledgeRetriever:
     faq_col.upsert(
         ids=["faq_test_0001"],
         documents=["VPN policy: all users must use the company VPN when working remotely."],
-        metadatas=[{"source": "faq", "file": "test_policy.md", "chunk_index": 0, "total_chunks": 1}],
+        metadatas=[
+            {"source": "faq", "file": "test_policy.md", "chunk_index": 0, "total_chunks": 1}
+        ],
     )
 
     return KnowledgeRetriever(client=client, collections=collections)

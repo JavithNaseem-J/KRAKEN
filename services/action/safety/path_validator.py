@@ -12,6 +12,7 @@ Every write target MUST pass both checks before any file is touched:
 
 This module has zero external dependencies so it can be unit-tested in isolation.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,7 +20,7 @@ from pathlib import Path
 from shared.exceptions import InvalidExtensionError, PathTraversalError
 
 # ── Hardcoded constants — do NOT make these configurable ──────────────────────
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]     # repo root
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]  # repo root
 WORKSPACE_ROOT: Path = (_PROJECT_ROOT / "data" / "workspace").resolve()
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".json"})
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,18 +48,16 @@ def validate_write_target(target: str) -> Path:
     try:
         resolved: Path = (WORKSPACE_ROOT / target).resolve()
     except (ValueError, RuntimeError) as exc:
-        raise PathTraversalError(
-            f"Cannot resolve path '{target}'."
-        ) from exc
+        raise PathTraversalError(f"Cannot resolve path '{target}'.") from exc
 
     # ── Check 1: containment ──────────────────────────────────────────────────
     try:
         resolved.relative_to(WORKSPACE_ROOT)
-    except ValueError:
+    except ValueError as exc:
         raise PathTraversalError(
             f"BLOCKED — '{target}' resolves to '{resolved}', "
             f"which is outside the allowed workspace '{WORKSPACE_ROOT}'."
-        )
+        ) from exc
 
     # ── Check 2: extension allowlist ──────────────────────────────────────────
     if resolved.suffix.lower() not in ALLOWED_EXTENSIONS:

@@ -1,4 +1,5 @@
 """Seed script — populates dev/test data with Xiarch security tickets."""
+
 from __future__ import annotations
 
 import json
@@ -14,7 +15,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "critical",
         "category": "pentest",
-        "description": "Found a critical Remote Code Execution (RCE) vulnerability in the user profile photo upload endpoint. We were able to upload a webshell and execute system commands."
+        "description": "Found a critical Remote Code Execution (RCE) vulnerability in the user profile photo upload endpoint. We were able to upload a webshell and execute system commands.",
     },
     {
         "id": "TK-002",
@@ -22,7 +23,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "medium",
         "category": "compliance",
-        "description": "Client wants to schedule their SOC 2 Type II readiness audit for their AWS cloud infrastructure next month. Need to check auditor availability."
+        "description": "Client wants to schedule their SOC 2 Type II readiness audit for their AWS cloud infrastructure next month. Need to check auditor availability.",
     },
     {
         "id": "TK-003",
@@ -30,7 +31,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "high",
         "category": "compliance",
-        "description": "Client asks if HIPAA requires a Business Associate Agreement (BAA) sign-off prior to Xiarch testing their EHR portal."
+        "description": "Client asks if HIPAA requires a Business Associate Agreement (BAA) sign-off prior to Xiarch testing their EHR portal.",
     },
     {
         "id": "TK-004",
@@ -38,7 +39,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "low",
         "category": "vulnerability",
-        "description": "A vulnerability scan flagged SSL/TLS weak ciphers and TLS 1.0 enabled on the client's public payment portal."
+        "description": "A vulnerability scan flagged SSL/TLS weak ciphers and TLS 1.0 enabled on the client's public payment portal.",
     },
     {
         "id": "TK-005",
@@ -46,7 +47,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "critical",
         "category": "pentest",
-        "description": "A client is asking to start an external penetration test immediately on their production servers, but they have not signed the Rules of Engagement (RoE) yet."
+        "description": "A client is asking to start an external penetration test immediately on their production servers, but they have not signed the Rules of Engagement (RoE) yet.",
     },
     {
         "id": "TK-006",
@@ -54,7 +55,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "high",
         "category": "pentest",
-        "description": "Found privilege escalation from Associate to Admin role in the client staging portal via IDOR parameter manipulation."
+        "description": "Found privilege escalation from Associate to Admin role in the client staging portal via IDOR parameter manipulation.",
     },
     {
         "id": "TK-007",
@@ -62,7 +63,7 @@ SAMPLE_TICKETS = [
         "status": "resolved",
         "priority": "medium",
         "category": "compliance",
-        "description": "Client submitted their Annex A control evidence checklist for review. Associate checked and confirmed it meets the requirements."
+        "description": "Client submitted their Annex A control evidence checklist for review. Associate checked and confirmed it meets the requirements.",
     },
     {
         "id": "TK-008",
@@ -70,7 +71,7 @@ SAMPLE_TICKETS = [
         "status": "resolved",
         "priority": "critical",
         "category": "pentest",
-        "description": "SQL Injection vulnerability was identified in the main search bar. Client confirmed mitigation and Associate verified the fix."
+        "description": "SQL Injection vulnerability was identified in the main search bar. Client confirmed mitigation and Associate verified the fix.",
     },
     {
         "id": "TK-009",
@@ -78,7 +79,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "medium",
         "category": "vulnerability",
-        "description": "Automated scan reports that the SSL certificate for staging.clientdomain.com will expire in 5 days."
+        "description": "Automated scan reports that the SSL certificate for staging.clientdomain.com will expire in 5 days.",
     },
     {
         "id": "TK-010",
@@ -86,7 +87,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "high",
         "category": "compliance",
-        "description": "Client wants to know if storing encrypted Patient Health Information (PHI) in an AWS S3 bucket meets the HIPAA physical safeguards."
+        "description": "Client wants to know if storing encrypted Patient Health Information (PHI) in an AWS S3 bucket meets the HIPAA physical safeguards.",
     },
     {
         "id": "TK-011",
@@ -94,7 +95,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "medium",
         "category": "audit",
-        "description": "Requesting a full review of AWS IAM roles, security groups, and cloudtrail logs to prepare for their upcoming SOC 2 audit."
+        "description": "Requesting a full review of AWS IAM roles, security groups, and cloudtrail logs to prepare for their upcoming SOC 2 audit.",
     },
     {
         "id": "TK-012",
@@ -102,7 +103,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "high",
         "category": "pentest",
-        "description": "Stored XSS vulnerability in the admin feedback page. Any feedback submitted can execute arbitrary JavaScript in the admin session."
+        "description": "Stored XSS vulnerability in the admin feedback page. Any feedback submitted can execute arbitrary JavaScript in the admin session.",
     },
     {
         "id": "TK-013",
@@ -110,7 +111,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "medium",
         "category": "pentest",
-        "description": "Client provided comments on the draft pentest report and wants to know when we can start the complimentary re-testing cycle."
+        "description": "Client provided comments on the draft pentest report and wants to know when we can start the complimentary re-testing cycle.",
     },
     {
         "id": "TK-014",
@@ -118,7 +119,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "low",
         "category": "compliance",
-        "description": "Client is asking if a 2-month observation window is sufficient for their upcoming SOC 2 Type II audit."
+        "description": "Client is asking if a 2-month observation window is sufficient for their upcoming SOC 2 Type II audit.",
     },
     {
         "id": "TK-015",
@@ -126,7 +127,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "critical",
         "category": "pentest",
-        "description": "Password reset tokens do not expire after use. This allows an attacker to reuse a captured token to change any user password."
+        "description": "Password reset tokens do not expire after use. This allows an attacker to reuse a captured token to change any user password.",
     },
     {
         "id": "TK-016",
@@ -134,7 +135,7 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "low",
         "category": "vulnerability",
-        "description": "Scan indicates that HSTS and Content-Security-Policy (CSP) headers are missing on the main web login page."
+        "description": "Scan indicates that HSTS and Content-Security-Policy (CSP) headers are missing on the main web login page.",
     },
     {
         "id": "TK-017",
@@ -142,8 +143,8 @@ SAMPLE_TICKETS = [
         "status": "open",
         "priority": "medium",
         "category": "compliance",
-        "description": "Client needs help completing Section 2 of Self-Assessment Questionnaire D (SAQ-D) regarding cardholder data flow diagrams."
-    }
+        "description": "Client needs help completing Section 2 of Self-Assessment Questionnaire D (SAQ-D) regarding cardholder data flow diagrams.",
+    },
 ]
 
 
@@ -162,7 +163,6 @@ def main() -> None:
     print(f"Seeded {len(SAMPLE_TICKETS)} tickets -> {out_ws}")
 
     print("Seed complete.")
-
 
 
 if __name__ == "__main__":

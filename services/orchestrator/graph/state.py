@@ -7,47 +7,51 @@ Why separate from shared/models/agent.py:
   - The shared AgentState is the external API contract (request/response shapes).
   - This GraphState is the internal graph execution contract.
 """
+
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Literal, NotRequired, Required, TypedDict
 
 
-class GraphState(TypedDict, total=False):
-    # ── Input ─────────────────────────────────────────────────────────────────
-    session_id:   str
-    user_id:      str
-    user_message: str
+class ChunkDict(TypedDict):
+    source: str
+    content: str
+    relevance_score: float
+    metadata: dict[str, Any]
 
-    # ── Conversation history (append-only via reducer) ────────────────────────
-    messages: Annotated[list[dict[str, str]], operator.add]
 
-    # ── Planner output ────────────────────────────────────────────────────────
-    plan_steps:   list[str]
-    current_step: int
+class GraphState(TypedDict):
+    # ── Required Input & Output ───────────────────────────────────────────────
+    session_id: Required[str]
+    user_message: Required[str]
+    messages: Required[Annotated[list[dict[str, str]], operator.add]]
+    final_answer: NotRequired[str]
+
+    # ── Optional/Computed Metadata ────────────────────────────────────────────
+    user_id: NotRequired[str]
 
     # ── Retriever output ──────────────────────────────────────────────────────
-    retrieved_chunks: list[dict[str, Any]]
+    retrieved_chunks: NotRequired[list[ChunkDict]]
 
     # ── Reasoner output ───────────────────────────────────────────────────────
-    reasoning: str
+    reasoning: NotRequired[str]
 
     # ── Decider output ────────────────────────────────────────────────────────
-    selected_action: str | None   # action name from registry, or "respond_only"
-    action_payload:  dict[str, Any] | None
-    risk_level:      str | None   # "SAFE" | "CRITICAL"
-    evidence:        str | None   # verbatim citation from knowledge base
+    selected_action: NotRequired[str | None]  # String to dynamically match registry actions
+    action_payload: NotRequired[dict[str, Any] | None]
+    risk_level: NotRequired[Literal["SAFE", "CRITICAL"] | None]
+    evidence: NotRequired[str | None]
 
     # ── HITL ──────────────────────────────────────────────────────────────────
-    approval_id:     str | None
-    approval_status: str | None   # "approved" | "rejected" | "timeout"
+    approval_id: NotRequired[str | None]
+    approval_status: NotRequired[Literal["approved", "rejected", "timeout"] | None]
 
     # ── Executor output ───────────────────────────────────────────────────────
-    action_result: dict[str, Any] | None
+    action_result: NotRequired[dict[str, Any] | None]
 
     # ── Responder output ──────────────────────────────────────────────────────
-    final_answer:       str
-    action_explanation: str
+    action_explanation: NotRequired[str]
 
     # ── Error passthrough ─────────────────────────────────────────────────────
-    error: str | None
+    error: NotRequired[str | None]

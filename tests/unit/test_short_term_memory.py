@@ -2,6 +2,7 @@
 Unit tests for the short-term session memory.
 Uses fakeredis — zero real Redis dependency.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -9,11 +10,12 @@ import pytest_asyncio
 
 try:
     import fakeredis.aioredis as fakeredis
+
     HAS_FAKEREDIS = True
 except ImportError:
     HAS_FAKEREDIS = False
 
-from services.memory.short_term import ShortTermMemory
+from services.memory.short_term import _SESSION_TTL_SEC, ShortTermMemory
 
 pytestmark = pytest.mark.skipif(
     not HAS_FAKEREDIS,
@@ -29,9 +31,15 @@ async def memory() -> ShortTermMemory:
 
 
 MSGS = [
-    {"role": "user",      "content": "What is the SLA for critical tickets?"},
+    {"role": "user", "content": "What is the SLA for critical tickets?"},
     {"role": "assistant", "content": "Critical tickets have a 1-hour response time."},
 ]
+
+
+class TestPing:
+    async def test_ping_returns_true(self, memory: ShortTermMemory) -> None:
+        result = await memory.ping()
+        assert result is True
 
 
 class TestGetSession:
@@ -58,6 +66,13 @@ class TestUpdateSession:
         result = await memory.get_session("s1")
         assert result == new_msg
 
+    async def test_ttl_is_set(self, memory: ShortTermMemory) -> None:
+        """Verify that update_session sets a TTL on the Redis key."""
+        await memory.update_session("s1", MSGS)
+        ttl = await memory._redis.ttl("akea:session:s1")
+        # TTL should be close to _SESSION_TTL_SEC (within 5 seconds of tolerance)
+        assert _SESSION_TTL_SEC - 5 <= ttl <= _SESSION_TTL_SEC
+
 
 class TestAppendMessages:
     async def test_appends_to_empty(self, memory: ShortTermMemory) -> None:
@@ -77,6 +92,22 @@ class TestAppendMessages:
         result = await memory.append_messages("s1", extra)
         assert result[:2] == MSGS
 
+    async def test_append_is_atomic_no_data_loss(self, memory: ShortTermMemory) -> None:
+        """
+        Simulate a scenario where append_messages starts with an existing session
+        and correctly accumulates all messages sequentially.
+        """
+        await memory.update_session("s1", MSGS)
+        batch1 = [{"role": "user", "content": "Q1"}]
+        batch2 = [{"role": "user", "content": "Q2"}]
+
+        await memory.append_messages("s1", batch1)
+        result2 = await memory.append_messages("s1", batch2)
+
+        assert len(result2) == len(MSGS) + 2
+        assert result2[-2] == batch1[0]
+        assert result2[-1] == batch2[0]
+
 
 class TestClearSession:
     async def test_clears_session(self, memory: ShortTermMemory) -> None:
@@ -86,4 +117,4 @@ class TestClearSession:
         assert result == []
 
     async def test_clear_nonexistent_no_error(self, memory: ShortTermMemory) -> None:
-        await memory.clear_session("does-not-exist")   # should not raise
+        await memory.clear_session("does-not-exist")  # should not raise

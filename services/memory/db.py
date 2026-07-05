@@ -6,6 +6,7 @@ Handles:
   - pgvector type codec registration on every acquired connection
   - Configurable pool size and timeout
 """
+
 from __future__ import annotations
 
 import asyncpg
@@ -41,13 +42,13 @@ async def create_pool(
     pgvector codec is registered automatically on every acquired connection.
     """
     dsn = _asyncpg_dsn(postgres_url)
-    log.info("db.connecting", dsn=dsn.split("@")[-1])   # Log host:port/db only
+    log.info("db.connecting", dsn=dsn.split("@")[-1])  # Log host:port/db only
 
     pool = await asyncpg.create_pool(
         dsn,
         min_size=min_size,
         max_size=max_size,
-        init=_register_codecs,        # Called on each new physical connection
+        init=_register_codecs,  # Called on each new physical connection
         command_timeout=30,
     )
     log.info("db.pool_ready", min=min_size, max=max_size)

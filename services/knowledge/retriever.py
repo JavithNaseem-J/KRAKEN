@@ -10,14 +10,14 @@ Design decisions:
   - Graceful degradation: if one source fails, others still return results
   - top_k applies per-source so all sources get equal representation before final ranking
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 
-from shared.exceptions import KnowledgeRetrievalError
 from shared.models.knowledge import (
     KnowledgeChunk,
     KnowledgeSource,
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     import chromadb
 
 log = structlog.get_logger(__name__)
+
 
 # ChromaDB returns cosine DISTANCE (0 = identical, 2 = opposite)
 # We convert to similarity score (1 = identical, 0 = unrelated)
@@ -48,8 +49,8 @@ class KnowledgeRetriever:
 
     def __init__(
         self,
-        client: "chromadb.ClientAPI",
-        collections: dict[str, "chromadb.Collection"],
+        client: chromadb.ClientAPI,
+        collections: dict[str, chromadb.Collection],
     ) -> None:
         self._client = client
         self._collections = collections
@@ -91,17 +92,19 @@ class KnowledgeRetriever:
             return []
 
         chunks: list[KnowledgeChunk] = []
-        documents  = (results.get("documents") or [[]])[0]
-        metadatas  = (results.get("metadatas") or [[]])[0]
-        distances  = (results.get("distances") or [[]])[0]
-        ids        = (results.get("ids") or [[]])[0]
+        documents = (results.get("documents") or [[]])[0]
+        metadatas = (results.get("metadatas") or [[]])[0]
+        distances = (results.get("distances") or [[]])[0]
+        ids = (results.get("ids") or [[]])[0]
 
-        for doc, meta, dist, chunk_id in zip(documents, metadatas, distances, ids):
+        for doc, meta, dist, chunk_id in zip(documents, metadatas, distances, ids, strict=False):
             chunks.append(
                 KnowledgeChunk(
                     content=doc,
                     source=source,
-                    document_id=str(meta.get("file", meta.get("ticket_id", meta.get("rule_id", "")))),
+                    document_id=str(
+                        meta.get("file", meta.get("ticket_id", meta.get("rule_id", "")))
+                    ),
                     chunk_id=chunk_id,
                     metadata=dict(meta or {}),
                     relevance_score=_distance_to_score(dist),
@@ -122,9 +125,54 @@ class KnowledgeRetriever:
             session_id=request.session_id,
         )
 
+        # ── Check semantic cache in ChromaDB ──────────────────────────────────
+        query_cache = self._collections.get("query_cache")
+        if query_cache is not None:
+            try:
+                cache_results = query_cache.query(
+                    query_texts=[request.query],
+                    n_results=1,
+                    include=["documents", "metadatas", "distances"],
+                )
+                distances = (cache_results.get("distances") or [[]])[0]
+                metadatas = (cache_results.get("metadatas") or [[]])[0]
+                if (
+                    distances and distances[0] <= 0.05
+                ):  # cosine distance <= 0.05 means similarity >= 0.95
+                    meta = metadatas[0]
+                    chunks_json = meta.get("chunks_json", "")
+                    if chunks_json:
+                        import json
+
+                        cached_chunks_data = json.loads(chunks_json)
+                        cached_chunks = [
+                            KnowledgeChunk(
+                                content=c["content"],
+                                source=KnowledgeSource(c["source"]),
+                                document_id=c["document_id"],
+                                chunk_id=c["chunk_id"],
+                                metadata=c["metadata"],
+                                relevance_score=c["relevance_score"],
+                            )
+                            for c in cached_chunks_data
+                        ]
+                        log.info(
+                            "retriever.semantic_cache_hit",
+                            query=request.query[:80],
+                            distance=distances[0],
+                        )
+                        return RetrievalResult(
+                            chunks=cached_chunks,
+                            query=request.query,
+                            total_retrieved=len(cached_chunks),
+                            sources_queried=request.sources,
+                        )
+            except Exception as exc:
+                log.warning("retriever.semantic_cache_lookup_failed", error=str(exc))
+
         # Run all source queries concurrently in a thread pool
         # (ChromaDB is sync — we offload to avoid blocking the event loop)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         tasks = [
             loop.run_in_executor(
                 None,
@@ -149,6 +197,32 @@ class KnowledgeRetriever:
 
         # Sort by relevance score descending
         all_chunks.sort(key=lambda c: c.relevance_score, reverse=True)
+
+        # Save to semantic query cache
+        if query_cache is not None and all_chunks:
+            try:
+                import json
+                import uuid
+
+                chunks_data = [
+                    {
+                        "content": c.content,
+                        "source": c.source.value,
+                        "document_id": c.document_id,
+                        "chunk_id": c.chunk_id,
+                        "metadata": c.metadata,
+                        "relevance_score": c.relevance_score,
+                    }
+                    for c in all_chunks[:10]  # Cache top 10 chunks to avoid metadata bloat
+                ]
+                query_cache.upsert(
+                    ids=[str(uuid.uuid4())],
+                    documents=[request.query],
+                    metadatas=[{"chunks_json": json.dumps(chunks_data)}],
+                )
+                log.info("retriever.semantic_cache_stored", query=request.query[:80])
+            except Exception as exc:
+                log.warning("retriever.semantic_cache_store_failed", error=str(exc))
 
         log.info(
             "retriever.done",

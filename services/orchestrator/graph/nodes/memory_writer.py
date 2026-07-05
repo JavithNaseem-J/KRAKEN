@@ -1,71 +1,104 @@
-"""
-Memory Writer Node — persists the completed run to long-term and short-term memory.
-
-Runs AFTER the responder node. Does two things:
-  1. Appends this turn's messages to Redis short-term memory (for next session pickup).
-  2. Stores a summary of the interaction to PostgreSQL episodic memory
-     (for cross-session semantic recall).
-
-Non-blocking: failures are logged but never raise — this node must not prevent
-the user from receiving their final_answer.
-"""
-from __future__ import annotations
+import concurrent.futures
+import textwrap
 
 import httpx
 import structlog
 
-from shared.config import get_settings
 from services.orchestrator.graph.state import GraphState
+from shared.config import get_settings
 
-log      = structlog.get_logger(__name__)
+log = structlog.get_logger(__name__)
 settings = get_settings()
+
+# Module-level connection pool & thread pool for fire-and-forget background execution
+_http_client = httpx.Client(timeout=10.0)
+_thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+
+
+def shutdown_thread_pool() -> None:
+    """Shutdown the background memory writer thread pool on app shutdown."""
+    log.info("memory_writer.shutdown_pool")
+    _thread_pool.shutdown(wait=False)
+    _http_client.close()
+
+
+def _persist_memory_task(
+    session_id: str,
+    user_id: str,
+    messages: list[dict[str, str]],
+    user_message: str,
+    final_answer: str,
+    action_name: str,
+    risk_level: str | None,
+    approval_status: str | None,
+) -> None:
+    """Helper executed in background thread to avoid blocking graph execution."""
+    log.info("memory_writer.background_start", session_id=session_id)
+    try:
+        headers = {"X-Service-Token": settings.hitl_service_token}
+
+        # ── 1. Update short-term session memory ───────────────────────────
+        resp1 = _http_client.post(
+            f"{settings.memory_url}/session/{session_id}/append",
+            json={"messages": messages},
+            headers=headers,
+        )
+        resp1.raise_for_status()
+
+        # ── 2. Store episodic memory (summarised interaction) ─────────────
+        short_answer = textwrap.shorten(final_answer, width=500, placeholder="...")
+        episode_content = (
+            f"User asked: {user_message}\n"
+            f"Action taken: {action_name}\n"
+            f"Answer: {short_answer}"
+        )
+        resp2 = _http_client.post(
+            f"{settings.memory_url}/long-term",
+            json={
+                "session_id": session_id,
+                "user_id": user_id,
+                "content": episode_content,
+                "metadata": {
+                    "action_name": action_name,
+                    "risk_level": risk_level,
+                    "approval": approval_status,
+                },
+            },
+            headers=headers,
+        )
+        resp2.raise_for_status()
+        log.info("memory_writer.background_done", session_id=session_id)
+    except Exception as exc:
+        log.error("memory_writer.background_error", session_id=session_id, error=str(exc))
 
 
 def memory_writer_node(state: GraphState) -> dict:
     """
-    Persist session and episodic memory. Always succeeds (never raises).
+    Persist session and episodic memory in the background (fire-and-forget).
     """
-    session_id   = state.get("session_id", "")
-    user_id      = state.get("user_id", "system")
-    messages     = state.get("messages", [])
+    session_id = state.get("session_id", "")
+    user_id = state.get("user_id", "system")
+    messages = state.get("messages", [])
     final_answer = state.get("final_answer", "")
-    reasoning    = state.get("reasoning", "")
-    action_name  = state.get("selected_action", "respond_only")
+    user_message = state.get("user_message", "")
+    action_name = state.get("selected_action", "auto_respond")
+    risk_level = state.get("risk_level")
+    approval = state.get("approval_status")
 
     log.info("memory_writer.start", session_id=session_id)
 
-    try:
-        with httpx.Client(timeout=5.0) as client:
-            # ── 1. Update short-term session memory ───────────────────────────
-            client.post(
-                f"{settings.memory_url}/session/{session_id}/append",
-                json={"messages": messages},
-            )
+    # Dispatch to background thread pool
+    _thread_pool.submit(
+        _persist_memory_task,
+        session_id,
+        user_id,
+        messages,
+        user_message,
+        final_answer,
+        action_name,
+        risk_level,
+        approval,
+    )
 
-            # ── 2. Store episodic memory (summarised interaction) ─────────────
-            episode_content = (
-                f"User asked: {state.get('user_message', '')}\n"
-                f"Action taken: {action_name}\n"
-                f"Answer: {final_answer[:300]}"   # Truncate to keep embeddings focused
-            )
-            client.post(
-                f"{settings.memory_url}/long-term",
-                json={
-                    "session_id": session_id,
-                    "user_id":    user_id,
-                    "content":    episode_content,
-                    "metadata": {
-                        "action_name":  action_name,
-                        "risk_level":   state.get("risk_level"),
-                        "approval":     state.get("approval_status"),
-                    },
-                },
-            )
-
-        log.info("memory_writer.done", session_id=session_id)
-
-    except Exception as exc:
-        log.error("memory_writer.error", session_id=session_id, error=str(exc))
-
-    # No state changes — this is a side-effect-only node
+    # Return immediately to avoid blocking the user
     return {}

@@ -11,6 +11,7 @@ Can also be triggered via HTTP after the knowledge service is running:
 This script runs the loaders directly (not via HTTP) so it can be used
 before the service is started — e.g., pre-seeding before `make up`.
 """
+
 from __future__ import annotations
 
 import sys
@@ -22,13 +23,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import chromadb
 import structlog
 
-from shared.config import get_settings
-from shared.models.knowledge import KnowledgeSource
 from services.knowledge.embedder import BGEEmbedder
 from services.knowledge.loaders.faq_loader import load_faq_chunks
-from services.knowledge.loaders.ticket_loader import load_ticket_chunks
 from services.knowledge.loaders.sla_loader import load_sla_chunks
+from services.knowledge.loaders.ticket_loader import load_ticket_chunks
 from services.knowledge.retriever import _source_to_collection_name
+from shared.config import get_settings
+from shared.models.knowledge import KnowledgeSource
 
 structlog.configure(
     processors=[structlog.dev.ConsoleRenderer()],

@@ -8,6 +8,7 @@ Produces:
 All services should call this in their lifespan to get consistent structured logs
 with timestamp, log level, service name, and caller info.
 """
+
 from __future__ import annotations
 
 import logging
@@ -17,9 +18,9 @@ import structlog
 
 
 def configure_logging(
-    log_level:  str = "INFO",
-    log_format: str = "console",   # "json" | "console"
-    service:    str = "akea",
+    log_level: str = "INFO",
+    log_format: str = "console",  # "json" | "console"
+    service: str = "akea",
 ) -> None:
     """
     Configure structlog for the calling service process.

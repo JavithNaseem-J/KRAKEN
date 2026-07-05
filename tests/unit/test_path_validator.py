@@ -3,6 +3,7 @@ Unit tests for the write-safety path validator.
 Zero mocking — the validator has no external dependencies.
 These must all pass before any WRITE handler is built.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -23,7 +24,7 @@ class TestWorkspaceConstants:
         assert WORKSPACE_ROOT.parts[-2:] == ("data", "workspace")
 
     def test_only_json_allowed(self) -> None:
-        assert ALLOWED_EXTENSIONS == frozenset({".json"})
+        assert frozenset({".json"}) == ALLOWED_EXTENSIONS
 
 
 class TestValidTargets:

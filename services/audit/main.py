@@ -11,40 +11,44 @@ Startup:
 
 Endpoints:
   GET  /health                     Liveness probe
-  POST /log                        Write one audit entry (called by action service)
+  POST /log                        Write one audit entry (called by action service, authenticated)
   GET  /history/{session_id}       Retrieve audit records for a session
   GET  /history/user/{user_id}     Retrieve recent audit records for a user
 """
+
 from __future__ import annotations
 
+import secrets
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from pydantic import BaseModel
 
+from services.memory.db import create_pool  # Reuse the same pool factory
 from shared.config import get_settings
+
 from .audit_store import AuditStore
 from .logger import configure_logging
-from services.memory.db import create_pool   # Reuse the same pool factory
 
-log      = structlog.get_logger(__name__)
+log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
 class AuditLogRequest(BaseModel):
-    session_id:    str
-    user_id:       str
-    action_type:   str
-    action_name:   str
-    risk_level:    str
+    session_id: str
+    user_id: str
+    action_type: str
+    action_name: str
+    risk_level: str
     hitl_required: bool
-    status:        str
-    reasoning:     str | None       = None
-    payload:       dict | None      = None
-    result:        dict | None      = None
-    hitl_decision: str | None       = None
+    status: str
+    reasoning: str | None = None
+    payload: dict | None = None
+    result: dict | None = None
+    hitl_decision: str | None = None
 
 
 @asynccontextmanager
@@ -61,14 +65,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pool = await create_pool(
             postgres_url=settings.postgres_url,
             min_size=2,
-            max_size=8,   # Higher than memory: audit is write-heavy
+            max_size=8,  # Higher than memory: audit is write-heavy
         )
-        app.state.store   = AuditStore(pool)
+        app.state.store = AuditStore(pool)
         app.state.db_pool = pool
         log.info("audit.db_ready")
     except Exception as exc:
         log.error("audit.db_unavailable", error=str(exc))
-        app.state.store   = None
+        app.state.store = None
         app.state.db_pool = None
 
     yield
@@ -86,17 +90,35 @@ app = FastAPI(
 )
 
 
+def _verify_service_token(
+    x_service_token: str | None = Header(None, alias="X-Service-Token"),
+) -> str:
+    """FastAPI dependency: Enforce service token validation."""
+    token = x_service_token or ""
+    if not token or not secrets.compare_digest(token, settings.hitl_service_token):
+        log.warning("audit.auth_failed")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing service token.",
+        )
+    return token
+
+
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, Any]:
+    db_ok = app.state.store is not None
     return {
-        "status":  "ok",
+        "status": "ok" if db_ok else "degraded",
         "service": "audit",
-        "db":      app.state.store is not None,
+        "db": db_ok,
     }
 
 
 @app.post("/log", tags=["audit"])
-async def log_action(body: AuditLogRequest) -> dict[str, Any]:
+async def log_action(
+    body: AuditLogRequest,
+    _token: str = Depends(_verify_service_token),
+) -> dict[str, Any]:
     """
     Write one audit entry. Always returns 200 — even on DB failure.
     Structlog captures the entry regardless, so logs are never truly lost.
@@ -128,7 +150,8 @@ async def session_history(session_id: str, limit: int = 50) -> dict[str, Any]:
     """Return audit records for a session (read-only, newest first)."""
     if app.state.store is None:
         raise HTTPException(status_code=503, detail="Audit DB unavailable.")
-    records = await app.state.store.get_session_history(session_id, limit=limit)
+    capped_limit = min(limit, 200)
+    records = await app.state.store.get_session_history(session_id, limit=capped_limit)
     return {"session_id": session_id, "records": records, "count": len(records)}
 
 
@@ -137,25 +160,6 @@ async def user_history(user_id: str, limit: int = 100) -> dict[str, Any]:
     """Return recent audit records for a user across all sessions."""
     if app.state.store is None:
         raise HTTPException(status_code=503, detail="Audit DB unavailable.")
-    if app.state.db_pool is None:
-        raise HTTPException(status_code=503, detail="Audit DB unavailable.")
-
-    async with app.state.db_pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, timestamp, session_id, action_name, risk_level,
-                   hitl_required, hitl_decision, status
-            FROM   audit_log
-            WHERE  user_id = $1
-            ORDER  BY timestamp DESC
-            LIMIT  $2
-            """,
-            user_id,
-            min(limit, 200),
-        )
-
-    records = [dict(r) for r in rows]
-    for r in records:
-        if "timestamp" in r:
-            r["timestamp"] = r["timestamp"].isoformat()
+    capped_limit = min(limit, 200)
+    records = await app.state.store.get_user_history(user_id, limit=capped_limit)
     return {"user_id": user_id, "records": records, "count": len(records)}

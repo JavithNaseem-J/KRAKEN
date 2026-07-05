@@ -33,6 +33,18 @@ services:
     restart: unless-stopped
 
   # ── Application Services ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      GATEWAY_URL: http://gateway:8000
+    depends_on:
+      - gateway
+    restart: unless-stopped
+
   gateway:
     build:
       context: .

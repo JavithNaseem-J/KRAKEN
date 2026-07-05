@@ -3,10 +3,11 @@ Shared exception hierarchy for all AKEA services.
 All custom exceptions inherit from AKEABaseException so callers can
 catch the base class without knowing the exact subtype.
 """
+
 from __future__ import annotations
 
 
-class AKEABaseException(Exception):
+class AKEABaseException(Exception):  # noqa: N818
     """Root exception for all AKEA errors."""
 
     def __init__(self, message: str, details: dict | None = None) -> None:

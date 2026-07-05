@@ -10,6 +10,7 @@ Why not PostgreSQL here?
   Reading from the JSON source files is correct, fast, and has zero infra
   dependency — making the action service fully testable without a DB.
 """
+
 from __future__ import annotations
 
 import csv
@@ -79,10 +80,10 @@ def read_ticket(ticket_id: str) -> dict[str, Any]:
 
 
 def read_ticket_list(
-    status:   str | None = None,
+    status: str | None = None,
     priority: str | None = None,
     category: str | None = None,
-    limit:    int        = 10,
+    limit: int = 10,
 ) -> list[dict[str, Any]]:
     """
     List tickets with optional filters.
@@ -100,8 +101,9 @@ def read_ticket_list(
     tickets = _load_all_tickets()
 
     filtered = [
-        t for t in tickets
-        if (status   is None or str(t.get("status",   "")).lower() == status.lower())
+        t
+        for t in tickets
+        if (status is None or str(t.get("status", "")).lower() == status.lower())
         and (priority is None or str(t.get("priority", "")).lower() == priority.lower())
         and (category is None or str(t.get("category", "")).lower() == category.lower())
     ]
@@ -110,6 +112,8 @@ def read_ticket_list(
         "read_handler.read_ticket_list",
         total=len(tickets),
         filtered=len(filtered),
-        status=status, priority=priority, category=category,
+        status=status,
+        priority=priority,
+        category=category,
     )
     return filtered[:limit]

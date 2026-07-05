@@ -2,10 +2,10 @@
 Unit tests for the ApprovalQueue.
 Uses fakeredis for an in-memory Redis implementation — zero real Redis dependency.
 """
+
 from __future__ import annotations
 
-import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -13,6 +13,7 @@ import pytest_asyncio
 # fakeredis provides an in-memory async Redis for testing
 try:
     import fakeredis.aioredis as fakeredis
+
     HAS_FAKEREDIS = True
 except ImportError:
     HAS_FAKEREDIS = False
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.skipif(
 async def queue() -> ApprovalQueue:
     """Return an ApprovalQueue backed by an in-memory fakeredis server."""
     q = ApprovalQueue.__new__(ApprovalQueue)
-    q._redis   = fakeredis.FakeRedis(decode_responses=True)
+    q._redis = fakeredis.FakeRedis(decode_responses=True)
     q._timeout = 900
     return q
 
@@ -40,23 +41,29 @@ class TestEnqueue:
         assert aid and len(aid) == 36  # UUID4 format
 
     async def test_entry_retrievable(self, queue: ApprovalQueue) -> None:
-        aid   = await queue.enqueue("write_json_file", {"x": 1}, "r", "s1")
+        aid = await queue.enqueue("write_json_file", {"x": 1}, "r", "s1")
         entry = await queue.get(aid)
         assert entry is not None
         assert entry["action_name"] == "write_json_file"
-        assert entry["session_id"]  == "s1"
-        assert entry["status"]      == "pending"
+        assert entry["session_id"] == "s1"
+        assert entry["status"] == "pending"
 
     async def test_expires_at_in_future(self, queue: ApprovalQueue) -> None:
-        aid   = await queue.enqueue("write_json_file", {}, "r", "s1")
+        aid = await queue.enqueue("write_json_file", {}, "r", "s1")
         entry = await queue.get(aid)
         expires = datetime.fromisoformat(entry["expires_at"])
-        assert expires > datetime.now(timezone.utc)
+        assert expires > datetime.now(UTC)
+
+    async def test_stats_and_ping(self, queue: ApprovalQueue) -> None:
+        assert await queue.ping() is True
+        assert await queue.stats() == 0
+        await queue.enqueue("write_json_file", {}, "r", "s1")
+        assert await queue.stats() == 1
 
 
 class TestResolve:
     async def test_resolve_returns_entry(self, queue: ApprovalQueue) -> None:
-        aid   = await queue.enqueue("write_json_file", {}, "r", "s1")
+        aid = await queue.enqueue("write_json_file", {}, "r", "s1")
         entry = await queue.resolve(aid)
         assert entry is not None
         assert entry["approval_id"] == aid
@@ -65,6 +72,9 @@ class TestResolve:
         aid = await queue.enqueue("write_json_file", {}, "r", "s1")
         await queue.resolve(aid)
         assert await queue.get(aid) is None
+        # Verify metadata is also deleted
+        assert await queue._redis.get(f"akea:approval:meta:{aid}") is None
+        assert await queue.stats() == 0
 
     async def test_double_resolve_returns_none(self, queue: ApprovalQueue) -> None:
         aid = await queue.enqueue("write_json_file", {}, "r", "s1")
@@ -84,20 +94,37 @@ class TestGetExpired:
         assert expired == []
 
     async def test_detects_past_expires_at(self, queue: ApprovalQueue) -> None:
-        """Manually inject an entry with an already-past expires_at."""
-        import json, uuid
-        aid = str(uuid.uuid4())
-        entry = {
-            "approval_id": aid,
-            "action_name": "write_json_file",
-            "payload":     {},
-            "reasoning":   "r",
-            "session_id":  "s1",
-            "expires_at":  (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
-            "status":      "pending",
-        }
-        await queue._redis.set(f"akea:approval:{aid}", json.dumps(entry))
-        await queue._redis.sadd("akea:approval:index", aid)
+        aid = await queue.enqueue("write_json_file", {}, "r", "s1")
+
+        # Modify expires_at manually to be in the past
+        entry = await queue.get(aid)
+        entry["expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+
+        await queue._redis.set(f"akea:approval:{aid}", json_dumps_compat(entry))
+        await queue._redis.set(f"akea:approval:meta:{aid}", json_dumps_compat(entry))
 
         expired = await queue.get_expired()
         assert any(e.get("approval_id") == aid for e in expired)
+        assert any(e.get("session_id") == "s1" for e in expired)
+
+    async def test_detects_missing_main_key_with_shadow_meta(self, queue: ApprovalQueue) -> None:
+        """When the main key expires, metadata shadow key must be used to get session_id."""
+        aid = await queue.enqueue("write_json_file", {}, "r", "s-shadow-1")
+
+        # Delete the main key (simulating Redis TTL expiry)
+        await queue._redis.delete(f"akea:approval:{aid}")
+
+        expired = await queue.get_expired()
+        assert len(expired) == 1
+        assert expired[0]["approval_id"] == aid
+        assert expired[0]["session_id"] == "s-shadow-1"
+
+        # Ensure cleanup occurred
+        assert await queue._redis.get(f"akea:approval:meta:{aid}") is None
+        assert await queue.stats() == 0
+
+
+def json_dumps_compat(data: dict) -> str:
+    import json
+
+    return json.dumps(data)

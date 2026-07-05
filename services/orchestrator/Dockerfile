@@ -4,7 +4,8 @@ RUN groupadd -r akea && useradd -r -g akea akea
 
 WORKDIR /app
 
-COPY shared/ /shared/
+COPY pyproject.toml /shared/
+COPY shared/ /shared/shared/
 RUN pip install --no-cache-dir /shared/
 
 COPY services/orchestrator/requirements.txt .

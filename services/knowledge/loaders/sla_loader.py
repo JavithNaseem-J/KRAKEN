@@ -15,6 +15,7 @@ Expected schema per rule:
 
 Each rule is converted to a human-readable text chunk for semantic search.
 """
+
 from __future__ import annotations
 
 import json
@@ -77,17 +78,19 @@ def load_sla_chunks() -> list[dict[str, Any]]:
                 log.warning("sla_loader.missing_id", rule=rule)
                 continue
 
-            all_chunks.append({
-                "id":       f"sla_{rule_id}",
-                "document": _rule_to_text(rule),
-                "metadata": {
-                    "source":                  "sla",
-                    "rule_id":                 rule_id,
-                    "priority":                str(rule.get("priority", "")),
-                    "response_time_hours":     str(rule.get("response_time_hours", "")),
-                    "resolution_time_hours":   str(rule.get("resolution_time_hours", "")),
-                },
-            })
+            all_chunks.append(
+                {
+                    "id": f"sla_{rule_id}",
+                    "document": _rule_to_text(rule),
+                    "metadata": {
+                        "source": "sla",
+                        "rule_id": rule_id,
+                        "priority": str(rule.get("priority", "")),
+                        "response_time_hours": str(rule.get("response_time_hours", "")),
+                        "resolution_time_hours": str(rule.get("resolution_time_hours", "")),
+                    },
+                }
+            )
 
         log.info("sla_loader.done", file=file_path.name, rules=len(rules))
 

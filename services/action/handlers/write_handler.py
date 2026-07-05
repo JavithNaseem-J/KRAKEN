@@ -9,8 +9,10 @@ Safety guarantees (enforced in this order, every time):
 
 No write can bypass these three steps. They are called directly, not via config flags.
 """
+
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -20,8 +22,9 @@ from typing import Any
 import structlog
 
 from shared.exceptions import ActionExecutionError
-from ..safety.path_validator import WORKSPACE_ROOT, validate_write_target
+
 from ..safety.backup import backup_if_exists
+from ..safety.path_validator import WORKSPACE_ROOT, validate_write_target
 
 log = structlog.get_logger(__name__)
 
@@ -72,13 +75,11 @@ def write_json_file(target_path: str, content: dict[str, Any]) -> dict[str, Any]
         try:
             with os.fdopen(tmp_fd, "wb") as f:
                 f.write(json_bytes)
-            os.replace(tmp_path, resolved)   # Atomic on POSIX; best-effort on Windows
+            os.replace(tmp_path, resolved)  # Atomic on POSIX; best-effort on Windows
         except Exception:
             # Clean up temp file on failure
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
-            except OSError:
-                pass
             raise
 
     except (OSError, ValueError) as exc:
@@ -96,7 +97,7 @@ def write_json_file(target_path: str, content: dict[str, Any]) -> dict[str, Any]
 
     return {
         "resolved_path": str(resolved),
-        "bytes_written":  len(json_bytes),
-        "backup_path":    str(backup_path) if backup_path else None,
-        "success":        True,
+        "bytes_written": len(json_bytes),
+        "backup_path": str(backup_path) if backup_path else None,
+        "success": True,
     }

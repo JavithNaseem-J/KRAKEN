@@ -1,4 +1,5 @@
 """Root conftest — makes shared/ and services/ importable in all tests."""
+
 from __future__ import annotations
 
 import sys

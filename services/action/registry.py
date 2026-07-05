@@ -6,6 +6,7 @@ RISK CLASSIFICATION RULES (enforced here, not in the LLM):
   READ  → SAFE     → no HITL
   WRITE → CRITICAL → HITL always required, no exceptions
 """
+
 from __future__ import annotations
 
 from shared.models.action import ActionDefinition, ActionType, RiskLevel
@@ -17,11 +18,7 @@ REGISTRY: dict[str, ActionDefinition] = {
         action_type=ActionType.READ,
         risk_level=RiskLevel.SAFE,
         requires_hitl=False,
-        parameter_schema={
-            "ticket_id": "str | None",
-            "response_text": "str",
-            "evidence": "str"
-        },
+        parameter_schema={"ticket_id": "str | None", "response_text": "str", "evidence": "str"},
     ),
     "escalate": ActionDefinition(
         name="escalate",
@@ -29,11 +26,7 @@ REGISTRY: dict[str, ActionDefinition] = {
         action_type=ActionType.WRITE,
         risk_level=RiskLevel.CRITICAL,
         requires_hitl=True,
-        parameter_schema={
-            "ticket_id": "str",
-            "reason": "str",
-            "evidence": "str"
-        },
+        parameter_schema={"ticket_id": "str", "reason": "str", "evidence": "str"},
     ),
     "request_info": ActionDefinition(
         name="request_info",
@@ -41,11 +34,7 @@ REGISTRY: dict[str, ActionDefinition] = {
         action_type=ActionType.WRITE,
         risk_level=RiskLevel.CRITICAL,
         requires_hitl=True,
-        parameter_schema={
-            "ticket_id": "str",
-            "info_requested": "str",
-            "evidence": "str"
-        },
+        parameter_schema={"ticket_id": "str", "info_requested": "str", "evidence": "str"},
     ),
     "close": ActionDefinition(
         name="close",
@@ -53,20 +42,24 @@ REGISTRY: dict[str, ActionDefinition] = {
         action_type=ActionType.WRITE,
         risk_level=RiskLevel.CRITICAL,
         requires_hitl=True,
-        parameter_schema={
-            "ticket_id": "str",
-            "reason": "str",
-            "evidence": "str"
-        },
+        parameter_schema={"ticket_id": "str", "reason": "str", "evidence": "str"},
+    ),
+    "write_json_file": ActionDefinition(
+        name="write_json_file",
+        description="Write structured data as a JSON file inside the workspace sandbox.",
+        action_type=ActionType.WRITE,
+        risk_level=RiskLevel.CRITICAL,
+        requires_hitl=True,
+        parameter_schema={"target_path": "str", "content": "dict"},
     ),
 }
-
 
 
 def get_action(name: str) -> ActionDefinition:
     """Retrieve an action definition. Raises KeyError if not registered."""
     if name not in REGISTRY:
         from shared.exceptions import ActionNotFoundError
+
         raise ActionNotFoundError(
             f"Action '{name}' is not registered.",
             details={"available": list(REGISTRY.keys())},

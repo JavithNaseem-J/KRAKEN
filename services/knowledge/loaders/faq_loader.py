@@ -5,6 +5,7 @@ Reads all .pdf, .md, and .txt files from data/knowledge/faq/.
 Splits each document into overlapping chunks suitable for semantic search.
 Returns a list of dicts ready for ChromaDB upsert.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -17,8 +18,8 @@ import structlog
 log = structlog.get_logger(__name__)
 
 # Chunking constants
-CHUNK_SIZE    = 800   # characters — balances context vs. precision
-CHUNK_OVERLAP = 100   # characters — preserves sentence continuity across boundaries
+CHUNK_SIZE = 800  # characters — balances context vs. precision
+CHUNK_OVERLAP = 100  # characters — preserves sentence continuity across boundaries
 
 FAQ_DIR = Path(__file__).resolve().parents[3] / "data" / "knowledge" / "faq"
 
@@ -43,10 +44,9 @@ def _load_pdf(path: Path) -> str:
     """Extract text from PDF using pypdf."""
     try:
         from pypdf import PdfReader
+
         reader = PdfReader(str(path))
-        return "\n\n".join(
-            page.extract_text() or "" for page in reader.pages
-        )
+        return "\n\n".join(page.extract_text() or "" for page in reader.pages)
     except Exception as exc:
         log.error("faq_loader.pdf_error", path=str(path), error=str(exc))
         return ""
@@ -94,16 +94,18 @@ def load_faq_chunks() -> list[dict[str, Any]]:
 
         for i, chunk in enumerate(chunks):
             chunk_id = f"faq_{doc_id}_{i:04d}"
-            all_chunks.append({
-                "id":       chunk_id,
-                "document": chunk,
-                "metadata": {
-                    "source":      "faq",
-                    "file":        file_path.name,
-                    "chunk_index": i,
-                    "total_chunks": len(chunks),
-                },
-            })
+            all_chunks.append(
+                {
+                    "id": chunk_id,
+                    "document": chunk,
+                    "metadata": {
+                        "source": "faq",
+                        "file": file_path.name,
+                        "chunk_index": i,
+                        "total_chunks": len(chunks),
+                    },
+                }
+            )
 
         log.info("faq_loader.done", file=file_path.name, chunks=len(chunks))
 

@@ -1,6 +1,7 @@
 """
 Unit tests for the new ticket triage handlers.
 """
+
 from __future__ import annotations
 
 import json
@@ -11,9 +12,9 @@ import pytest
 
 from services.action.handlers.ticket_handler import (
     execute_auto_respond,
+    execute_close,
     execute_escalate,
     execute_request_info,
-    execute_close,
 )
 from shared.exceptions import ActionExecutionError
 
@@ -24,7 +25,7 @@ _SAMPLE_TICKETS = [
         "status": "open",
         "priority": "critical",
         "category": "pentest",
-        "description": "RCE on upload page."
+        "description": "RCE on upload page.",
     },
     {
         "id": "TK-002",
@@ -32,8 +33,8 @@ _SAMPLE_TICKETS = [
         "status": "open",
         "priority": "medium",
         "category": "compliance",
-        "description": "SOC 2 readiness."
-    }
+        "description": "SOC 2 readiness.",
+    },
 ]
 
 
