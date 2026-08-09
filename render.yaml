@@ -202,8 +202,9 @@ services:
         sync: false
 
   # ── React Web Frontend ──────────────────────────────────────────────────────
-  - type: static
+  - type: web
     name: akea-frontend
+    env: static
     rootDir: frontend-react
     buildCommand: npm run build
     staticPublishPath: dist
