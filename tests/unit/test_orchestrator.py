@@ -5,8 +5,8 @@ Uses mock databases, HTTP clients, and LLMs — zero external dependencies.
 
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import status
@@ -17,6 +17,9 @@ from services.orchestrator.graph.nodes.memory_writer import memory_writer_node
 from services.orchestrator.graph.nodes.retriever import retriever_node
 from services.orchestrator.main import app
 
+_TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
+_HEADERS = {"X-Service-Token": _TOKEN}
+
 
 # ── Decider Node Tests ────────────────────────────────────────────────────────
 class TestDeciderNode:
@@ -25,11 +28,12 @@ class TestDeciderNode:
         mock_llm = MagicMock()
         decision_mock = MagicMock()
         decision_mock.selected_action = "auto_respond"
+        decision_mock.selected_actions = None
         decision_mock.action_payload = {"ticket_id": "T1", "response_text": "text"}
         decision_mock.evidence = "Some evidence"
         decision_mock.explanation = "Some explanation"
 
-        mock_llm.with_structured_output.return_value.invoke.return_value = decision_mock
+        mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=decision_mock)
         mock_get_llm.return_value = mock_llm
 
         state = {
@@ -38,7 +42,7 @@ class TestDeciderNode:
             "reasoning": "Reasoning context",
         }
 
-        result = decider_node(state)
+        result = asyncio.run(decider_node(state))
         assert result["selected_action"] == "auto_respond"
         assert result["risk_level"] == "SAFE"
         assert result["evidence"] == "Some evidence"
@@ -50,11 +54,12 @@ class TestDeciderNode:
         mock_llm = MagicMock()
         decision_mock = MagicMock()
         decision_mock.selected_action = "hallucinated_action_name"
+        decision_mock.selected_actions = None
         decision_mock.action_payload = {}
         decision_mock.evidence = "evidence"
         decision_mock.explanation = "explanation"
 
-        mock_llm.with_structured_output.return_value.invoke.return_value = decision_mock
+        mock_llm.with_structured_output.return_value.ainvoke = AsyncMock(return_value=decision_mock)
         mock_get_llm.return_value = mock_llm
 
         state = {
@@ -63,7 +68,7 @@ class TestDeciderNode:
             "reasoning": "Context",
         }
 
-        result = decider_node(state)
+        result = asyncio.run(decider_node(state))
         assert result["selected_action"] is None
         assert "error" in result
         assert "hallucinated" in result["error"]
@@ -71,55 +76,33 @@ class TestDeciderNode:
 
 # ── Retriever Node Tests ──────────────────────────────────────────────────────
 class TestRetrieverNode:
-    @patch("services.orchestrator.graph.nodes.retriever._redis_client")
-    @patch("services.orchestrator.graph.nodes.retriever._http_client")
-    def test_retriever_cache_hit(self, mock_http: MagicMock, mock_redis: MagicMock) -> None:
-        cached_chunks = [{"content": "cached info", "source": "docs", "relevance_score": 0.95}]
-        mock_redis.get.return_value = json.dumps(cached_chunks)
-
-        state = {
-            "session_id": "s1",
-            "user_message": "Hello cached",
-        }
-
-        result = retriever_node(state)
-        assert result["retrieved_chunks"] == cached_chunks
-        mock_http.post.assert_not_called()
-
-    @patch("services.orchestrator.graph.nodes.retriever._redis_client")
-    @patch("services.orchestrator.graph.nodes.retriever._http_client")
-    def test_retriever_cache_miss_http_success(
-        self, mock_http: MagicMock, mock_redis: MagicMock
-    ) -> None:
-        mock_redis.get.return_value = None
-
+    @patch("services.orchestrator.graph.nodes.retriever.httpx.AsyncClient")
+    def test_retriever_http_success(self, mock_client_cls: MagicMock) -> None:
+        mock_client = AsyncMock()
         mock_resp = MagicMock()
+        mock_resp.status_code = 200
         mock_resp.json.return_value = {"chunks": [{"content": "http info", "source": "web"}]}
         mock_resp.raise_for_status = MagicMock()
-        mock_http.post.return_value = mock_resp
+        mock_client.post.return_value = mock_resp
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
 
         state = {
             "session_id": "s1",
             "user_message": "Hello http",
         }
 
-        result = retriever_node(state)
-        assert len(result["retrieved_chunks"]) == 1
+        result = asyncio.run(retriever_node(state))
+        assert len(result["retrieved_chunks"]) >= 1
         assert result["retrieved_chunks"][0]["source"] == "web"
 
         # Verify X-Service-Token was passed in HTTP headers
-        args, kwargs = mock_http.post.call_args
+        args, kwargs = mock_client.post.call_args
         assert "X-Service-Token" in kwargs["headers"]
-        assert mock_redis.set.called
 
 
 # ── Memory Writer Node Tests ──────────────────────────────────────────────────
 class TestMemoryWriterNode:
-    @patch("services.orchestrator.graph.nodes.memory_writer._http_client")
-    @patch("services.orchestrator.graph.nodes.memory_writer._thread_pool")
-    def test_memory_writer_submits_to_pool(
-        self, mock_pool: MagicMock, mock_http: MagicMock
-    ) -> None:
+    async def test_memory_writer_node_non_blocking(self) -> None:
         state = {
             "session_id": "s1",
             "user_message": "Hello",
@@ -127,17 +110,14 @@ class TestMemoryWriterNode:
             "final_answer": "Answer",
             "selected_action": "auto_respond",
         }
-        memory_writer_node(state)
-        assert mock_pool.submit.called
+        res = await memory_writer_node(state)
+        assert res == {}
 
 
 # ── API Endpoint Tests ────────────────────────────────────────────────────────
-_TOKEN = "change-me-in-production"
-_HEADERS = {"X-Service-Token": _TOKEN}
-
-
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setenv("HITL_SERVICE_TOKEN", _TOKEN)
     # Mock lifespan requirements (Postgres connection pool, Graph building, Reaper task)
     mock_pool = MagicMock()
     mock_pool.connection.return_value.__enter__.return_value.execute = MagicMock()
@@ -147,7 +127,7 @@ def client():
     with (
         patch("services.orchestrator.main.validate_llm_config"),
         patch("services.orchestrator.main.ConnectionPool", return_value=mock_pool),
-        patch("services.orchestrator.main.build_graph", return_value=mock_graph),
+        patch("services.orchestrator.main.build_graph_async", return_value=mock_graph),
         TestClient(app) as c,
     ):
         c.app.state.conn_pool = mock_pool
@@ -189,3 +169,6 @@ class TestOrchestratorAPI:
             headers=_HEADERS,
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+

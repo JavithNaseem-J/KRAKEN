@@ -1,13 +1,8 @@
-"""
-Ticket Action Handlers — executes ticket triage operations on the active database.
-"""
-
 from __future__ import annotations
 
-import contextlib
 import json
 import os
-import tempfile
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -16,19 +11,93 @@ import structlog
 
 from shared.exceptions import ActionExecutionError
 
-from ..safety.path_validator import WORKSPACE_ROOT
+from ..safety.path_validator import WORKSPACE_ROOT, atomic_write_json
 
 log = structlog.get_logger(__name__)
 
 _TICKETS_FILE = WORKSPACE_ROOT / "tickets.json"
-_SEED_FILE = (
-    Path(__file__).resolve().parents[4] / "data" / "knowledge" / "tickets" / "sample_tickets.json"
-)
+# Locate sample_tickets.json relative to repository root safely
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SEED_FILE = _REPO_ROOT / "data" / "knowledge" / "tickets" / "sample_tickets.json"
 
-# Thread safety lock for the simulated file-based DB
-_DB_LOCK = threading.Lock()
+_tickets_lock = threading.Lock()
+
+# ── PostgreSQL Support ────────────────────────────────────────────────────────
+_pg_pool: Any = None
 
 
+def get_pg_pool() -> Any:
+    """Returns active psycopg_pool ConnectionPool if PostgreSQL is configured."""
+    global _pg_pool
+    if _pg_pool is not None:
+        return _pg_pool
+
+    pg_url = os.getenv("POSTGRES_URL", os.getenv("DATABASE_URL"))
+    if not pg_url:
+        return None
+
+    try:
+        from psycopg_pool import ConnectionPool
+
+        from shared.config import get_settings
+
+        settings = get_settings()
+
+        _pg_pool = ConnectionPool(
+            conninfo=settings.postgres_sync_url,
+            min_size=1,
+            max_size=5,
+            timeout=5.0,
+            max_idle=settings.postgres_max_idle_time,
+            max_lifetime=1800.0,
+            kwargs={
+                "autocommit": True,
+                "keepalives": settings.postgres_keepalives,
+                "keepalives_idle": settings.postgres_keepalives_idle,
+                "keepalives_interval": settings.postgres_keepalives_interval,
+                "keepalives_count": settings.postgres_keepalives_count,
+            },
+        )
+        _init_pg_tickets_table(_pg_pool)
+        log.info("ticket_handler.postgres_connected", url=pg_url.split("@")[-1])
+    except Exception as exc:
+        log.warning("ticket_handler.postgres_init_failed", error=str(exc))
+        _pg_pool = None
+
+    return _pg_pool
+
+
+def _init_pg_tickets_table(pool: Any) -> None:
+    """Creates the tickets table in PostgreSQL and seeds initial data if empty."""
+    try:
+        from shared.db.tickets import ensure_tickets_table, seed_tickets
+
+        with pool.connection() as conn, conn.cursor() as cur:
+            ensure_tickets_table(conn)
+            cur.execute("SELECT COUNT(*) FROM tickets;")
+            count = cur.fetchone()[0]
+            if count == 0:
+                seed_data = _load_seed_tickets()
+                seeded = seed_tickets(conn, seed_data, update_on_conflict=False)
+                log.info("ticket_handler.pg_seeded", count=seeded)
+    except Exception as exc:
+        log.error("ticket_handler.pg_ddl_error", error=str(exc))
+
+
+def _load_seed_tickets() -> list[dict[str, Any]]:
+    """Loads raw ticket dicts from seed or workspace file."""
+    for p in (_TICKETS_FILE, _SEED_FILE):
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    return data
+            except Exception:
+                continue
+    return []
+
+
+# ── File-Based Fallback ───────────────────────────────────────────────────────
 def _load_tickets() -> list[dict[str, Any]]:
     """Load tickets from active workspace or fall back to seed file."""
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -43,10 +112,12 @@ def _load_tickets() -> list[dict[str, Any]]:
                 )
             except Exception as exc:
                 log.error("ticket_handler.init_db_error", error=str(exc))
-                return []
+                raise ActionExecutionError(
+                    f"Failed to initialize workspace ticket database: {exc}"
+                ) from exc
         else:
             log.warning("ticket_handler.no_db_found")
-            return []
+            raise ActionExecutionError("Ticket database file and seed file are both missing.")
 
     try:
         data = json.loads(_TICKETS_FILE.read_text(encoding="utf-8"))
@@ -59,35 +130,121 @@ def _load_tickets() -> list[dict[str, Any]]:
 def _save_tickets(tickets: list[dict[str, Any]]) -> None:
     """Atomic write of updated tickets list to the workspace."""
     try:
-        json_bytes = json.dumps(tickets, indent=2, ensure_ascii=False).encode("utf-8")
-
-        # Write to temp file first to ensure atomic swap
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            dir=WORKSPACE_ROOT,
-            prefix=".tmp_tickets_",
-            suffix=".json",
-        )
-        try:
-            with os.fdopen(tmp_fd, "wb") as f:
-                f.write(json_bytes)
-            os.replace(tmp_path, _TICKETS_FILE)
-        except Exception:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-            raise
+        atomic_write_json(_TICKETS_FILE, tickets)
     except Exception as exc:
         log.error("ticket_handler.save_error", error=str(exc))
         raise ActionExecutionError(f"Failed to write ticket database: {exc}") from exc
+
+
+def _find_ticket(tickets: list[dict[str, Any]], ticket_id: str) -> dict[str, Any] | None:
+    """Find ticket by ID using case-insensitive, whitespace-normalized matching."""
+    norm_id = ticket_id.strip().upper()
+    for ticket in tickets:
+        if str(ticket.get("id", "")).strip().upper() == norm_id:
+            return ticket
+    return None
+
+
+def _mutate_ticket(
+    ticket_id: str,
+    new_status: str,
+    ticket_updates: dict[str, Any],
+    result_dict: dict[str, Any],
+    log_event: str,
+    priority_upgrade: bool = False,
+) -> dict[str, Any]:
+    """
+    Helper encapsulating ticket mutation with PostgreSQL SELECT ... FOR UPDATE row locks,
+    falling back to local file locking if Postgres is unavailable.
+    """
+    pool = get_pg_pool()
+    if pool is not None:
+        try:
+            norm_id = ticket_id.strip().upper()
+            with pool.connection() as conn, conn.cursor() as cur:
+                # Transactional row lock
+                cur.execute(
+                    "SELECT id, title, status, priority, payload FROM tickets WHERE UPPER(id) = %s FOR UPDATE;",
+                    (norm_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise ActionExecutionError(
+                        f"Ticket '{ticket_id}' not found in PostgreSQL database."
+                    )
+
+                payload = row[4] or {}
+                payload["status"] = new_status
+                for k, v in ticket_updates.items():
+                    payload[k] = v
+
+                updated_priority = row[3]
+                if priority_upgrade and updated_priority not in ("high", "critical"):
+                    updated_priority = "high"
+                    payload["priority"] = "high"
+
+                cur.execute(
+                    """
+                    UPDATE tickets
+                    SET status = %s, priority = %s, payload = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE UPPER(id) = %s;
+                    """,
+                    (new_status, updated_priority, json.dumps(payload), norm_id),
+                )
+                conn.commit()
+
+            log.info(log_event, ticket_id=ticket_id, backend="postgres")
+            res: dict[str, Any] = {
+                "ticket_id": ticket_id,
+                "status_updated_to": new_status,
+                "success": True,
+            }
+            if priority_upgrade:
+                res["priority"] = updated_priority
+            res.update(result_dict)
+            return res
+        except ActionExecutionError:
+            raise
+        except Exception as exc:
+            log.warning("ticket_handler.pg_mutate_failed_fallback_file", error=str(exc))
+
+    # File-based fallback
+    with _tickets_lock:
+        tickets = _load_tickets()
+        ticket = _find_ticket(tickets, ticket_id)
+        if not ticket:
+            raise ActionExecutionError(f"Ticket '{ticket_id}' not found in active database.")
+
+        ticket["status"] = new_status
+        for k, v in ticket_updates.items():
+            ticket[k] = v
+
+        if priority_upgrade and ticket.get("priority", "medium") not in ("high", "critical"):
+            ticket["priority"] = "high"
+
+        _save_tickets(tickets)
+        updated_priority = ticket.get("priority")
+
+    log.info(log_event, ticket_id=ticket_id, backend="file")
+    res = {
+        "ticket_id": ticket_id,
+        "status_updated_to": new_status,
+        "success": True,
+    }
+    if priority_upgrade:
+        res["priority"] = updated_priority
+    res.update(result_dict)
+    return res
 
 
 def execute_auto_respond(
     ticket_id: str | None, response_text: str, evidence: str
 ) -> dict[str, Any]:
     """Auto-respond to a ticket or general question, citing specific evidence."""
-    if not response_text or not response_text.strip():
-        raise ActionExecutionError("response_text cannot be empty.")
     if not evidence or not evidence.strip():
         raise ActionExecutionError("evidence (cited fact from knowledge base) must be provided.")
+    if not response_text or not response_text.strip():
+        raise ActionExecutionError("response_text cannot be empty.")
 
     result_meta: dict[str, Any] = {
         "response": response_text,
@@ -96,23 +253,15 @@ def execute_auto_respond(
     }
 
     if ticket_id:
-        with _DB_LOCK:
-            tickets = _load_tickets()
-            ticket_id_norm = ticket_id.strip().upper()
-            found = False
-            for ticket in tickets:
-                if str(ticket.get("id", "")).strip().upper() == ticket_id_norm:
-                    ticket["status"] = "resolved"
-                    ticket["resolution_response"] = response_text
-                    ticket["evidence_cited"] = evidence
-                    found = True
-                    break
-            if not found:
-                raise ActionExecutionError(f"Ticket '{ticket_id}' not found in active database.")
-            _save_tickets(tickets)
+        _mutate_ticket(
+            ticket_id=ticket_id,
+            new_status="resolved",
+            ticket_updates={"resolution_response": response_text, "evidence_cited": evidence},
+            result_dict={},
+            log_event="ticket_handler.auto_respond_success",
+        )
         result_meta["ticket_id"] = ticket_id
         result_meta["status_updated_to"] = "resolved"
-        log.info("ticket_handler.auto_respond_success", ticket_id=ticket_id)
     else:
         log.info("ticket_handler.general_auto_respond_success")
 
@@ -128,38 +277,14 @@ def execute_escalate(ticket_id: str, reason: str, evidence: str) -> dict[str, An
     if not evidence or not evidence.strip():
         raise ActionExecutionError("evidence justifying escalation must be provided.")
 
-    with _DB_LOCK:
-        tickets = _load_tickets()
-        ticket_id_norm = ticket_id.strip().upper()
-        found = False
-        updated_ticket = None
-
-        for ticket in tickets:
-            if str(ticket.get("id", "")).strip().upper() == ticket_id_norm:
-                ticket["status"] = "escalated"
-                ticket["escalation_reason"] = reason
-                ticket["evidence_cited"] = evidence
-                # Escalate priority to High or Critical if not already
-                if ticket.get("priority", "medium") not in ("high", "critical"):
-                    ticket["priority"] = "high"
-                found = True
-                updated_ticket = ticket
-                break
-
-        if not found:
-            raise ActionExecutionError(f"Ticket '{ticket_id}' not found in active database.")
-
-        _save_tickets(tickets)
-
-    log.info("ticket_handler.escalate_success", ticket_id=ticket_id)
-    return {
-        "ticket_id": ticket_id,
-        "status_updated_to": "escalated",
-        "priority": updated_ticket.get("priority") if updated_ticket else None,
-        "reason": reason,
-        "evidence_cited": evidence,
-        "success": True,
-    }
+    return _mutate_ticket(
+        ticket_id=ticket_id,
+        new_status="escalated",
+        ticket_updates={"escalation_reason": reason, "evidence_cited": evidence},
+        result_dict={"reason": reason, "evidence_cited": evidence},
+        log_event="ticket_handler.escalate_success",
+        priority_upgrade=True,
+    )
 
 
 def execute_request_info(ticket_id: str, info_requested: str, evidence: str) -> dict[str, Any]:
@@ -171,32 +296,13 @@ def execute_request_info(ticket_id: str, info_requested: str, evidence: str) -> 
     if not evidence or not evidence.strip():
         raise ActionExecutionError("evidence justifying request must be provided.")
 
-    with _DB_LOCK:
-        tickets = _load_tickets()
-        ticket_id_norm = ticket_id.strip().upper()
-        found = False
-
-        for ticket in tickets:
-            if str(ticket.get("id", "")).strip().upper() == ticket_id_norm:
-                ticket["status"] = "pending"
-                ticket["info_requested"] = info_requested
-                ticket["evidence_cited"] = evidence
-                found = True
-                break
-
-        if not found:
-            raise ActionExecutionError(f"Ticket '{ticket_id}' not found in active database.")
-
-        _save_tickets(tickets)
-
-    log.info("ticket_handler.request_info_success", ticket_id=ticket_id)
-    return {
-        "ticket_id": ticket_id,
-        "status_updated_to": "pending",
-        "info_requested": info_requested,
-        "evidence_cited": evidence,
-        "success": True,
-    }
+    return _mutate_ticket(
+        ticket_id=ticket_id,
+        new_status="pending",
+        ticket_updates={"info_requested": info_requested, "evidence_cited": evidence},
+        result_dict={"info_requested": info_requested, "evidence_cited": evidence},
+        log_event="ticket_handler.request_info_success",
+    )
 
 
 def execute_close(ticket_id: str, reason: str, evidence: str) -> dict[str, Any]:
@@ -208,29 +314,95 @@ def execute_close(ticket_id: str, reason: str, evidence: str) -> dict[str, Any]:
     if not evidence or not evidence.strip():
         raise ActionExecutionError("evidence justifying closure must be provided.")
 
-    with _DB_LOCK:
+    return _mutate_ticket(
+        ticket_id=ticket_id,
+        new_status="closed",
+        ticket_updates={"closure_reason": reason, "evidence_cited": evidence},
+        result_dict={"closure_reason": reason, "evidence_cited": evidence},
+        log_event="ticket_handler.close_success",
+    )
+
+
+def execute_create_ticket(
+    user_name: str,
+    category: str,
+    priority: str,
+    description: str,
+    evidence: str = "",
+) -> dict[str, Any]:
+    """Create a new ticket with auto-generated ID (TK-XXX)."""
+    user_str = (user_name or "Anonymous User").strip()
+    desc_str = (description or "New IT Ticket Request").strip()
+    cat_str = (category or "IT Support").strip()
+    valid_prio = (priority or "medium").strip().lower()
+    if valid_prio not in ("low", "medium", "high", "critical"):
+        valid_prio = "medium"
+
+    pool = get_pg_pool()
+    if pool is not None:
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute("SELECT MAX(CAST(SUBSTRING(id FROM 4) AS INTEGER)) FROM tickets WHERE id LIKE 'TK-%';")
+                row = cur.fetchone()
+                max_num = row[0] if (row and row[0] is not None) else 13
+                new_id = f"TK-{max_num + 1:03d}"
+                payload = {
+                    "id": new_id,
+                    "title": f"{cat_str}: {desc_str[:40]}...",
+                    "user": user_str,
+                    "category": cat_str,
+                    "priority": valid_prio,
+                    "description": desc_str,
+                    "status": "open",
+                }
+                cur.execute(
+                    "INSERT INTO tickets (id, title, status, priority, payload) VALUES (%s, %s, %s, %s, %s);",
+                    (new_id, payload["title"], "open", valid_prio, json.dumps(payload)),
+                )
+                conn.commit()
+            log.info("ticket_handler.create_ticket_pg_success", ticket_id=new_id)
+            return {
+                "ticket_id": new_id,
+                "status": "open",
+                "user": user_str,
+                "category": cat_str,
+                "priority": valid_prio,
+                "description": desc_str,
+                "success": True,
+            }
+        except Exception as exc:
+            log.warning("ticket_handler.pg_create_failed_fallback_file", error=str(exc))
+
+    with _tickets_lock:
         tickets = _load_tickets()
-        ticket_id_norm = ticket_id.strip().upper()
-        found = False
-
-        for ticket in tickets:
-            if str(ticket.get("id", "")).strip().upper() == ticket_id_norm:
-                ticket["status"] = "closed"
-                ticket["closure_reason"] = reason
-                ticket["evidence_cited"] = evidence
-                found = True
-                break
-
-        if not found:
-            raise ActionExecutionError(f"Ticket '{ticket_id}' not found in active database.")
-
+        nums = []
+        for t in tickets:
+            t_id = str(t.get("id", ""))
+            m = re.search(r"\d+", t_id)
+            if m:
+                nums.append(int(m.group(0)))
+        next_num = (max(nums) + 1) if nums else 14
+        new_id = f"TK-{next_num:03d}"
+        new_ticket = {
+            "id": new_id,
+            "title": f"{cat_str}: {desc_str[:40]}...",
+            "user": user_str,
+            "category": cat_str,
+            "priority": valid_prio,
+            "description": desc_str,
+            "status": "open",
+        }
+        tickets.append(new_ticket)
         _save_tickets(tickets)
 
-    log.info("ticket_handler.close_success", ticket_id=ticket_id)
+    log.info("ticket_handler.create_ticket_file_success", ticket_id=new_id)
     return {
-        "ticket_id": ticket_id,
-        "status_updated_to": "closed",
-        "closure_reason": reason,
-        "evidence_cited": evidence,
+        "ticket_id": new_id,
+        "status": "open",
+        "user": user_str,
+        "category": cat_str,
+        "priority": valid_prio,
+        "description": desc_str,
         "success": True,
     }
+

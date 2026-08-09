@@ -1,11 +1,11 @@
 COMPOSE = docker compose
 
-.PHONY: help up down build logs restart ingest seed test lint format type-check clean install-dev eval
+.PHONY: help up down build logs restart status ingest seed test lint format type-check clean install-dev eval
 
 
 help:
 	@echo ""
-	@echo "  Autonomous Knowledge Execution Agent"
+	@echo "  KRAKEN (Knowledge Retrieval & Autonomous Knowledge Execution Network)"
 	@echo "  ─────────────────────────────────────"
 	@echo "  install-dev Install dev/test dependencies"
 	@echo "  up          Start all services (detached)"
@@ -13,6 +13,7 @@ help:
 	@echo "  build       Rebuild all Docker images"
 	@echo "  logs        Tail logs for all services"
 	@echo "  restart     Restart all services"
+	@echo "  status      Run health check across all microservices"
 	@echo "  ingest      Run the knowledge ingestion pipeline"
 	@echo "  seed        Seed sample ticket data"
 	@echo "  test        Run the full test suite"
@@ -43,6 +44,9 @@ logs:
 
 restart:
 	$(COMPOSE) restart
+
+status:
+	python scripts/check_health.py
 
 ingest:
 	python scripts/ingest_knowledge.py

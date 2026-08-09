@@ -1,1 +1,1 @@
-# tests integration package
+"""Integration test package for AKEA."""

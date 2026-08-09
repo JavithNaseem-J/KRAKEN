@@ -157,8 +157,24 @@ def print_report(results: list[dict], threshold: float) -> int:
         print()
 
     overall_avg = sum(r["score"] for r in results) / len(results) if results else 0
+    action_accuracy = (
+        sum(r["action_match"] for r in results if "action_match" in r) / len(results)
+        if results
+        else 0
+    )
+    retrieval_hit_rate = (
+        sum(1 for r in results if r.get("source_coverage", 0) > 0) / len(results) if results else 0
+    )
+    avg_latency = (
+        sum(r["latency_s"] for r in results if "latency_s" in r) / len(results) if results else 0
+    )
+
     print("─" * 72)
-    print(f"  Overall average: {overall_avg:.1%}   Passed: {passed}/{len(results)}")
+    print("  Summary Metrics:")
+    print(f"  • Action Decision Accuracy: {action_accuracy:.1%}")
+    print(f"  • Retrieval Hit Rate:       {retrieval_hit_rate:.1%}")
+    print(f"  • Average Latency:          {avg_latency:.2f}s")
+    print(f"  • Overall Composite Score:  {overall_avg:.1%}   Passed: {passed}/{len(results)}")
     print("=" * 72)
     print()
 
@@ -168,7 +184,7 @@ def print_report(results: list[dict], threshold: float) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="AKEA Evaluation Harness")
     parser.add_argument("--base-url", default="http://localhost:8000")
-    parser.add_argument("--api-key", default="dev-key-1:developer")
+    parser.add_argument("--api-key", default="dev-key-alice-longer-secure-key:alice")
     parser.add_argument("--threshold", type=float, default=0.7)
     parser.add_argument("--case", help="Run only this case ID")
     args = parser.parse_args()

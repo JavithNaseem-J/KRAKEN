@@ -41,7 +41,7 @@ def get_llm() -> Runnable[Any, Any]:
         model=s.llm_model,
         base_url=s.llm_base_url,
         api_key=s.llm_api_key,
-        temperature=0.0,
+        temperature=s.llm_temperature,
         max_tokens=s.llm_max_tokens,
         timeout=s.llm_timeout_seconds,
     )
@@ -51,7 +51,7 @@ def get_llm() -> Runnable[Any, Any]:
             model=s.llm_fallback_model,
             base_url=s.llm_base_url,
             api_key=s.llm_api_key,
-            temperature=0.0,
+            temperature=s.llm_temperature,
             max_tokens=s.llm_max_tokens,
             timeout=s.llm_timeout_seconds,
         )

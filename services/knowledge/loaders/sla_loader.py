@@ -1,98 +1,52 @@
 """
 SLA / Escalation rules loader.
-
 Reads .json files from data/knowledge/sla/.
-Expected schema per rule:
-  {
-    "id": "SLA-001",
-    "name": "High Priority Ticket SLA",
-    "priority": "high",
-    "response_time_hours": 4,
-    "resolution_time_hours": 8,
-    "escalation_path": ["L1 Support", "L2 Support", "Manager"],
-    "notes": "Optional free text"
-  }
-
-Each rule is converted to a human-readable text chunk for semantic search.
+Converts rules into human-readable text chunks for semantic search.
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
-import structlog
+from .base import load_structured_chunks, resolve_data_dir
 
-log = structlog.get_logger(__name__)
+from shared.models.knowledge import SLADocument
 
-SLA_DIR = Path(__file__).resolve().parents[3] / "data" / "knowledge" / "sla"
+SLA_DIR = resolve_data_dir("sla")
 
 
-def _rule_to_text(rule: dict[str, Any]) -> str:
-    """Convert an SLA rule dict to a natural-language text chunk."""
-    escalation = " → ".join(rule.get("escalation_path", []))
+def _rule_to_text(rule_raw: dict[str, Any]) -> str:
+    """Convert an SLA rule dict to a natural-language text chunk via SLADocument validation."""
+    rule_id = rule_raw.get("rule_id") or rule_raw.get("id") or "sla_unknown"
+    severity = rule_raw.get("severity") or rule_raw.get("priority") or "medium"
+    resp_mins = rule_raw.get("response_sla_minutes") or (rule_raw.get("response_time_hours", 1) * 60)
+    res_mins = rule_raw.get("resolution_sla_minutes") or (rule_raw.get("resolution_time_hours", 4) * 60)
+
+    sla_doc = SLADocument(
+        rule_id=str(rule_id),
+        severity=str(severity),
+        response_sla_minutes=int(resp_mins),
+        resolution_sla_minutes=int(res_mins),
+        description=str(rule_raw.get("notes") or rule_raw.get("name") or "SLA Policy Rule"),
+    )
+
+    escalation = " → ".join(rule_raw.get("escalation_path", []))
     parts = [
-        f"SLA Rule: {rule.get('name', rule.get('id', 'unknown'))}",
-        f"Priority level: {rule.get('priority', '')}",
-        f"Response time: {rule.get('response_time_hours', '?')} hours",
-        f"Resolution time: {rule.get('resolution_time_hours', '?')} hours",
+        f"SLA Rule: {sla_doc.rule_id}",
+        f"Severity level: {sla_doc.severity}",
+        f"Response time: {sla_doc.response_sla_minutes} minutes",
+        f"Resolution time: {sla_doc.resolution_sla_minutes} minutes",
         f"Escalation path: {escalation}" if escalation else "",
-        f"Notes: {rule.get('notes', '')}" if rule.get("notes") else "",
+        f"Description: {sla_doc.description}",
     ]
     return "\n".join(p for p in parts if p)
 
 
 def load_sla_chunks() -> list[dict[str, Any]]:
-    """
-    Load all SLA rule files and return ChromaDB-ready chunk dicts.
-
-    Returns:
-        List of dicts with keys: id, document, metadata
-    """
-    if not SLA_DIR.exists():
-        log.warning("sla_loader.dir_missing", path=str(SLA_DIR))
-        return []
-
-    files = [f for f in SLA_DIR.iterdir() if f.suffix.lower() == ".json"]
-
-    if not files:
-        log.warning("sla_loader.no_files", path=str(SLA_DIR))
-        return []
-
-    all_chunks: list[dict[str, Any]] = []
-
-    for file_path in sorted(files):
-        log.info("sla_loader.loading", file=file_path.name)
-        try:
-            data = json.loads(file_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            log.error("sla_loader.parse_error", file=file_path.name, error=str(exc))
-            continue
-
-        rules = data if isinstance(data, list) else [data]
-
-        for rule in rules:
-            rule_id = str(rule.get("id", ""))
-            if not rule_id:
-                log.warning("sla_loader.missing_id", rule=rule)
-                continue
-
-            all_chunks.append(
-                {
-                    "id": f"sla_{rule_id}",
-                    "document": _rule_to_text(rule),
-                    "metadata": {
-                        "source": "sla",
-                        "rule_id": rule_id,
-                        "priority": str(rule.get("priority", "")),
-                        "response_time_hours": str(rule.get("response_time_hours", "")),
-                        "resolution_time_hours": str(rule.get("resolution_time_hours", "")),
-                    },
-                }
-            )
-
-        log.info("sla_loader.done", file=file_path.name, rules=len(rules))
-
-    log.info("sla_loader.complete", total_chunks=len(all_chunks))
-    return all_chunks
+    """Load all SLA rules from JSON files."""
+    return load_structured_chunks(
+        data_dir=SLA_DIR,
+        allowed_suffixes={".json"},
+        record_to_text=_rule_to_text,
+        id_prefix="sla",
+    )

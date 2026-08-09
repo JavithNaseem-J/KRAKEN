@@ -1,139 +1,58 @@
 """
 Executor Node — dispatches the selected action to the action service.
 
-HITL Gate:
-  If risk_level == "CRITICAL", this node calls the approval service and uses
-  LangGraph's interrupt() to pause the graph. The graph only resumes when the
-  orchestrator receives the approval callback and calls graph.invoke(Command(resume=...)).
+For CRITICAL actions: registers with approval service and uses LangGraph interrupt()
+to pause execution until a human decision arrives.
 
-  If risk_level == "SAFE", the action service is called directly.
-
-For "respond_only" actions, execution is skipped entirely.
+Retry strategy for HTTP calls: tenacity with exponential backoff and async sleep —
+no thread-blocking waits during backoff.
+  - 3 attempts, 0.5s → 1s → 2s
+  - On exhaustion: returns error dict, does not raise
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
 import structlog
 from langgraph.types import interrupt
 
-from services.orchestrator.graph.state import GraphState
 from shared.config import get_settings
+from shared.http_client import post_with_retry, service_headers
 from shared.models.action import ActionRequest
+
+from ..state import GraphState
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
-# Module-level client for connection reuse
-_http_client = httpx.Client(timeout=30.0)
-
-
-def executor_node(state: GraphState) -> dict:
-    session_id = state.get("session_id", "")
-    action_name = state.get("selected_action")
-    action_payload = state.get("action_payload") or {}
-    risk_level = state.get("risk_level", "SAFE")
-    reasoning = state.get("reasoning", "")
-    user_id = state.get("user_id", "system")
-
-    log.info(
-        "executor.start",
-        session_id=session_id,
-        action=action_name,
-        risk=risk_level,
-    )
-
-    if not action_name:
-        log.info("executor.skip_no_action", session_id=session_id)
-        return {"action_result": None, "approval_status": None}
-
-    # ── CRITICAL: pause graph until human approves ─────────────────────────────
-    if risk_level == "CRITICAL":
-        try:
-            approval_id = _register_approval(
-                action_name=action_name,
-                payload=action_payload,
-                reasoning=reasoning,
-                session_id=session_id,
-            )
-        except Exception as exc:
-            log.error("executor.approval_register_failed", error=str(exc))
-            return {
-                "approval_status": "failed",
-                "action_result": {
-                    "success": False,
-                    "error": f"Failed to register approval request: {exc}",
-                },
-                "error": f"Failed to register approval request: {exc}",
-            }
-
-        # interrupt() suspends graph here — resumes via Command(resume=decision)
-        decision: dict[str, str] = interrupt(
-            {
-                "approval_id": approval_id,
-                "action_name": action_name,
-                "payload": action_payload,
-            }
-        )
-
-        decision_value = decision.get("decision", "reject")
-        log.info(
-            "executor.hitl_decision",
-            session_id=session_id,
-            approval_id=approval_id,
-            decision=decision_value,
-        )
-
-        if decision_value != "approve":
-            return {
-                "approval_id": approval_id,
-                "approval_status": decision_value,
-                "action_result": {"cancelled": True, "reason": f"Human decision: {decision_value}"},
-            }
-
-        return {
-            "approval_id": approval_id,
-            "approval_status": "approved",
-            "action_result": _call_action_service(
-                action_name, action_payload, session_id, user_id, reasoning
-            ),
-        }
-
-    # ── SAFE: call action service directly ────────────────────────────────────
-    return {
-        "approval_status": None,
-        "action_result": _call_action_service(
-            action_name, action_payload, session_id, user_id, reasoning
-        ),
-    }
-
-
-def _register_approval(
+async def _register_approval(
+    client: httpx.AsyncClient,
     action_name: str,
     payload: dict[str, Any],
     reasoning: str,
     session_id: str,
 ) -> str:
     """Call approval service to register pending action. Returns approval_id."""
-    resp = _http_client.post(
+    resp = await post_with_retry(
+        client,
         f"{settings.approval_url}/pending",
-        json={
+        {
             "action_name": action_name,
             "payload": payload,
             "reasoning": reasoning,
             "session_id": session_id,
         },
-        headers={"X-Service-Token": settings.hitl_service_token},
-        timeout=10.0,
+        headers=service_headers(trace_id=session_id),
     )
-    resp.raise_for_status()
     return resp.json()["approval_id"]
 
 
-def _call_action_service(
+async def _call_action_service(
+    client: httpx.AsyncClient,
     action_name: str,
     payload: dict[str, Any],
     session_id: str,
@@ -149,14 +68,139 @@ def _call_action_service(
         reasoning=reasoning,
     )
     try:
-        resp = _http_client.post(
+        resp = await post_with_retry(
+            client,
             f"{settings.action_url}/execute",
-            json=request.model_dump(),
-            headers={"X-Service-Token": settings.hitl_service_token},
-            timeout=30.0,
+            request.model_dump(),
+            headers=service_headers(trace_id=session_id),
         )
-        resp.raise_for_status()
         return resp.json()
     except Exception as exc:
         log.error("executor.action_failed", action=action_name, error=str(exc))
         return {"success": False, "error": str(exc)}
+
+
+async def executor_node(state: GraphState) -> dict:
+    """
+    Dispatch the selected action(s) to the action service.
+    CRITICAL actions pause execution via LangGraph interrupt() until human approval arrives.
+    SAFE actions are executed concurrently via asyncio.gather.
+    """
+    session_id = state.get("session_id", "")
+    selected_actions = state.get("selected_actions") or []
+    primary_action = state.get("selected_action")
+    action_payload = state.get("action_payload") or {}
+    risk_level = state.get("risk_level", "SAFE")
+    reasoning = state.get("reasoning", "")
+    user_id = state.get("user_id", "system")
+
+    if not selected_actions and primary_action:
+        selected_actions = [
+            {
+                "action_name": primary_action,
+                "action_payload": action_payload,
+                "risk_level": risk_level,
+            }
+        ]
+
+    log.info(
+        "executor.start",
+        session_id=session_id,
+        action_count=len(selected_actions),
+        risk=risk_level,
+    )
+
+    if not selected_actions:
+        log.info("executor.skip_no_action", session_id=session_id)
+        return {"action_result": None, "approval_status": None}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        safe_actions = [a for a in selected_actions if a.get("risk_level") == "SAFE"]
+        critical_actions = [a for a in selected_actions if a.get("risk_level") == "CRITICAL"]
+
+        results = []
+
+        # ── Concurrent SAFE Action Execution ────────────────────────────────────
+        if safe_actions:
+            log.info("executor.safe_parallel_dispatch", count=len(safe_actions))
+            tasks = [
+                _call_action_service(
+                    client,
+                    act["action_name"],
+                    act.get("action_payload", {}),
+                    session_id,
+                    user_id,
+                    reasoning,
+                )
+                for act in safe_actions
+            ]
+            safe_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for res in safe_results:
+                if isinstance(res, Exception):
+                    results.append({"success": False, "error": str(res)})
+                else:
+                    results.append(res)
+
+        # ── CRITICAL: pause graph until human approves ─────────────────────────
+        if critical_actions:
+            crit_act = critical_actions[0]
+            c_name = crit_act["action_name"]
+            c_payload = crit_act.get("action_payload", {})
+            try:
+                approval_id = await _register_approval(
+                    client=client,
+                    action_name=c_name,
+                    payload=c_payload,
+                    reasoning=reasoning,
+                    session_id=session_id,
+                )
+            except Exception as exc:
+                log.error("executor.approval_register_failed", error=str(exc))
+                return {
+                    "approval_status": "failed",
+                    "action_result": {
+                        "success": False,
+                        "error": f"Failed to register approval request: {exc}",
+                    },
+                    "error": f"Failed to register approval request: {exc}",
+                }
+
+            # interrupt() suspends graph here — resumes via Command(resume=decision)
+            decision: dict[str, str] = interrupt(
+                {
+                    "approval_id": approval_id,
+                    "action_name": c_name,
+                    "payload": c_payload,
+                }
+            )
+
+            decision_value = decision.get("decision", "reject")
+            log.info(
+                "executor.hitl_decision",
+                session_id=session_id,
+                approval_id=approval_id,
+                decision=decision_value,
+            )
+
+            if decision_value != "approve":
+                results.append({"cancelled": True, "reason": f"Human decision: {decision_value}"})
+                return {
+                    "approval_id": approval_id,
+                    "approval_status": decision_value,
+                    "action_result": results[0] if len(results) == 1 else results,
+                }
+
+            crit_res = await _call_action_service(
+                client, c_name, c_payload, session_id, user_id, reasoning
+            )
+            results.append(crit_res)
+            return {
+                "approval_id": approval_id,
+                "approval_status": "approved",
+                "action_result": results[0] if len(results) == 1 else results,
+            }
+
+        return {
+            "approval_status": None,
+            "action_result": results[0] if len(results) == 1 else results,
+        }

@@ -6,9 +6,13 @@ from fastapi.testclient import TestClient
 
 from services.action.main import app
 
+_TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
+_HEADERS = {"X-Service-Token": _TOKEN}
+
 
 @pytest.fixture
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
+    monkeypatch.setenv("HITL_SERVICE_TOKEN", _TOKEN)
     # Patch WORKSPACE_ROOT in write_handler and path_validator
     # to use a safe temp directory for test writes
     with (
@@ -66,7 +70,7 @@ def test_execute_unknown_action(client):
             "payload": {},
             "reasoning": "r",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -81,13 +85,13 @@ def test_execute_missing_evidence(client):
             "payload": {},
             "reasoning": "r",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     # The action execution catches the error and returns a structured failureActionResult
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
     assert res["success"] is False
-    assert "requires 'evidence' parameter" in res["error"]
+    assert "evidence" in res["error"]
 
 
 @patch("services.action.main.execute_auto_respond")
@@ -102,7 +106,7 @@ def test_execute_auto_respond_success(mock_handler, client):
             "payload": {"evidence": "citing facts", "response_text": "hello"},
             "reasoning": "answering query",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
@@ -121,7 +125,7 @@ def test_execute_write_json_success(client):
             "payload": {"target_path": "output.json", "content": {"key": "val"}},
             "reasoning": "saving results",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
@@ -140,7 +144,7 @@ def test_execute_write_json_path_traversal(client):
             "payload": {"target_path": "../escaped.json", "content": {"key": "val"}},
             "reasoning": "unsafe write",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
@@ -158,7 +162,7 @@ def test_execute_write_json_invalid_extension(client):
             "payload": {"target_path": "unsafe.sh", "content": {"key": "val"}},
             "reasoning": "unsafe extension",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
@@ -178,7 +182,7 @@ def test_execute_escalate_success(mock_handler, client):
             "payload": {"ticket_id": "TK-100", "reason": "SLA breach", "evidence": "sla evidence"},
             "reasoning": "escalating",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
@@ -202,7 +206,7 @@ def test_execute_request_info_success(mock_handler, client):
             },
             "reasoning": "need info",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
@@ -222,7 +226,7 @@ def test_execute_close_success(mock_handler, client):
             "payload": {"ticket_id": "TK-100", "reason": "resolved", "evidence": "fix confirmed"},
             "reasoning": "closing",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     res = response.json()

@@ -3,7 +3,7 @@ FAQ / Policy knowledge base loader.
 
 Reads all .pdf, .md, and .txt files from data/knowledge/faq/.
 Splits each document into overlapping chunks suitable for semantic search.
-Returns a list of dicts ready for ChromaDB upsert.
+Returns a list of structured chunk dicts.
 """
 
 from __future__ import annotations
@@ -15,13 +15,16 @@ from typing import Any
 
 import structlog
 
+from shared.models.knowledge import FAQDocument
+from .base import resolve_data_dir
+
 log = structlog.get_logger(__name__)
 
 # Chunking constants
 CHUNK_SIZE = 800  # characters — balances context vs. precision
 CHUNK_OVERLAP = 100  # characters — preserves sentence continuity across boundaries
 
-FAQ_DIR = Path(__file__).resolve().parents[3] / "data" / "knowledge" / "faq"
+FAQ_DIR = resolve_data_dir("faq")
 
 
 def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
@@ -63,7 +66,7 @@ def _load_text(path: Path) -> str:
 
 def load_faq_chunks() -> list[dict[str, Any]]:
     """
-    Load all FAQ/Policy documents and return ChromaDB-ready chunk dicts.
+    Load all FAQ/Policy documents and return Qdrant-ready chunk dicts.
 
     Returns:
         List of dicts with keys: id, document, metadata
@@ -90,7 +93,13 @@ def load_faq_chunks() -> list[dict[str, Any]]:
             continue
 
         chunks = _chunk_text(raw)
-        doc_id = hashlib.md5(file_path.name.encode()).hexdigest()[:12]
+        doc_id = hashlib.blake2b(file_path.name.encode(), digest_size=6).hexdigest()
+        faq_doc = FAQDocument(
+            doc_id=doc_id,
+            title=file_path.stem.replace("_", " ").title(),
+            content=raw[:200],
+            category="policy",
+        )
 
         for i, chunk in enumerate(chunks):
             chunk_id = f"faq_{doc_id}_{i:04d}"
@@ -101,6 +110,8 @@ def load_faq_chunks() -> list[dict[str, Any]]:
                     "metadata": {
                         "source": "faq",
                         "file": file_path.name,
+                        "title": faq_doc.title,
+                        "category": faq_doc.category,
                         "chunk_index": i,
                         "total_chunks": len(chunks),
                     },

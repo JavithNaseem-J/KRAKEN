@@ -1,20 +1,7 @@
-"""
-Redis-backed approval queue with TTL and timeout tracking.
-
-Key design decisions:
-  - Each pending approval is stored as `akea:approval:{approval_id}` in Redis
-    with a TTL equal to APPROVAL_TIMEOUT_SECONDS.
-  - A shadow metadata key `akea:approval:meta:{approval_id}` is stored with a
-    longer TTL (timeout + 1 hour) so that the background timeout checker can
-    retrieve the full payload and session_id even after the main key expires.
-  - Uses atomic GETDEL to eliminate double-resolve race conditions.
-  - Pipelines all checks to prevent O(N) Redis round-trip overhead.
-  - All operations are async (redis.asyncio) — no blocking calls in the event loop.
-"""
-
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -24,9 +11,8 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-_PREFIX = "akea:approval:"
-_META_PREFIX = "akea:approval:meta:"
-_INDEX = "akea:approval:index"
+_PREFIX = "kraken:approval:"
+_INDEX = "kraken:approval:index"
 
 
 class ApprovalQueue:
@@ -36,11 +22,9 @@ class ApprovalQueue:
     """
 
     def __init__(self, redis_url: str, timeout_seconds: int = 900) -> None:
-        self._redis: aioredis.Redis = aioredis.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-        )
+        from shared.http_client import create_async_redis_client
+
+        self._redis: aioredis.Redis = create_async_redis_client(redis_url)
         self._timeout = timeout_seconds
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -68,8 +52,6 @@ class ApprovalQueue:
         """
         Register a new pending approval. Returns the approval_id.
         Entry expires automatically after timeout_seconds via Redis TTL.
-        A copy of the data is kept in a metadata shadow key with a longer TTL
-        so we can recover the session_id on expiry.
         """
         approval_id = str(uuid.uuid4())
         expires_at = (datetime.now(UTC) + timedelta(seconds=self._timeout)).isoformat()
@@ -85,14 +67,11 @@ class ApprovalQueue:
         }
 
         key = f"{_PREFIX}{approval_id}"
-        meta_key = f"{_META_PREFIX}{approval_id}"
 
         pipe = self._redis.pipeline()
-        # Set keys without using deprecated setex
         pipe.set(key, json.dumps(entry), ex=self._timeout)
-        pipe.set(meta_key, json.dumps(entry), ex=self._timeout + 3600)
         pipe.sadd(_INDEX, approval_id)
-        pipe.expire(_INDEX, self._timeout + 3600)  # Keep index alive along with metadata
+        pipe.expire(_INDEX, self._timeout + 3600)
         await pipe.execute()
 
         log.info("queue.enqueued", approval_id=approval_id, expires_at=expires_at)
@@ -110,71 +89,44 @@ class ApprovalQueue:
         Uses atomic GETDEL to prevent race conditions.
         """
         key = f"{_PREFIX}{approval_id}"
-        meta_key = f"{_META_PREFIX}{approval_id}"
 
         # Atomically retrieve and delete key
         data = await self._redis.getdel(key)
         if data is None:
             return None
 
-        # Clean up shadow meta key and index in background pipeline
-        pipe = self._redis.pipeline()
-        pipe.delete(meta_key)
-        pipe.srem(_INDEX, approval_id)
-        await pipe.execute()
+        # Clean up index
+        await self._redis.srem(_INDEX, approval_id)
 
         log.info("queue.resolved", approval_id=approval_id)
         return json.loads(data)
 
-    async def get_expired(self) -> list[dict[str, Any]]:
+    async def set_csrf_token(self, approval_id: str, token: str) -> None:
+        """Store a CSRF token for an approval request."""
+        try:
+            await self._redis.set(f"kraken:csrf:{approval_id}", token, ex=self._timeout)
+        except Exception as exc:
+            log.warning("queue.csrf_set_failed", approval_id=approval_id, error=str(exc))
+
+    async def verify_csrf_token(self, approval_id: str, token: str) -> bool:
+        """Verify CSRF token for an approval request.
+
+        Atomically reads-and-deletes the stored token (GETDEL) so it is
+        single-use: a token that has already been verified cannot be replayed
+        within its TTL window.  Fails closed on any error or absent token.
         """
-        Return all entries in the index that are no longer in Redis
-        (i.e., their TTL has expired). Used by the timeout checker.
-        Efficiently pipelined to prevent N+1 round trips.
-        """
-        all_ids = list(await self._redis.smembers(_INDEX))
-        expired: list[dict[str, Any]] = []
-
-        if not all_ids:
-            return expired
-
-        # 1. Pipeline check of all main keys
-        pipe = self._redis.pipeline()
-        for approval_id in all_ids:
-            pipe.get(f"{_PREFIX}{approval_id}")
-        main_keys_data = await pipe.execute()
-
-        expired_ids = []
-        for approval_id, data in zip(all_ids, main_keys_data, strict=False):
-            if data is None:
-                expired_ids.append(approval_id)
-            else:
-                # Belt-and-suspenders: check explicit expires_at timestamp
-                entry = json.loads(data)
-                expires_at = datetime.fromisoformat(entry["expires_at"])
-                if datetime.now(UTC) >= expires_at:
-                    expired_ids.append(approval_id)
-
-        if expired_ids:
-            # 2. Pipeline fetch of shadow metadata for expired items
-            pipe_meta = self._redis.pipeline()
-            for approval_id in expired_ids:
-                pipe_meta.get(f"{_META_PREFIX}{approval_id}")
-            meta_keys_data = await pipe_meta.execute()
-
-            # 3. Clean up the expired items from Redis index and shadow keys
-            pipe_cleanup = self._redis.pipeline()
-            for approval_id in expired_ids:
-                pipe_cleanup.delete(f"{_PREFIX}{approval_id}")
-                pipe_cleanup.delete(f"{_META_PREFIX}{approval_id}")
-                pipe_cleanup.srem(_INDEX, approval_id)
-            await pipe_cleanup.execute()
-
-            for data in meta_keys_data:
-                if data:
-                    expired.append(json.loads(data))
-
-        return expired
+        try:
+            # GETDEL atomically retrieves and deletes the key — same pattern as resolve().
+            expected = await self._redis.getdel(f"kraken:csrf:{approval_id}")
+            if expected is None:
+                # Token was never set, already consumed, or expired — reject.
+                log.warning("queue.csrf_verify_no_token", approval_id=approval_id)
+                return False
+            return secrets.compare_digest(expected, token)
+        except Exception as exc:
+            log.warning("queue.csrf_verify_failed", approval_id=approval_id, error=str(exc))
+            # Fail closed: Redis errors must not silently approve HITL decisions.
+            return False
 
     async def close(self) -> None:
         await self._redis.aclose()

@@ -1,10 +1,8 @@
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
 structlog>=24.1.0
-langchain>=0.2.0
-langchain-community>=0.2.0
-chromadb>=0.5.0
+qdrant-client>=1.9.0
 sentence-transformers>=3.0.0
-asyncpg>=0.29.0
-sqlalchemy[asyncio]>=2.0.0
+langchain-huggingface>=0.0.3
 pypdf>=4.0.0
+

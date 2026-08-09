@@ -1,9 +1,3 @@
--- ============================================================
--- AKEA Database Initialisation
--- Runs once when the postgres container first starts.
--- ============================================================
-
--- pgvector extension (required for long-term memory embeddings)
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
@@ -21,8 +15,12 @@ CREATE TABLE IF NOT EXISTS audit_log (
     status        VARCHAR(16) NOT NULL,   -- 'success'|'failure'|'cancelled'
     payload       JSONB,
     result        JSONB,
-    reasoning     TEXT
+    reasoning     TEXT,
+    previous_hash VARCHAR(64) NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+    entry_hash    VARCHAR(64)
 );
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp DESC);
 
 -- Prevent any UPDATE or DELETE on audit_log (append-only enforcement)
 CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log DO INSTEAD NOTHING;
@@ -47,19 +45,11 @@ CREATE INDEX IF NOT EXISTS idx_episodic_memory_embedding
 CREATE INDEX IF NOT EXISTS idx_episodic_memory_user
     ON episodic_memory (user_id, timestamp DESC);
 
--- ── Structured Ticket History ─────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS tickets (
-    id          VARCHAR(64)  PRIMARY KEY,
-    title       VARCHAR(512) NOT NULL,
-    description TEXT,
-    status      VARCHAR(32),
-    priority    VARCHAR(16),
-    category    VARCHAR(64),
-    created_at  TIMESTAMPTZ,
-    resolved_at TIMESTAMPTZ,
-    metadata    JSONB        NOT NULL DEFAULT '{}'
-);
+CREATE INDEX IF NOT EXISTS idx_episodic_memory_session
+    ON episodic_memory (session_id, timestamp DESC);
 
-CREATE INDEX IF NOT EXISTS idx_tickets_status   ON tickets (status);
-CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets (priority);
-CREATE INDEX IF NOT EXISTS idx_tickets_category ON tickets (category);
+CREATE INDEX IF NOT EXISTS idx_audit_log_session
+    ON audit_log (session_id, timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_user
+    ON audit_log (user_id, timestamp DESC);

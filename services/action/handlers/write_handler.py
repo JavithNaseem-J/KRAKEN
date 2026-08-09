@@ -12,10 +12,6 @@ No write can bypass these three steps. They are called directly, not via config 
 
 from __future__ import annotations
 
-import contextlib
-import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -24,28 +20,30 @@ import structlog
 from shared.exceptions import ActionExecutionError
 
 from ..safety.backup import backup_if_exists
-from ..safety.path_validator import WORKSPACE_ROOT, validate_write_target
+from ..safety.path_validator import (
+    WORKSPACE_ROOT,
+    atomic_write_json,
+    validate_write_target,
+)
 
 log = structlog.get_logger(__name__)
 
 
 def write_json_file(target_path: str, content: dict[str, Any]) -> dict[str, Any]:
     """
-    Write content as a JSON file inside the workspace sandbox.
+    Execute write_json_file action safely.
 
-    Args:
-        target_path: Relative path within WORKSPACE_ROOT (e.g. "ticket_update.json").
-        content:     Dict to serialise as JSON.
+    Payload parameters:
+      - target_path (str, required): Relative or absolute path inside data/workspace/
+      - content (dict, required): JSON object to write
 
     Returns:
-        Dict with: resolved_path, backup_path (or None), bytes_written.
-
-    Raises:
-        PathTraversalError:    Path escapes workspace (from validate_write_target).
-        InvalidExtensionError: Extension is not .json (from validate_write_target).
-        ActionExecutionError:  Any I/O failure during write.
+      dict with resolved_path, bytes_written, backup_path, success flag.
     """
-    if not isinstance(content, dict):
+    if not target_path or not isinstance(target_path, str):
+        raise ActionExecutionError("write_json_file: target_path is required and must be a string.")
+
+    if content is None or not isinstance(content, dict):
         raise ActionExecutionError(
             "write_json_file: content must be a JSON object (dict).",
             details={"received_type": type(content).__name__},
@@ -64,24 +62,7 @@ def write_json_file(target_path: str, content: dict[str, Any]) -> dict[str, Any]
 
     # ── Step 3: Atomic write (tmp → rename) ───────────────────────────────────
     try:
-        json_bytes = json.dumps(content, indent=2, ensure_ascii=False).encode("utf-8")
-
-        # Write to a temp file in the same directory to ensure same-filesystem rename
-        tmp_fd, tmp_path = tempfile.mkstemp(
-            dir=resolved.parent,
-            prefix=".tmp_",
-            suffix=".json",
-        )
-        try:
-            with os.fdopen(tmp_fd, "wb") as f:
-                f.write(json_bytes)
-            os.replace(tmp_path, resolved)  # Atomic on POSIX; best-effort on Windows
-        except Exception:
-            # Clean up temp file on failure
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-            raise
-
+        bytes_written = atomic_write_json(resolved, content)
     except (OSError, ValueError) as exc:
         raise ActionExecutionError(
             f"Failed to write '{target_path}': {exc}",
@@ -91,13 +72,13 @@ def write_json_file(target_path: str, content: dict[str, Any]) -> dict[str, Any]
     log.info(
         "write_handler.success",
         path=str(resolved),
-        bytes=len(json_bytes),
+        bytes=bytes_written,
         backup=str(backup_path) if backup_path else None,
     )
 
     return {
         "resolved_path": str(resolved),
-        "bytes_written": len(json_bytes),
+        "bytes_written": bytes_written,
         "backup_path": str(backup_path) if backup_path else None,
         "success": True,
     }

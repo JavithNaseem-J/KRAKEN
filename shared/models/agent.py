@@ -1,71 +1,23 @@
 """
 Agent-level data contracts.
-AgentState is the single mutable object that flows through the LangGraph graph.
-All other types are request/response shapes for the orchestrator's FastAPI layer.
+Request/response shapes for the orchestrator's FastAPI layer.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, TypedDict
+from typing import Any
 
 from pydantic import BaseModel, Field
-
-
-# ── LangGraph State ───────────────────────────────────────────────────────────
-class AgentState(TypedDict, total=False):
-    """
-    The single state object passed between every LangGraph node.
-    Fields are progressively populated as the graph executes.
-    total=False means all fields are optional at construction time.
-    """
-
-    # ── Input ─────────────────────────────────────────────────────────────────
-    session_id: str
-    user_id: str
-    user_message: str
-    trace_id: str | None
-
-    # ── Conversation history (short-term memory) ──────────────────────────────
-    messages: list[dict[str, str]]  # [{role, content}, ...]
-
-    # ── Planner output ────────────────────────────────────────────────────────
-    plan_steps: list[str]
-    current_step: int
-
-    # ── Retriever output ──────────────────────────────────────────────────────
-    retrieved_chunks: list[dict[str, Any]]
-
-    # ── Reasoner output ───────────────────────────────────────────────────────
-    reasoning: str
-
-    # ── Decider output ────────────────────────────────────────────────────────
-    selected_action: str | None
-    action_payload: dict[str, Any] | None
-    risk_level: str | None  # "SAFE" | "CRITICAL"
-
-    # ── HITL ──────────────────────────────────────────────────────────────────
-    approval_id: str | None
-    approval_status: str | None  # "pending"|"approved"|"rejected"|"timeout"
-
-    # ── Executor output ───────────────────────────────────────────────────────
-    action_result: dict[str, Any] | None
-
-    # ── Responder output ──────────────────────────────────────────────────────
-    final_answer: str
-    action_explanation: str
-
-    # ── Error ─────────────────────────────────────────────────────────────────
-    error: str | None
 
 
 # ── FastAPI contracts ─────────────────────────────────────────────────────────
 class QueryRequest(BaseModel):
     """Inbound payload from the API gateway to the orchestrator."""
 
-    user_id: str = Field(..., min_length=1, max_length=64)
-    session_id: str = Field(..., min_length=1, max_length=64)
-    message: str = Field(..., min_length=1, max_length=4096)
+    user_id: str = Field("anonymous", min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_@\.-]+$")
+    session_id: str = Field(..., min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_\.-]+$")
+    message: str = Field("", min_length=0, max_length=4096)
     metadata: dict[str, Any] = Field(default_factory=dict)
     trace_id: str | None = Field(
         default=None, description="Unique request trace ID for distributed tracing"
@@ -81,7 +33,9 @@ class QueryResponse(BaseModel):
     action_taken: str | None = None
     action_result: Any | None = None
     sources: list[str] = Field(default_factory=list)
+    retrieved_chunks: list[dict[str, Any]] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     trace_id: str | None = Field(
         default=None, description="Unique request trace ID for distributed tracing"
     )
+

@@ -5,7 +5,7 @@ Uses fakeredis for an in-memory Redis implementation — zero real Redis depende
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -73,7 +73,7 @@ class TestResolve:
         await queue.resolve(aid)
         assert await queue.get(aid) is None
         # Verify metadata is also deleted
-        assert await queue._redis.get(f"akea:approval:meta:{aid}") is None
+        assert await queue._redis.get(f"kraken:approval:meta:{aid}") is None
         assert await queue.stats() == 0
 
     async def test_double_resolve_returns_none(self, queue: ApprovalQueue) -> None:
@@ -87,44 +87,31 @@ class TestResolve:
         assert result is None
 
 
-class TestGetExpired:
-    async def test_no_expired_initially(self, queue: ApprovalQueue) -> None:
-        await queue.enqueue("write_json_file", {}, "r", "s1")
-        expired = await queue.get_expired()
-        assert expired == []
+class TestCSRFToken:
+    async def test_valid_csrf_token_verifies(self, queue: ApprovalQueue) -> None:
+        aid = await queue.enqueue("escalate", {}, "r", "s1")
+        await queue.set_csrf_token(aid, "tok-abc")
+        assert await queue.verify_csrf_token(aid, "tok-abc") is True
 
-    async def test_detects_past_expires_at(self, queue: ApprovalQueue) -> None:
-        aid = await queue.enqueue("write_json_file", {}, "r", "s1")
+    async def test_csrf_token_consumed_after_verify(self, queue: ApprovalQueue) -> None:
+        """Token must be single-use: a second submission within the TTL window is rejected."""
+        aid = await queue.enqueue("escalate", {}, "r", "s1")
+        await queue.set_csrf_token(aid, "tok-abc")
 
-        # Modify expires_at manually to be in the past
-        entry = await queue.get(aid)
-        entry["expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
+        # First verification succeeds and consumes the token
+        first = await queue.verify_csrf_token(aid, "tok-abc")
+        assert first is True
 
-        await queue._redis.set(f"akea:approval:{aid}", json_dumps_compat(entry))
-        await queue._redis.set(f"akea:approval:meta:{aid}", json_dumps_compat(entry))
+        # Second verification with the SAME token must fail (token was deleted by getdel)
+        second = await queue.verify_csrf_token(aid, "tok-abc")
+        assert second is False
 
-        expired = await queue.get_expired()
-        assert any(e.get("approval_id") == aid for e in expired)
-        assert any(e.get("session_id") == "s1" for e in expired)
+    async def test_wrong_csrf_token_rejected(self, queue: ApprovalQueue) -> None:
+        aid = await queue.enqueue("escalate", {}, "r", "s1")
+        await queue.set_csrf_token(aid, "tok-correct")
+        assert await queue.verify_csrf_token(aid, "tok-wrong") is False
 
-    async def test_detects_missing_main_key_with_shadow_meta(self, queue: ApprovalQueue) -> None:
-        """When the main key expires, metadata shadow key must be used to get session_id."""
-        aid = await queue.enqueue("write_json_file", {}, "r", "s-shadow-1")
-
-        # Delete the main key (simulating Redis TTL expiry)
-        await queue._redis.delete(f"akea:approval:{aid}")
-
-        expired = await queue.get_expired()
-        assert len(expired) == 1
-        assert expired[0]["approval_id"] == aid
-        assert expired[0]["session_id"] == "s-shadow-1"
-
-        # Ensure cleanup occurred
-        assert await queue._redis.get(f"akea:approval:meta:{aid}") is None
-        assert await queue.stats() == 0
-
-
-def json_dumps_compat(data: dict) -> str:
-    import json
-
-    return json.dumps(data)
+    async def test_missing_csrf_token_fails_closed(self, queue: ApprovalQueue) -> None:
+        """Verification fails closed when no token was ever set."""
+        result = await queue.verify_csrf_token("nonexistent-id", "any-token")
+        assert result is False

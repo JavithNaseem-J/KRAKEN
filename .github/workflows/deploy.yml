@@ -1,0 +1,28 @@
+name: Deploy to Oracle Cloud VPS & Netlify
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend Microservices (Oracle Cloud VPS)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH to Oracle Cloud VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.ORACLE_SERVER_IP }}
+          username: ubuntu
+          key: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/ubuntu/Autonomous-Knowledge-Execution-Agent || git clone https://github.com/JavithNaseem-J/Autonomous-Knowledge-Execution-Agent.git /home/ubuntu/Autonomous-Knowledge-Execution-Agent
+            cd /home/ubuntu/Autonomous-Knowledge-Execution-Agent
+            git fetch --all
+            git reset --hard origin/main
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --remove-orphans
+            docker image prune -f

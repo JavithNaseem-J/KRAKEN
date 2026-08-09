@@ -50,6 +50,3 @@ class ActionResult(BaseModel):
     success: bool
     result: Any | None = None
     error: str | None = None
-    # Populated when action is CRITICAL and routed through HITL
-    requires_hitl: bool = False
-    approval_id: str | None = None

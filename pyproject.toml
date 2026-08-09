@@ -3,9 +3,9 @@ requires = ["setuptools>=72.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "akea-shared"
+name = "kraken-shared"
 version = "0.1.0"
-description = "Shared package for Autonomous Knowledge Execution Agent"
+description = "Shared package for KRAKEN (Knowledge Retrieval & Autonomous Knowledge Execution Network)"
 requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.7.0",

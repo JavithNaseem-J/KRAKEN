@@ -23,18 +23,19 @@ Endpoints:
 
 from __future__ import annotations
 
-import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
-from fastapi import Depends, FastAPI, Header, HTTPException, status
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, status
+from pydantic import BaseModel, Field
 
+from shared.auth import verify_service_token
 from shared.config import get_settings
+from shared.db import create_pool
+from shared.logging import configure_logging
 
-from .db import create_pool
 from .long_term import LongTermMemory
 from .short_term import ShortTermMemory
 
@@ -42,45 +43,24 @@ log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
+from shared.models.memory import (
+    EpisodeChunk,
+    EpisodeSearchRequest,
+    EpisodeSearchResponse,
+    EpisodeStoreRequest,
+)
+
+
 # ── Request / Response models ─────────────────────────────────────────────────
 class SessionUpdate(BaseModel):
-    messages: list[dict[str, str]]
-
-
-class EpisodeStoreRequest(BaseModel):
-    session_id: str
-    user_id: str
-    content: str
-    metadata: dict[str, Any] = {}
-
-
-class EpisodeSearchRequest(BaseModel):
-    query: str
-    user_id: str
-    top_k: int = 3
-
-
-# ── Dependency: Enforce Service Token Auth ────────────────────────────────────
-def _verify_service_token(
-    x_service_token: str | None = Header(None, alias="X-Service-Token"),
-) -> str:
-    """
-    Enforce high-privilege service token authentication.
-    Uses timing-attack safe comparison.
-    Protects all memory read and write endpoints.
-    """
-    token = x_service_token or ""
-    if not token or not secrets.compare_digest(token, settings.hitl_service_token):
-        log.warning("memory.auth_failed")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing service token.",
-        )
-    return token
+    messages: list[dict[str, str]] = Field(..., max_length=100)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    configure_logging(
+        log_level=settings.log_level, log_format=settings.log_format, service="memory"
+    )
     # ── Short-term: Redis ──────────────────────────────────────────────────────
     log.info("memory.startup.redis")
     short_term = ShortTermMemory(redis_url=settings.redis_url)
@@ -124,12 +104,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("memory.shutdown")
 
 
+from shared.middleware.trace_id import TraceIdMiddleware
+
 app = FastAPI(
-    title="AKEA Memory",
-    description="Session & Episodic Memory Service — Autonomous Knowledge Execution Agent",
+    title="KRAKEN Memory",
+    description="Session & Episodic Memory Service — KRAKEN",
     version="0.7.0",
     lifespan=lifespan,
 )
+app.add_middleware(TraceIdMiddleware)
 
 
 # ── Ops ───────────────────────────────────────────────────────────────────────
@@ -152,7 +135,7 @@ async def health() -> dict[str, Any]:
 @app.get("/session/{session_id}", tags=["short-term"])
 async def get_session(
     session_id: str,
-    _token: str = Depends(_verify_service_token),
+    _token: str = Depends(verify_service_token),
 ) -> dict[str, Any]:
     """Return conversation history for a session."""
     messages = await app.state.short_term.get_session(session_id)
@@ -163,7 +146,7 @@ async def get_session(
 async def update_session(
     session_id: str,
     body: SessionUpdate,
-    _token: str = Depends(_verify_service_token),
+    _token: str = Depends(verify_service_token),
 ) -> dict[str, Any]:
     """Replace the entire session message history."""
     await app.state.short_term.update_session(session_id, body.messages)
@@ -174,7 +157,7 @@ async def update_session(
 async def append_to_session(
     session_id: str,
     body: SessionUpdate,
-    _token: str = Depends(_verify_service_token),
+    _token: str = Depends(verify_service_token),
 ) -> dict[str, Any]:
     """Atomically append messages to existing session history."""
     updated = await app.state.short_term.append_messages(session_id, body.messages)
@@ -184,7 +167,7 @@ async def append_to_session(
 @app.delete("/session/{session_id}", tags=["short-term"])
 async def clear_session(
     session_id: str,
-    _token: str = Depends(_verify_service_token),
+    _token: str = Depends(verify_service_token),
 ) -> dict[str, str]:
     """Delete session from Redis."""
     await app.state.short_term.clear_session(session_id)
@@ -195,7 +178,7 @@ async def clear_session(
 @app.post("/long-term", tags=["long-term"])
 async def store_episode(
     body: EpisodeStoreRequest,
-    _token: str = Depends(_verify_service_token),
+    _token: str = Depends(verify_service_token),
 ) -> dict[str, str]:
     """Store an episodic memory entry with its embedding."""
     if app.state.long_term is None:
@@ -212,20 +195,21 @@ async def store_episode(
     return {"memory_id": memory_id, "status": "stored"}
 
 
-@app.post("/long-term/search", tags=["long-term"])
+@app.post("/long-term/search", response_model=EpisodeSearchResponse, tags=["long-term"])
 async def search_episodes(
     body: EpisodeSearchRequest,
-    _token: str = Depends(_verify_service_token),
-) -> dict[str, Any]:
+    _token: str = Depends(verify_service_token),
+) -> EpisodeSearchResponse:
     """Semantic search over past episodic memories for a user."""
     if app.state.long_term is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Long-term memory unavailable (PostgreSQL not connected).",
         )
-    results = await app.state.long_term.search(
+    raw_results = await app.state.long_term.search(
         query=body.query,
         user_id=body.user_id,
         top_k=body.top_k,
     )
-    return {"query": body.query, "results": results, "count": len(results)}
+    chunks = [EpisodeChunk.model_validate(r) for r in raw_results]
+    return EpisodeSearchResponse(query=body.query, user_id=body.user_id, results=chunks)

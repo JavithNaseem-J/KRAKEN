@@ -1,54 +1,22 @@
-"""
-Audit Service — full implementation with PostgreSQL persistence.
-
-Called by the action service (fire-and-forget POST /log) after every action.
-Also provides read-only history endpoints for operators.
-
-Startup:
-  - Creates asyncpg connection pool to PostgreSQL.
-  - If PostgreSQL is unreachable, service degrades gracefully:
-    logs are written to structlog only (not lost completely, captured by Docker).
-
-Endpoints:
-  GET  /health                     Liveness probe
-  POST /log                        Write one audit entry (called by action service, authenticated)
-  GET  /history/{session_id}       Retrieve audit records for a session
-  GET  /history/user/{user_id}     Retrieve recent audit records for a user
-"""
-
 from __future__ import annotations
 
-import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
-from fastapi import Depends, FastAPI, Header, HTTPException, status
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException
 
-from services.memory.db import create_pool  # Reuse the same pool factory
+from shared.auth import verify_service_token
 from shared.config import get_settings
+from shared.db import create_pool
+from shared.logging import configure_logging
+from shared.models.audit import AuditLogRequest
 
 from .audit_store import AuditStore
-from .logger import configure_logging
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
-
-
-class AuditLogRequest(BaseModel):
-    session_id: str
-    user_id: str
-    action_type: str
-    action_name: str
-    risk_level: str
-    hitl_required: bool
-    status: str
-    reasoning: str | None = None
-    payload: dict | None = None
-    result: dict | None = None
-    hitl_decision: str | None = None
 
 
 @asynccontextmanager
@@ -82,26 +50,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("audit.shutdown")
 
 
+from shared.middleware.trace_id import TraceIdMiddleware
+
 app = FastAPI(
-    title="AKEA Audit",
-    description="Append-Only Audit Log Service — Autonomous Knowledge Execution Agent",
+    title="KRAKEN Audit",
+    description="Append-Only Audit Log Service — KRAKEN",
     version="0.6.0",
     lifespan=lifespan,
 )
-
-
-def _verify_service_token(
-    x_service_token: str | None = Header(None, alias="X-Service-Token"),
-) -> str:
-    """FastAPI dependency: Enforce service token validation."""
-    token = x_service_token or ""
-    if not token or not secrets.compare_digest(token, settings.hitl_service_token):
-        log.warning("audit.auth_failed")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing service token.",
-        )
-    return token
+app.add_middleware(TraceIdMiddleware)
 
 
 @app.get("/health", tags=["ops"])
@@ -117,7 +74,7 @@ async def health() -> dict[str, Any]:
 @app.post("/log", tags=["audit"])
 async def log_action(
     body: AuditLogRequest,
-    _token: str = Depends(_verify_service_token),
+    _token: str = Depends(verify_service_token),
 ) -> dict[str, Any]:
     """
     Write one audit entry. Always returns 200 — even on DB failure.
@@ -138,7 +95,7 @@ async def log_action(
         return {"status": "degraded", "message": "DB unavailable — logged to stdout only."}
 
     try:
-        row_id = await app.state.store.log_action(**body.model_dump())
+        row_id = await app.state.store.log_action(body)
         return {"status": "ok", "id": row_id}
     except Exception as exc:
         log.error("audit.write_failed", error=str(exc))
@@ -146,8 +103,12 @@ async def log_action(
 
 
 @app.get("/history/{session_id}", tags=["audit"])
-async def session_history(session_id: str, limit: int = 50) -> dict[str, Any]:
-    """Return audit records for a session (read-only, newest first)."""
+async def session_history(
+    session_id: str,
+    limit: int = 50,
+    _token: str = Depends(verify_service_token),
+) -> dict[str, Any]:
+    """Return audit records for a session (read-only, newest first). Requires service token."""
     if app.state.store is None:
         raise HTTPException(status_code=503, detail="Audit DB unavailable.")
     capped_limit = min(limit, 200)
@@ -156,10 +117,24 @@ async def session_history(session_id: str, limit: int = 50) -> dict[str, Any]:
 
 
 @app.get("/history/user/{user_id}", tags=["audit"])
-async def user_history(user_id: str, limit: int = 100) -> dict[str, Any]:
-    """Return recent audit records for a user across all sessions."""
+async def user_history(
+    user_id: str,
+    limit: int = 100,
+    _token: str = Depends(verify_service_token),
+) -> dict[str, Any]:
+    """Return recent audit records for a user across all sessions. Requires service token."""
     if app.state.store is None:
         raise HTTPException(status_code=503, detail="Audit DB unavailable.")
     capped_limit = min(limit, 200)
     records = await app.state.store.get_user_history(user_id, limit=capped_limit)
     return {"user_id": user_id, "records": records, "count": len(records)}
+
+
+@app.get("/verify-chain", tags=["audit"])
+async def verify_chain(
+    _token: str = Depends(verify_service_token),
+) -> dict[str, Any]:
+    """Cryptographic SHA-256 hash chain verification endpoint. Detects DB tampering."""
+    if app.state.store is None:
+        raise HTTPException(status_code=503, detail="Audit DB unavailable.")
+    return await app.state.store.verify_chain()

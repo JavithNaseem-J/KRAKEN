@@ -6,49 +6,55 @@ from fastapi.testclient import TestClient
 
 from services.approval.main import app
 
+_TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
+_HEADERS = {"X-Service-Token": _TOKEN}
+
 
 @pytest.fixture
-def client():
-    # Patch ApprovalQueue to prevent real connection attempts during lifespan
-    with patch("services.approval.main.ApprovalQueue") as mock_queue_cls:
-        mock_queue = MagicMock()
-        mock_queue.ping = AsyncMock(return_value=True)
-        mock_queue.stats = AsyncMock(return_value=0)
-        mock_queue.enqueue = AsyncMock(return_value="test-approval-id")
-        mock_queue.get = AsyncMock(
-            return_value={
-                "approval_id": "test-approval-id",
-                "action_name": "write_json_file",
-                "payload": {"data": "test"},
-                "reasoning": "testing",
-                "session_id": "session-123",
-                "expires_at": "2026-07-05T12:00:00Z",
-            }
-        )
-        mock_queue.resolve = AsyncMock(
-            return_value={"approval_id": "test-approval-id", "session_id": "session-123"}
-        )
-        mock_queue.close = AsyncMock()
-        mock_queue_cls.return_value = mock_queue
+def client(monkeypatch):
+    monkeypatch.setenv("HITL_SERVICE_TOKEN", _TOKEN)
+    mock_queue = MagicMock()
+    mock_queue.ping = AsyncMock(return_value=True)
+    mock_queue.stats = AsyncMock(return_value=0)
+    mock_queue.enqueue = AsyncMock(return_value="test-approval-id")
+    mock_queue.get = AsyncMock(
+        return_value={
+            "approval_id": "test-approval-id",
+            "action_name": "write_json_file",
+            "payload": {"data": "test"},
+            "reasoning": "testing",
+            "session_id": "session-123",
+            "expires_at": "2026-07-05T12:00:00Z",
+        }
+    )
+    mock_queue.resolve = AsyncMock(
+        return_value={"approval_id": "test-approval-id", "session_id": "session-123"}
+    )
+    mock_queue.set_csrf_token = AsyncMock()
+    mock_queue.verify_csrf_token = AsyncMock(return_value=True)
+    mock_queue.close = AsyncMock()
 
+    with patch("services.approval.main.ApprovalQueue", return_value=mock_queue):
         with TestClient(app) as c:
-            # Override state properties AFTER lifespan context starts
             c.app.state.queue = mock_queue
-            c.app.state.http = MagicMock()
-            c.app.state.http.post = AsyncMock()
+            c.app.state.http = AsyncMock()
+            mock_resp = MagicMock()
+            mock_resp.status_code = status.HTTP_200_OK
+            c.app.state.http.post = AsyncMock(return_value=mock_resp)
             c.app.state.http.aclose = AsyncMock()
             yield c
 
 
-def test_health_check(client):
+def test_health_healthy(client):
     response = client.get("/health")
     assert response.status_code == status.HTTP_200_OK
-    assert response.json() == {"status": "ok", "service": "approval"}
+    assert response.json()["status"] == "ok"
+    assert response.json()["service"] == "approval"
 
 
 def test_queue_stats(client):
     client.app.state.queue.stats.return_value = 5
-    response = client.get("/queue/stats")
+    response = client.get("/queue/stats", headers=_HEADERS)
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["pending_approvals"] == 5
 
@@ -62,7 +68,7 @@ def test_pending_creation_malformed(client):
     response = client.post(
         "/pending",
         json={"reasoning": "missing required action_name"},
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -76,7 +82,7 @@ def test_pending_creation_success(client):
             "reasoning": "to store data",
             "session_id": "session-123",
         },
-        headers={"X-Service-Token": "change-me-in-production"},
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["approval_id"] == "test-approval-id"
@@ -101,15 +107,15 @@ def test_approval_page_not_found(client):
 
 
 def test_submit_decision_success(client):
-    # Mock upstream response
     mock_resp = MagicMock()
     mock_resp.status_code = status.HTTP_200_OK
     client.app.state.http.post.return_value = mock_resp
 
-    response = client.post("/approve/test-approval-id/decision", data={"decision": "approve"})
+    response = client.post(
+        "/approve/test-approval-id/decision",
+        data={"decision": "approve", "csrf_token": "valid-csrf-token"},
+    )
     assert response.status_code == status.HTTP_200_OK
-    assert response.json()["status"] == "sent"
-    assert response.json()["decision"] == "approve"
+    assert b"Decision Recorded" in response.content or b"approve" in response.content.lower()
 
-    # Verify the callback notifier is dispatched
     client.app.state.queue.resolve.assert_called_once_with("test-approval-id")

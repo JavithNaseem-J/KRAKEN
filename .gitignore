@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# AKEA local state & generated databases
+data/chroma/
+data/workspace/*.json
+data/workspace/*.bak.json
+!data/workspace/README.txt
+

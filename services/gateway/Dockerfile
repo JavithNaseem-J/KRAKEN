@@ -3,44 +3,36 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# Install system compilation dependencies if any package needs them
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a virtual environment to copy as a clean single directory
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install shared library
 COPY pyproject.toml /shared/
 COPY shared/ /shared/shared/
 RUN pip install --no-cache-dir /shared/
 
-# Install service dependencies
 COPY services/gateway/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── STAGE 2: Runner ────────────────────────────────────────────────
 FROM python:3.12-slim AS runner
 
-# Create a non-root system group and user
-RUN groupadd -r akea && useradd -r -g akea -s /sbin/nologin akea
+RUN groupadd -r kraken && useradd -r -g kraken -s /sbin/nologin kraken
 
 WORKDIR /app
 
-# Copy the pre-built virtual environment from the builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy service source code and set owner to non-root user
-COPY --chown=akea:akea services/gateway/ .
+COPY --chown=kraken:kraken services/gateway/ .
+RUN chown -R kraken:kraken /app
 
-# Ensure the app dir is owned by the non-root user
-RUN chown -R akea:akea /app
-
-# Switch to the non-root user
-USER akea
+USER kraken
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD ["python", "-c", "import os, httpx; port = os.getenv('PORT', '8000'); httpx.get(f'http://localhost:{port}/health').raise_for_status()"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]

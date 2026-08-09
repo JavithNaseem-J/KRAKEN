@@ -18,6 +18,50 @@ class KnowledgeSource(StrEnum):
     SLA = "sla"  # SLA / escalation rules
 
 
+class TicketDocument(BaseModel):
+    """Schema for raw ticket JSON records loaded during ingestion."""
+
+    ticket_id: str = Field(..., min_length=1)
+    subject: str = Field(..., min_length=1)
+    status: str = Field(default="open")
+    priority: str = Field(default="medium")
+    category: str = Field(default="general")
+    description: str = Field(..., min_length=1)
+    created_at: str | None = None
+    resolved_at: str | None = None
+
+
+class FAQDocument(BaseModel):
+    """Schema for raw FAQ markdown/JSON records loaded during ingestion."""
+
+    doc_id: str = Field(..., min_length=1)
+    title: str = Field(..., min_length=1)
+    content: str = Field(..., min_length=1)
+    category: str = Field(default="policy")
+
+
+class SLADocument(BaseModel):
+    """Schema for raw SLA markdown/JSON records loaded during ingestion."""
+
+    rule_id: str = Field(..., min_length=1)
+    severity: str = Field(..., min_length=1)
+    response_sla_minutes: int = Field(default=60, ge=1)
+    resolution_sla_minutes: int = Field(default=240, ge=1)
+    description: str = Field(..., min_length=1)
+
+
+class KnowledgeChunkPayload(BaseModel):
+    """Payload schema for points upserted into Qdrant vector database."""
+
+    content: str = Field(..., min_length=1)
+    source: KnowledgeSource
+    document_id: str = Field(..., min_length=1)
+    chunk_id: str = Field(..., min_length=1)
+    title: str = Field(default="")
+    category: str = Field(default="general")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class KnowledgeChunk(BaseModel):
     """A single retrieved chunk from any knowledge source."""
 
@@ -45,3 +89,4 @@ class RetrievalResult(BaseModel):
     query: str
     total_retrieved: int
     sources_queried: list[KnowledgeSource]
+

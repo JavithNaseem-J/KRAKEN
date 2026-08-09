@@ -28,80 +28,90 @@ The pool is created externally (in lifespan) and passed in.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
 import asyncpg
 import structlog
 
+from shared.models.audit import AuditLogRequest
+
 log = structlog.get_logger(__name__)
+
+_GENESIS_HASH = "0" * 64
 
 
 class AuditStore:
     """
     Writes audit log entries to PostgreSQL.
-    All writes are INSERTs — no updates, no deletes (enforced by DB rules).
+    All writes are INSERTs with SHA-256 cryptographic hash chaining (previous_hash -> entry_hash).
     """
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
 
-    async def log_action(
-        self,
-        session_id: str,
-        user_id: str,
-        action_type: str,
-        action_name: str,
-        risk_level: str,
-        hitl_required: bool,
-        status: str,
-        reasoning: str | None = None,
-        payload: dict[str, Any] | None = None,
-        result: dict[str, Any] | None = None,
-        hitl_decision: str | None = None,
-    ) -> int:
+    async def log_action(self, entry: AuditLogRequest) -> str:
         """
-        Insert one audit record. Returns the new row id.
-        Raises on DB failure — caller decides how to handle (usually log + ignore).
+        Insert one audit record with SHA-256 hash chain link. Returns the new row id (UUID/string).
+        Raises on DB failure — caller decides how to handle.
         """
+        payload_str = json.dumps(entry.payload or {}, sort_keys=True)
+        result_str = json.dumps(entry.result or {}, sort_keys=True)
+
         async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO audit_log (
-                    session_id, user_id, action_type, action_name,
-                    risk_level, hitl_required, hitl_decision, status,
-                    reasoning, payload, result
+            async with conn.transaction(isolation="serializable"):
+                # 1. Fetch previous entry_hash to form hash chain
+                prev_row = await conn.fetchrow(
+                    "SELECT entry_hash FROM audit_log WHERE entry_hash IS NOT NULL ORDER BY timestamp DESC, id DESC LIMIT 1"
                 )
-                VALUES (
-                    $1, $2, $3, $4,
-                    $5, $6, $7, $8,
-                    $9, $10::jsonb, $11::jsonb
+                previous_hash = (
+                    prev_row["entry_hash"] if prev_row and prev_row["entry_hash"] else _GENESIS_HASH
                 )
-                RETURNING id
-                """,
-                session_id,
-                user_id,
-                action_type,
-                action_name,
-                risk_level,
-                hitl_required,
-                hitl_decision,
-                status,
-                reasoning,
-                json.dumps(payload or {}),
-                json.dumps(result or {}),
-            )
+
+                # 2. Compute current entry_hash
+                raw_chain_string = f"{previous_hash}:{entry.session_id}:{entry.user_id}:{entry.action_name}:{entry.status}:{payload_str}"
+                entry_hash = hashlib.sha256(raw_chain_string.encode("utf-8")).hexdigest()
+
+                row = await conn.fetchrow(
+                    """
+                    INSERT INTO audit_log (
+                        session_id, user_id, action_type, action_name,
+                        risk_level, hitl_required, hitl_decision, status,
+                        reasoning, payload, result, previous_hash, entry_hash
+                    )
+                    VALUES (
+                        $1, $2, $3, $4,
+                        $5, $6, $7, $8,
+                        $9, $10::jsonb, $11::jsonb, $12, $13
+                    )
+                    RETURNING id
+                    """,
+                    entry.session_id,
+                    entry.user_id,
+                    entry.action_type,
+                    entry.action_name,
+                    entry.risk_level,
+                    entry.hitl_required,
+                    entry.hitl_decision,
+                    entry.status,
+                    entry.reasoning,
+                    payload_str,
+                    result_str,
+                    previous_hash,
+                    entry_hash,
+                )
 
         row_id = row["id"]
         log.info(
             "audit.logged",
             id=row_id,
-            session_id=session_id,
-            action=action_name,
-            status=status,
-            risk=risk_level,
+            session_id=entry.session_id,
+            action=entry.action_name,
+            status=entry.status,
+            entry_hash=entry_hash[:12],
         )
-        return int(row_id)
+        return str(row_id)
 
     async def get_session_history(
         self,
@@ -163,3 +173,43 @@ class AuditStore:
             if "timestamp" in r:
                 r["timestamp"] = r["timestamp"].isoformat()
         return records
+
+    async def verify_chain(self) -> dict[str, Any]:
+        """
+        Recompute SHA-256 hash chains across all audit log entries.
+        Returns {"valid": True, "count": N} or {"valid": False, "broken_at_id": id, ...}.
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, session_id, user_id, action_name, status, payload, previous_hash, entry_hash
+                FROM audit_log
+                ORDER BY timestamp ASC, id ASC
+                """
+            )
+
+        previous_hash = _GENESIS_HASH
+        for row in rows:
+            payload_data = row["payload"]
+            if isinstance(payload_data, str):
+                try:
+                    payload_data = json.loads(payload_data)
+                except Exception:
+                    payload_data = {}
+            p_str = json.dumps(payload_data or {}, sort_keys=True)
+
+            raw = f"{previous_hash}:{row['session_id']}:{row['user_id']}:{row['action_name']}:{row['status']}:{p_str}"
+            computed = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+            if row["previous_hash"] and row["previous_hash"] != previous_hash:
+                return {
+                    "valid": False,
+                    "broken_at_id": row["id"],
+                    "reason": "previous_hash mismatch",
+                }
+            if row["entry_hash"] and row["entry_hash"] != computed:
+                return {"valid": False, "broken_at_id": row["id"], "reason": "entry_hash mismatch"}
+
+            previous_hash = row["entry_hash"] if row["entry_hash"] else previous_hash
+
+        return {"valid": True, "count": len(rows)}

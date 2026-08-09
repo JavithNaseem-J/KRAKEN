@@ -1,14 +1,10 @@
-"""
-Unit tests for the AuditStore.
-Mocks the asyncpg pool — zero real DB dependency.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
 from services.audit.audit_store import AuditStore
+from shared.models.audit import AuditLogRequest
 
 
 def _make_store() -> tuple[AuditStore, MagicMock]:
@@ -22,58 +18,74 @@ def _make_store() -> tuple[AuditStore, MagicMock]:
     conn_ctx.__aexit__ = AsyncMock(return_value=False)
     pool.acquire = MagicMock(return_value=conn_ctx)
 
+    # conn.transaction() returns an async context manager for serializable transactions
+    txn_ctx = AsyncMock()
+    txn_ctx.__aenter__ = AsyncMock(return_value=None)
+    txn_ctx.__aexit__ = AsyncMock(return_value=False)
+    conn.transaction = MagicMock(return_value=txn_ctx)
+
     return AuditStore(pool), conn
 
 
 class TestLogAction:
     async def test_returns_row_id(self) -> None:
         store, conn = _make_store()
-        conn.fetchrow = AsyncMock(return_value={"id": 42})
+        conn.fetchrow = AsyncMock(side_effect=[None, {"id": 42}])
 
         row_id = await store.log_action(
-            session_id="s1",
-            user_id="u1",
-            action_type="READ",
-            action_name="read_ticket",
-            risk_level="SAFE",
-            hitl_required=False,
-            status="success",
+            AuditLogRequest(
+                session_id="s1",
+                user_id="u1",
+                action_type="READ",
+                action_name="read_ticket",
+                risk_level="SAFE",
+                hitl_required=False,
+                status="success",
+            )
         )
-        assert row_id == 42
+        assert row_id == "42"
+        assert conn.fetchrow.call_count == 2
+        # Verify SQL insert arguments contain entry_hash
+        insert_args = conn.fetchrow.call_args_list[1].args
+        assert len(insert_args[13]) == 64  # SHA-256 hex digest length
 
     async def test_insert_called_once(self) -> None:
         store, conn = _make_store()
-        conn.fetchrow = AsyncMock(return_value={"id": 1})
+        conn.fetchrow = AsyncMock(side_effect=[None, {"id": 1}])
 
         await store.log_action(
-            session_id="s1",
-            user_id="u1",
-            action_type="WRITE",
-            action_name="write_json_file",
-            risk_level="CRITICAL",
-            hitl_required=True,
-            status="success",
-            hitl_decision="approved",
+            AuditLogRequest(
+                session_id="s1",
+                user_id="u1",
+                action_type="WRITE",
+                action_name="write_json_file",
+                risk_level="CRITICAL",
+                hitl_required=True,
+                status="success",
+                hitl_decision="approved",
+            )
         )
-        conn.fetchrow.assert_called_once()
+        assert conn.fetchrow.call_count == 2
 
     async def test_none_payload_handled(self) -> None:
         """None payload / result should not crash the INSERT (serialised to '{}')."""
         store, conn = _make_store()
-        conn.fetchrow = AsyncMock(return_value={"id": 5})
+        conn.fetchrow = AsyncMock(side_effect=[None, {"id": 5}])
 
         await store.log_action(
-            session_id="s1",
-            user_id="u1",
-            action_type="READ",
-            action_name="read_ticket_list",
-            risk_level="SAFE",
-            hitl_required=False,
-            status="success",
-            payload=None,
-            result=None,
+            AuditLogRequest(
+                session_id="s1",
+                user_id="u1",
+                action_type="READ",
+                action_name="read_ticket_list",
+                risk_level="SAFE",
+                hitl_required=False,
+                status="success",
+                payload=None,
+                result=None,
+            )
         )
-        conn.fetchrow.assert_called_once()
+        assert conn.fetchrow.call_count == 2
 
 
 class TestGetSessionHistory:

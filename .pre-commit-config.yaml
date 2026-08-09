@@ -1,0 +1,8 @@
+# Pre-commit hooks for AKEA.
+# Install once per clone:  pre-commit install
+# Requires: pip install pre-commit  (gitleaks binary is auto-installed by the hook)
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.24.3
+    hooks:
+      - id: gitleaks

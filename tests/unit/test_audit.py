@@ -13,9 +13,13 @@ from fastapi.testclient import TestClient
 
 from services.audit.main import app
 
+_TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
+_HEADERS = {"X-Service-Token": _TOKEN}
+
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setenv("HITL_SERVICE_TOKEN", _TOKEN)
     mock_store = AsyncMock()
     mock_pool = MagicMock()
     mock_pool.close = AsyncMock()  # Must be awaitable since lifespan calls await db_pool.close()
@@ -76,25 +80,51 @@ class TestAuditAPI:
                 "hitl_required": False,
                 "status": "success",
             },
-            headers={"X-Service-Token": "change-me-in-production"},
+            headers=_HEADERS,
         )
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["id"] == 42
 
+    def test_session_history_unauthenticated(self, client) -> None:
+        response = client.get("/history/s1")
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
     def test_session_history_limit_capped(self, client) -> None:
         client.app.state.store.get_session_history.return_value = []
 
-        response = client.get("/history/s1?limit=300")
+        response = client.get(
+            "/history/s1?limit=300",
+            headers=_HEADERS,
+        )
         assert response.status_code == status.HTTP_200_OK
 
         # Verify limit was capped at 200
         client.app.state.store.get_session_history.assert_called_once_with("s1", limit=200)
 
+    def test_user_history_unauthenticated(self, client) -> None:
+        response = client.get("/history/user/u1")
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
     def test_user_history_limit_capped(self, client) -> None:
         client.app.state.store.get_user_history.return_value = []
 
-        response = client.get("/history/user/u1?limit=300")
+        response = client.get(
+            "/history/user/u1?limit=300",
+            headers=_HEADERS,
+        )
         assert response.status_code == status.HTTP_200_OK
 
         # Verify limit was capped at 200
         client.app.state.store.get_user_history.assert_called_once_with("u1", limit=200)
+
+    def test_verify_chain_endpoint(self, client) -> None:
+        client.app.state.store.verify_chain.return_value = {"valid": True, "count": 10}
+
+        response = client.get(
+            "/verify-chain",
+            headers=_HEADERS,
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["valid"] is True
+        assert data["count"] == 10

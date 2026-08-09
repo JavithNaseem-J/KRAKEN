@@ -1,11 +1,9 @@
 """
 LangGraph-specific state schema for the AKEA agent graph.
 
-Why separate from shared/models/agent.py:
-  - LangGraph requires Annotated reducers on list fields (e.g. messages uses
-    operator.add so turns are appended, not overwritten on each graph step).
-  - The shared AgentState is the external API contract (request/response shapes).
-  - This GraphState is the internal graph execution contract.
+Design:
+  - Uses Annotated reducers on list fields (e.g. messages uses operator.add so turns are appended).
+  - GraphState is the single state object passed between every LangGraph node.
 """
 
 from __future__ import annotations
@@ -39,6 +37,9 @@ class GraphState(TypedDict):
 
     # ── Decider output ────────────────────────────────────────────────────────
     selected_action: NotRequired[str | None]  # String to dynamically match registry actions
+    selected_actions: NotRequired[
+        list[dict[str, Any]] | None
+    ]  # List for parallel/multi-action dispatch
     action_payload: NotRequired[dict[str, Any] | None]
     risk_level: NotRequired[Literal["SAFE", "CRITICAL"] | None]
     evidence: NotRequired[str | None]

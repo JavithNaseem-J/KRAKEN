@@ -1,28 +1,14 @@
-"""
-API key authentication middleware for the gateway.
-
-Validates the X-API-Key header against configured keys.
-Maps each API key to a user_id for rate limiting and audit logging.
-
-In production, keys would live in a DB or secret manager.
-For the current scope (internal team), env-var configuration is sufficient:
-  GATEWAY_API_KEYS = "key1:alice,key2:bob,key3:carol"
-  (key:user_id pairs, comma-separated)
-"""
-
-from __future__ import annotations
-
-import secrets
-
 import structlog
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from shared.auth import safe_compare_tokens
+
 log = structlog.get_logger(__name__)
 
 # Endpoints that bypass standard user API key authentication
-_BYPASS_PATHS = {"/health", "/docs", "/openapi.json", "/redoc", "/v1/approval-callback"}
+_BYPASS_PATHS = {"/", "/health", "/docs", "/openapi.json"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
@@ -52,13 +38,13 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=401,
                 content={"error": "Missing X-API-Key header."},
-                headers={"WWW-Authenticate": "ApiKey realm='AKEA Gateway'"},
+                headers={"WWW-Authenticate": "ApiKey realm='KRAKEN Gateway'"},
             )
 
         # Constant-time lookup check to prevent timing attacks
         matched_user_id = None
         for registered_key, user_id in self._keys.items():
-            if secrets.compare_digest(registered_key, api_key):
+            if safe_compare_tokens(registered_key, api_key):
                 matched_user_id = user_id
                 break
 
@@ -67,7 +53,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=401,
                 content={"error": "Invalid API key."},
-                headers={"WWW-Authenticate": "ApiKey realm='AKEA Gateway'"},
+                headers={"WWW-Authenticate": "ApiKey realm='KRAKEN Gateway'"},
             )
 
         # Store user_id for rate limiter and audit log

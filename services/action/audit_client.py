@@ -14,8 +14,11 @@ import httpx
 import structlog
 
 from shared.config import get_settings
+from shared.http_client import service_headers
+from shared.models.audit import AuditLogRequest
 
 log = structlog.get_logger(__name__)
+settings = get_settings()
 
 
 async def fire_audit_log(
@@ -36,23 +39,24 @@ async def fire_audit_log(
     POST an audit entry to the audit service.
     Called in a BackgroundTask using the app's persistent AsyncClient.
     """
-    settings = get_settings()
-    entry = {
-        "session_id": session_id,
-        "user_id": user_id,
-        "action_type": action_type,
-        "action_name": action_name,
-        "risk_level": risk_level,
-        "hitl_required": hitl_required,
-        "hitl_decision": hitl_decision,
-        "status": status,
-        "reasoning": reasoning,
-        "payload": payload,
-        "result": result,
-    }
+    req = AuditLogRequest(
+        session_id=session_id,
+        user_id=user_id,
+        action_type=action_type,
+        action_name=action_name,
+        risk_level=risk_level,
+        hitl_required=hitl_required,
+        status=status,
+        reasoning=reasoning,
+        payload=payload,
+        result=result,
+        hitl_decision=hitl_decision,
+    )
     try:
-        headers = {"X-Service-Token": settings.hitl_service_token}
-        resp = await client.post(f"{settings.audit_url}/log", json=entry, headers=headers)
+        headers = service_headers()
+        resp = await client.post(
+            f"{settings.audit_url}/log", json=req.model_dump(mode="json"), headers=headers
+        )
         resp.raise_for_status()
     except Exception as exc:
         # Audit failure must not affect action result

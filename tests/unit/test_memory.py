@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from services.memory.main import app
 
-_TOKEN = "change-me-in-production"
+_TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
 
 _MSGS = [
@@ -23,7 +23,8 @@ _MSGS = [
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
+    monkeypatch.setenv("HITL_SERVICE_TOKEN", _TOKEN)
     """
     Boot the app with ShortTermMemory completely mocked so no Redis is needed.
     Long-term memory is set to None to simulate Postgres being unavailable.

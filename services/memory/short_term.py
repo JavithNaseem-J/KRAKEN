@@ -6,7 +6,7 @@ Messages are a list of {role, content} dicts — the same format used
 in the LangGraph AgentState `messages` field.
 
 Key design:
-  - Key:  akea:session:{session_id}  →  JSON list of messages
+  - Key:  kraken:session:{session_id}  →  JSON list of messages
   - TTL:  SESSION_TTL_SECONDS (24 hours default) — renewed on every write
   - Append semantics: update_session() replaces entire list;
     append_messages() is atomic via a Redis WATCH transaction loop to
@@ -23,7 +23,7 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-_PREFIX = "akea:session:"
+_PREFIX = "kraken:session:"
 _SESSION_TTL_SEC = 86_400  # 24 hours
 
 
@@ -34,11 +34,9 @@ class ShortTermMemory:
     """
 
     def __init__(self, redis_url: str) -> None:
-        self._redis: aioredis.Redis = aioredis.from_url(
-            redis_url,
-            decode_responses=True,
-            socket_connect_timeout=5,
-        )
+        from shared.http_client import create_async_redis_client
+
+        self._redis: aioredis.Redis = create_async_redis_client(redis_url)
 
     def _key(self, session_id: str) -> str:
         return f"{_PREFIX}{session_id}"

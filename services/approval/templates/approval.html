@@ -248,10 +248,12 @@
       <!-- Approve / Reject buttons -->
       <div class="actions">
         <form method="POST" action="/approve/{{ approval_id }}/decision">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
           <input type="hidden" name="decision" value="approve" />
           <button type="submit" class="btn btn-approve">&#10003;&ensp;Approve</button>
         </form>
         <form method="POST" action="/approve/{{ approval_id }}/decision">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
           <input type="hidden" name="decision" value="reject" />
           <button type="submit" class="btn btn-reject">&#10005;&ensp;Reject</button>
         </form>

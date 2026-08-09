@@ -103,3 +103,13 @@ class TestTicketHandlers:
     def test_invalid_ticket_raises_error(self) -> None:
         with pytest.raises(ActionExecutionError):
             execute_escalate("TK-999", "reason", "evidence")
+
+    def test_postgres_fallback_when_unconfigured(self) -> None:
+        from services.action.handlers.ticket_handler import get_pg_pool
+
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("services.action.handlers.ticket_handler._pg_pool", None),
+        ):
+            pool = get_pg_pool()
+            assert pool is None

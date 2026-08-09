@@ -1,35 +1,18 @@
-"""
-Knowledge ingestion pipeline — runs all three loaders and upserts into ChromaDB.
-
-Usage:
-    make ingest
-    python scripts/ingest_knowledge.py
-
-Can also be triggered via HTTP after the knowledge service is running:
-    curl -X POST http://localhost:8002/ingest
-
-This script runs the loaders directly (not via HTTP) so it can be used
-before the service is started — e.g., pre-seeding before `make up`.
-"""
-
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import chromadb
 import structlog
 
-from services.knowledge.embedder import BGEEmbedder
-from services.knowledge.loaders.faq_loader import load_faq_chunks
-from services.knowledge.loaders.sla_loader import load_sla_chunks
-from services.knowledge.loaders.ticket_loader import load_ticket_chunks
-from services.knowledge.retriever import _source_to_collection_name
+from shared.embedder import BGEEmbedder
+from services.knowledge.ingest import run_ingest_async
+from shared.cache import create_async_qdrant_client
 from shared.config import get_settings
-from shared.models.knowledge import KnowledgeSource
 
 structlog.configure(
     processors=[structlog.dev.ConsoleRenderer()],
@@ -39,65 +22,30 @@ log = structlog.get_logger()
 settings = get_settings()
 
 
-def _upsert(
-    collection: chromadb.Collection,
-    chunks: list[dict],
-    label: str,
-) -> int:
-    if not chunks:
-        log.warning("ingest.empty_source", source=label)
-        return 0
-    collection.upsert(
-        ids=[c["id"] for c in chunks],
-        documents=[c["document"] for c in chunks],
-        metadatas=[c["metadata"] for c in chunks],
-    )
-    log.info("ingest.upserted", source=label, count=len(chunks))
-    return len(chunks)
-
-
-def main() -> None:
+async def main_async() -> None:
     print()
     print("=" * 56)
-    print("  AKEA Knowledge Ingestion Pipeline")
+    print("  AKEA Knowledge Ingestion Pipeline (Qdrant)")
     print("=" * 56)
-    print(f"  Chroma dir     : {settings.chroma_persist_dir}")
+    print(f"  Qdrant URL     : {settings.qdrant_url or ':memory:'}")
+    print(f"  Collection     : {settings.qdrant_collection_name}")
     print(f"  Embedding model: {settings.embedding_model}")
     print()
 
     t0 = time.perf_counter()
 
-    # ── Load embedding model ───────────────────────────────────────────────────
     log.info("ingest.loading_embedder", model=settings.embedding_model)
     embedder = BGEEmbedder(
         model_name=settings.embedding_model,
         device=settings.embedding_device,
     )
 
-    # ── Open ChromaDB ──────────────────────────────────────────────────────────
-    Path(settings.chroma_persist_dir).mkdir(parents=True, exist_ok=True)
-    client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+    client = create_async_qdrant_client()
 
-    totals: dict[str, int] = {}
-
-    for source in KnowledgeSource:
-        col = client.get_or_create_collection(
-            name=_source_to_collection_name(source),
-            embedding_function=embedder,  # type: ignore[arg-type]
-            metadata={"hnsw:space": "cosine"},
-        )
-
-        if source == KnowledgeSource.FAQ:
-            chunks = load_faq_chunks()
-            totals["faq"] = _upsert(col, chunks, "faq")
-
-        elif source == KnowledgeSource.TICKETS:
-            chunks, _ = load_ticket_chunks()
-            totals["tickets"] = _upsert(col, chunks, "tickets")
-
-        elif source == KnowledgeSource.SLA:
-            chunks = load_sla_chunks()
-            totals["sla"] = _upsert(col, chunks, "sla")
+    try:
+        totals = await run_ingest_async(client, embedder)
+    finally:
+        await client.close()
 
     elapsed = time.perf_counter() - t0
 
@@ -111,6 +59,10 @@ def main() -> None:
     print(f"  Elapsed        : {elapsed:.2f}s")
     print("=" * 56)
     print()
+
+
+def main() -> None:
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":

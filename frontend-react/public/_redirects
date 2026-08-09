@@ -1,0 +1,3 @@
+# Netlify Proxy Rules for AKEA Backend API
+/api/*  http://YOUR_ORACLE_VPS_IP:8000/:splat  200!
+/*      /index.html                            200

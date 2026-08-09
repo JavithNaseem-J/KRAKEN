@@ -1,36 +1,34 @@
 """
-Knowledge Service — full implementation.
+Knowledge Service — Qdrant Vector Search Implementation.
 
 Startup lifecycle:
-  1. Load BAAI/bge-small-en embedding model (downloads once, cached by HuggingFace)
-  2. Open ChromaDB persistent client
-  3. Get-or-create collections for all three knowledge sources
+  1. Load BAAI/bge-small-en embedding model
+  2. Open QdrantClient (remote Cloud or local in-memory fallback)
+  3. Ensure `akea_knowledge` collection exists
   4. Instantiate KnowledgeRetriever and store in app.state
 
 Endpoints:
   GET  /health     — liveness probe
   POST /retrieve   — multi-source semantic search (authenticated)
-  POST /ingest     — trigger re-ingestion (admin, called by ingest script, authenticated)
-  GET  /stats      — collection document counts per source
+  POST /ingest     — trigger re-ingestion (admin, authenticated)
+  GET  /stats      — collection point count
 """
 
 from __future__ import annotations
 
-import asyncio
-import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
 
-import chromadb
 import structlog
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException
 
+from shared.auth import verify_service_token
 from shared.config import get_settings
-from shared.models.knowledge import KnowledgeSource, RetrievalRequest, RetrievalResult
+from shared.logging import configure_logging
+from shared.models.knowledge import RetrievalRequest, RetrievalResult
 
-from .embedder import BGEEmbedder
-from .retriever import KnowledgeRetriever, _source_to_collection_name
+from shared.embedder import BGEEmbedder
+from .retriever import KnowledgeRetriever
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -38,42 +36,43 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    configure_logging(
+        log_level=settings.log_level, log_format=settings.log_format, service="knowledge"
+    )
+    from shared.embedder import get_embedder
+
     # ── 1. Load embedding model ────────────────────────────────────────────────
     log.info("knowledge.startup.embedder", model=settings.embedding_model)
-    embedder = BGEEmbedder(
-        model_name=settings.embedding_model,
-        device=settings.embedding_device,
-    )
+    embedder = get_embedder()
 
-    # ── 2. Open ChromaDB persistent client ────────────────────────────────────
-    log.info("knowledge.startup.chroma", path=settings.chroma_persist_dir)
-    client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
+    from shared.cache import create_async_qdrant_client
 
-    # ── 3. Get or create one collection per knowledge source ──────────────────
-    collections: dict[str, chromadb.Collection] = {}
-    for source in KnowledgeSource:
-        name = _source_to_collection_name(source)
-        col = client.get_or_create_collection(
-            name=name,
-            embedding_function=embedder,  # type: ignore[arg-type]
-            metadata={"hnsw:space": "cosine"},
-        )
-        collections[name] = col
-        log.info("knowledge.collection_ready", name=name, count=col.count())
+    # ── 2. Open Qdrant client ──────────────────────────────────────────────────
+    client = create_async_qdrant_client()
 
-    # Create semantic query cache collection
-    query_cache_col = client.get_or_create_collection(
-        name="akea_query_cache",
-        embedding_function=embedder,  # type: ignore[arg-type]
-        metadata={"hnsw:space": "cosine"},
-    )
-    collections["query_cache"] = query_cache_col
-    log.info("knowledge.query_cache_ready", count=query_cache_col.count())
+    # ── 3. Ensure collection exists ────────────────────────────────────────────
+    from .ingest import ensure_collection
 
-    # ── 4. Store retriever in app state ───────────────────────────────────────
-    app.state.retriever = KnowledgeRetriever(client=client, collections=collections)
-    app.state.collections = collections
+    await ensure_collection(client, settings.qdrant_collection_name, vector_size=384)
+
+    # ── 4. Store retriever and client in app state ─────────────────────────────
+    app.state.client = client
     app.state.embedder = embedder
+    app.state.retriever = KnowledgeRetriever(
+        client=client, embedder=embedder, collection_name=settings.qdrant_collection_name
+    )
+
+    # ── 5. Auto-ingest if collection point count is 0 ─────────────────────────
+    try:
+        info = await client.get_collection(settings.qdrant_collection_name)
+        if (info.points_count or 0) == 0:
+            log.info("knowledge.auto_ingest.start")
+            from .ingest import run_ingest_async  # noqa: PLC0415
+
+            counts = await run_ingest_async(client, embedder)
+            log.info("knowledge.auto_ingest.done", counts=counts)
+    except Exception as exc:
+        log.warning("knowledge.auto_ingest_skipped", error=str(exc))
 
     log.info("knowledge.startup.complete")
     yield
@@ -81,26 +80,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("knowledge.shutdown")
 
 
+from shared.middleware.trace_id import TraceIdMiddleware
+
 app = FastAPI(
-    title="AKEA Knowledge",
-    description="Multi-source Knowledge Retrieval — Autonomous Knowledge Execution Agent",
-    version="0.2.0",
+    title="KRAKEN Knowledge",
+    description="Multi-source Knowledge Retrieval — KRAKEN",
+    version="0.3.0",
     lifespan=lifespan,
 )
-
-
-def _verify_service_token(
-    x_service_token: str | None = Header(None, alias="X-Service-Token"),
-) -> str:
-    """FastAPI dependency: Enforce service token validation."""
-    token = x_service_token or ""
-    if not token or not secrets.compare_digest(token, settings.hitl_service_token):
-        log.warning("knowledge.auth_failed")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing service token.",
-        )
-    return token
+app.add_middleware(TraceIdMiddleware)
 
 
 @app.get("/health", tags=["ops"])
@@ -110,14 +98,20 @@ async def health() -> dict[str, str]:
 
 @app.get("/stats", tags=["ops"])
 async def stats() -> dict[str, int]:
-    """Return document count per collection."""
-    return {name: col.count() for name, col in app.state.collections.items()}
+    """Return total document point count in Qdrant collection."""
+    try:
+        info = await app.state.client.get_collection(settings.qdrant_collection_name)
+        count = info.points_count or 0
+    except Exception as exc:
+        log.warning("knowledge.stats_error", error=str(exc))
+        count = 0
+    return {settings.qdrant_collection_name: count}
 
 
 @app.post("/retrieve", response_model=RetrievalResult, tags=["retrieval"])
 async def retrieve(
     body: RetrievalRequest,
-    _token: str = Depends(_verify_service_token),
+    _token: str = Depends(verify_service_token),
 ) -> RetrievalResult:
     """Semantic search across all requested knowledge sources."""
     try:
@@ -127,61 +121,18 @@ async def retrieve(
         raise HTTPException(status_code=500, detail=f"Retrieval failed: {exc}") from exc
 
 
-def _run_ingest(collections: dict[str, Any]) -> dict[str, int]:
-    """Helper executed in worker thread to perform file loading and collection upsert."""
-    from .loaders.faq_loader import load_faq_chunks
-    from .loaders.sla_loader import load_sla_chunks
-    from .loaders.ticket_loader import load_ticket_chunks
-
-    counts: dict[str, int] = {}
-
-    # FAQ
-    faq_chunks = load_faq_chunks()
-    if faq_chunks:
-        col = collections[_source_to_collection_name(KnowledgeSource.FAQ)]
-        col.upsert(
-            ids=[c["id"] for c in faq_chunks],
-            documents=[c["document"] for c in faq_chunks],
-            metadatas=[c["metadata"] for c in faq_chunks],
-        )
-    counts["faq"] = len(faq_chunks)
-
-    # Tickets
-    ticket_chunks, _ = load_ticket_chunks()
-    if ticket_chunks:
-        col = collections[_source_to_collection_name(KnowledgeSource.TICKETS)]
-        col.upsert(
-            ids=[c["id"] for c in ticket_chunks],
-            documents=[c["document"] for c in ticket_chunks],
-            metadatas=[c["metadata"] for c in ticket_chunks],
-        )
-    counts["tickets"] = len(ticket_chunks)
-
-    # SLA
-    sla_chunks = load_sla_chunks()
-    if sla_chunks:
-        col = collections[_source_to_collection_name(KnowledgeSource.SLA)]
-        col.upsert(
-            ids=[c["id"] for c in sla_chunks],
-            documents=[c["document"] for c in sla_chunks],
-            metadatas=[c["metadata"] for c in sla_chunks],
-        )
-    counts["sla"] = len(sla_chunks)
-
-    return counts
-
-
 @app.post("/ingest", tags=["admin"])
 async def ingest(
-    _token: str = Depends(_verify_service_token),
+    _token: str = Depends(verify_service_token),
 ) -> dict[str, int]:
     """
-    Trigger re-ingestion of all knowledge sources from disk.
-    Called by the ingest script via HTTP. Idempotent — uses upsert.
+    Trigger re-ingestion of all knowledge sources from disk into Qdrant.
+    Called by the ingest script or admin endpoint via HTTP.
     """
-    loop = asyncio.get_running_loop()
     try:
-        counts = await loop.run_in_executor(None, _run_ingest, app.state.collections)
+        from .ingest import run_ingest_async  # noqa: PLC0415
+
+        counts = await run_ingest_async(app.state.client, app.state.embedder)
         log.info("knowledge.ingest.complete", counts=counts)
         return counts
     except Exception as exc:

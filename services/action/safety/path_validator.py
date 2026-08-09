@@ -1,5 +1,5 @@
 """
-Write-target path validator.
+Write-target path validator and atomic JSON writer.
 
 SECURITY CONTRACT
 ─────────────────
@@ -15,7 +15,12 @@ This module has zero external dependencies so it can be unit-tested in isolation
 
 from __future__ import annotations
 
+import contextlib
+import json
+import os
+import tempfile
 from pathlib import Path
+from typing import Any
 
 from shared.exceptions import InvalidExtensionError, PathTraversalError
 
@@ -67,3 +72,29 @@ def validate_write_target(target: str) -> Path:
         )
 
     return resolved
+
+
+def atomic_write_json(target_path: Path | str, content: Any) -> int:
+    """
+    Write content as formatted JSON to a target path atomically using a temporary file.
+    Guarantees same-filesystem rename and temp file cleanup on error.
+    Returns the number of bytes written.
+    """
+    path = Path(target_path).resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    json_bytes = json.dumps(content, indent=2, ensure_ascii=False).encode("utf-8")
+
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=".tmp_",
+        suffix=".json",
+    )
+    try:
+        with os.fdopen(tmp_fd, "wb") as f:
+            f.write(json_bytes)
+        os.replace(tmp_path, path)
+        return len(json_bytes)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise

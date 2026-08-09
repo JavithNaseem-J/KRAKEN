@@ -2,7 +2,7 @@
 Sliding window rate limiter — Redis sorted-set implementation using Lua script.
 
 Algorithm:
-  - Key:   akea:rl:{user_id}   (Redis sorted set)
+  - Key:   kraken:rl:{user_id}   (Redis sorted set)
   - Score: Unix timestamp of each request
   - Uses an atomic Lua script to:
       1. Evict entries older than the window (ZREMRANGEBYSCORE)
@@ -79,7 +79,9 @@ class SlidingWindowRateLimiter:
         max_requests: int = 10,
         window_seconds: int = 60,
     ) -> None:
-        self._redis = aioredis.from_url(redis_url, decode_responses=True)
+        from shared.http_client import create_async_redis_client
+
+        self._redis = create_async_redis_client(redis_url)
         self._max = max_requests
         self._window = window_seconds
         # Register Lua script for execution efficiency and atomicity
@@ -97,7 +99,7 @@ class SlidingWindowRateLimiter:
         """
         now = time.time()
         window_start = now - self._window
-        key = f"akea:rl:{user_id}"
+        key = f"kraken:rl:{user_id}"
         # Unique member to prevent score/member collision when float time matches
         member = f"{now:.6f}:{uuid.uuid4().hex[:8]}"
 

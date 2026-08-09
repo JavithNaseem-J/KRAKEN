@@ -1,32 +1,24 @@
-"""
-API Gateway — single entry point for all external requests.
-
-Responsibilities:
-  1. API key authentication (X-API-Key header) via APIKeyMiddleware
-  2. Sliding window rate limiting per user (backed by Redis Lua script)
-  3. Request routing with header forwarding (X-Request-Id, X-Service-Token)
-  4. Body size limit enforcement (max 1MB)
-  5. Fail-safe configuration validation at startup
-
-All internal services (orchestrator, knowledge, action, approval, memory, audit)
-are NOT directly exposed. Only the gateway's port (8000) is published in docker-compose.
-"""
-
 from __future__ import annotations
 
-import secrets
+import re
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import httpx
 import structlog
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from shared.config import get_settings
+from shared.http_client import create_async_http_client, service_headers
+from shared.logging import configure_logging
+from shared.middleware.trace_id import TraceIdMiddleware
 
 from .middleware.auth import APIKeyMiddleware, parse_api_keys
+from .middleware.prompt_guard import PromptGuardMiddleware
 from .middleware.rate_limiter import RateLimiterDatabaseError, SlidingWindowRateLimiter
 
 log = structlog.get_logger(__name__)
@@ -34,18 +26,17 @@ settings = get_settings()
 
 # Max allowed request body size: 1 MB (1024 * 1024 bytes)
 MAX_BODY_SIZE = 1_048_576
+API_KEYS_MAP = parse_api_keys(settings.gateway_api_keys)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    configure_logging(
+        log_level=settings.log_level, log_format=settings.log_format, service="gateway"
+    )
     log.info("gateway.startup")
 
-    # 1. Fail fast at startup if API keys are empty or malformed
-    try:
-        app.state.api_keys = parse_api_keys(settings.gateway_api_keys)
-    except Exception as exc:
-        log.critical("gateway.startup_config_failed", error=str(exc))
-        raise
+    app.state.api_keys = API_KEYS_MAP
 
     # 2. Initialize rate limiter
     limiter = SlidingWindowRateLimiter(
@@ -56,9 +47,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.limiter = limiter
 
     # 3. Shared HTTP client for upstream calls (connection pooling)
-    app.state.http = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0),
-    )
+    app.state.http = create_async_http_client()
 
     log.info("gateway.ready", orchestrator=settings.orchestrator_url)
     yield
@@ -69,39 +58,35 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="AKEA Gateway",
-    description="API Gateway — Autonomous Knowledge Execution Agent",
-    version="0.8.0",
+    title="KRAKEN Gateway",
+    description="API Gateway — KRAKEN",
+    version="0.6.0",
     docs_url=None,  # Disable built-in docs for security
     lifespan=lifespan,
 )
 
-# ── Auth middleware (outermost layer for standard user API keys) ──────────────
+# ── Auth & Security middleware ────────────────────────────────────────────────
+app.add_middleware(TraceIdMiddleware)
 app.add_middleware(
     APIKeyMiddleware,
-    api_keys=parse_api_keys(settings.gateway_api_keys),
+    api_keys=API_KEYS_MAP,
 )
+app.add_middleware(PromptGuardMiddleware)
 
+# ── CORS (React frontend origins) ─────────────────────────────────────────────
+# Starlette runs middleware in reverse add order, so CORS is added LAST to run
+# FIRST — preflight OPTIONS requests must be answered before auth rejects them.
+allowed_cors_origins = [
+    origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()
+]
 
-# ── Dependency: Enforce Service Token Auth for approvals ──────────────────────
-def _verify_service_token(
-    x_service_token: str | None = Header(None, alias="X-Service-Token"),
-) -> str:
-    """
-    Enforce high-privilege service token authentication for approval callbacks.
-    Uses timing-attack safe comparison.
-    Always returns 403 (not 422) so the expected header name is not revealed.
-    """
-    # Treat missing token as empty string — compare_digest requires same types
-    token = x_service_token or ""
-    # Use a constant-time comparison against a fixed-length known value
-    if not token or not secrets.compare_digest(token, settings.hitl_service_token):
-        log.warning("gateway.approval_callback_auth_failed")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing service token.",
-        )
-    return token
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["X-API-Key", "Content-Type", "X-Request-Id"],
+)
 
 
 # ── Dependency: Request Body Size Limiter ─────────────────────────────────────
@@ -151,11 +136,9 @@ async def _check_rate_limit(request: Request) -> tuple[bool, dict[str, str]]:
         headers = _rate_limit_headers(remaining, retry_after)
         return allowed, headers
     except RateLimiterDatabaseError as exc:
-        # Rate limiter is down — fail-closed/service unavailable is safer for security
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Rate limiting database is temporarily unavailable.",
-        ) from exc
+        log.warning("gateway.rate_limit_degraded_fail_open", user_id=user_id, error=str(exc))
+        headers = _rate_limit_headers(settings.gateway_rate_limit_requests, 0)
+        return True, headers
 
 
 async def _proxy(
@@ -176,11 +159,13 @@ async def _proxy(
     )
 
     # Prepare forwarding headers
-    forward_headers = {
-        "X-Request-Id": request_id,
-        "Content-Type": "application/json",
-        "X-Service-Token": settings.hitl_service_token,
-    }
+    forward_headers = service_headers(trace_id=request_id)
+    forward_headers.update(
+        {
+            "X-Request-Id": request_id,
+            "Content-Type": "application/json",
+        }
+    )
     if headers:
         forward_headers.update(headers)
 
@@ -237,6 +222,66 @@ async def health() -> dict[str, str]:
     }
 
 
+@app.get("/ready", tags=["ops"])
+async def ready_check() -> JSONResponse:
+    """
+    Aggregated readiness probe — checks health of all downstream microservices.
+    """
+    services = {
+        "orchestrator": settings.orchestrator_url,
+        "knowledge": settings.knowledge_url,
+        "action": settings.action_url,
+        "approval": settings.approval_url,
+        "memory": settings.memory_url,
+        "audit": settings.audit_url,
+    }
+
+    results: dict[str, str] = {}
+    all_ready = True
+
+    async with create_async_http_client(timeout_seconds=2.0) as client:
+        for name, base_url in services.items():
+            try:
+                resp = await client.get(f"{base_url}/health")
+                if resp.status_code == 200:
+                    results[name] = "ok"
+                else:
+                    results[name] = f"degraded ({resp.status_code})"
+                    all_ready = False
+            except Exception as exc:
+                results[name] = f"unreachable ({exc.__class__.__name__})"
+                all_ready = False
+
+    status_code = status.HTTP_200_OK if all_ready else status.HTTP_503_SERVICE_UNAVAILABLE
+    return JSONResponse(
+        status_code=status_code,
+        content={"status": "ready" if all_ready else "degraded", "services": results},
+    )
+
+
+@app.get("/", tags=["ops"])
+async def root() -> dict[str, Any]:
+    return {
+        "service": "gateway",
+        "description": "KRAKEN Edge API Gateway",
+        "documentation": "/docs",
+        "health": "/health",
+        "frontend": "http://localhost:5173",
+    }
+
+
+# ── Operator-Privilege Intent Gate ───────────────────────────────────────────
+# Keywords that signal a state-mutating / high-privilege operation intent.
+# If a message contains these keywords the request MUST carry
+# the X-Operator-Role: operator header, otherwise it is denied before the LLM
+# is ever invoked — preventing ticket data leakage via the HITL approval card.
+_HIGH_PRIVILEGE_PATTERNS = re.compile(
+    r"\b(escalate|write\s+(?:a\s+)?(?:json|report|file)|close\s+ticket|"
+    r"delete|purge|remove\s+ticket|wipe|create\s+(?:a\s+)?(?:new\s+)?ticket)\b",
+    re.IGNORECASE,
+)
+
+
 @app.post(
     "/v1/run",
     tags=["agent"],
@@ -262,55 +307,49 @@ async def run(request: Request) -> JSONResponse:
             status_code=status.HTTP_400_BAD_REQUEST, content={"error": "Invalid JSON body."}
         )
 
-    # Ensure session_id is generated if not provided
-    body.setdefault("session_id", str(uuid.uuid4()))
+    # Ensure session_id and user_id defaults if not provided
+    if isinstance(body, dict):
+        body.setdefault("session_id", str(uuid.uuid4()))
+        body.setdefault("user_id", "anonymous")
 
-    response = await _proxy(request, f"{settings.orchestrator_url}/run", body)
-
-    # Attach rate limit headers to response
-    for k, v in rl_headers.items():
-        response.headers[k] = v
-    return response
-
-
-@app.post(
-    "/v1/approval-callback",
-    tags=["hitl"],
-    dependencies=[Depends(_limit_request_body_size)],
-)
-async def approval_callback(
-    request: Request,
-    service_token: str = Depends(_verify_service_token),
-) -> JSONResponse:
-    """
-    Forward an approval decision to the orchestrator.
-    Requires X-Service-Token header validation.
-    Forward the service token header so orchestrator can authenticate.
-    """
-    allowed, rl_headers = await _check_rate_limit(request)
-    if not allowed:
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"error": "Rate limit exceeded. Try again shortly."},
-            headers=rl_headers,
-        )
+    # ── Operator Privilege Intent Gate ────────────────────────────────────────
+    # Check if the message contains high-privilege operational intent keywords.
+    # If so, require the X-Operator-Role: operator header before forwarding.
+    # This prevents unauthenticated users from triggering HITL cards that
+    # expose internal ticket data.
+    message = body.get("message", "") if isinstance(body, dict) else ""
+    if isinstance(message, str) and _HIGH_PRIVILEGE_PATTERNS.search(message):
+        operator_role = request.headers.get("X-Operator-Role", "").strip().lower()
+        if operator_role != "operator":
+            user_id = getattr(request.state, "user_id", "anonymous")
+            log.warning(
+                "gateway.privilege_escalation_denied",
+                user_id=user_id,
+                message_preview=message[:80],
+            )
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={
+                    "error": (
+                        "Access denied. This operation requires operator-level clearance. "
+                        "Please contact your security administrator to request elevated access."
+                    )
+                },
+            )
 
     try:
-        body = await request.json()
-    except Exception:
+        from pydantic import ValidationError
+
+        from shared.models.agent import QueryRequest
+
+        QueryRequest.model_validate(body)
+    except ValidationError as err:
         return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST, content={"error": "Invalid JSON body."}
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"error": "Invalid request payload", "details": err.errors(include_url=False)},
         )
 
-    # Forward the X-Service-Token downstream so orchestrator is satisfied
-    headers = {"X-Service-Token": service_token}
-
-    response = await _proxy(
-        request,
-        f"{settings.orchestrator_url}/approval-callback",
-        body,
-        headers=headers,
-    )
+    response = await _proxy(request, f"{settings.orchestrator_url}/run", body)
 
     # Attach rate limit headers to response
     for k, v in rl_headers.items():
