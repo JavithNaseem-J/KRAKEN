@@ -1,0 +1,219 @@
+# render.yaml — Render.com Blueprint Infrastructure-as-Code for AKEA
+#
+# Usage:
+#   1. Push this repository to GitHub.
+#   2. Log in to Render.com (https://dashboard.render.com).
+#   3. Click "New +" -> "Blueprint" and select your repository.
+#   4. Render will automatically read this file and provision all microservices!
+
+services:
+  # ── Gateway (Public API Gateway) ─────────────────────────────────────────────
+  - type: web
+    name: akea-gateway
+    env: docker
+    dockerfilePath: services/gateway/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: prod
+      - key: ORCHESTRATOR_URL
+        fromService:
+          type: web
+          name: akea-orchestrator
+          property: hostport
+      - key: GATEWAY_API_KEYS
+        generateValue: true
+      - key: HITL_SERVICE_TOKEN
+        generateValue: true
+
+  # ── Orchestrator ─────────────────────────────────────────────────────────────
+  - type: web
+    name: akea-orchestrator
+    env: docker
+    dockerfilePath: services/orchestrator/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: prod
+      - key: KNOWLEDGE_URL
+        fromService:
+          type: web
+          name: akea-knowledge
+          property: hostport
+      - key: ACTION_URL
+        fromService:
+          type: web
+          name: akea-action
+          property: hostport
+      - key: APPROVAL_URL
+        fromService:
+          type: web
+          name: akea-approval
+          property: hostport
+      - key: MEMORY_URL
+        fromService:
+          type: web
+          name: akea-memory
+          property: hostport
+      - key: AUDIT_URL
+        fromService:
+          type: web
+          name: akea-audit
+          property: hostport
+      - key: HITL_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: akea-gateway
+          envVarKey: HITL_SERVICE_TOKEN
+      - key: LLM_API_KEY
+        sync: false
+      - key: POSTGRES_URL
+        sync: false
+      - key: POSTGRES_SYNC_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+
+  # ── Knowledge ──────────────────────────────────────────────────────────────
+  - type: web
+    name: akea-knowledge
+    env: docker
+    dockerfilePath: services/knowledge/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: prod
+      - key: HITL_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: akea-gateway
+          envVarKey: HITL_SERVICE_TOKEN
+      - key: LLM_API_KEY
+        sync: false
+      - key: POSTGRES_URL
+        sync: false
+      - key: POSTGRES_SYNC_URL
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+
+  # ── Action ─────────────────────────────────────────────────────────────────
+  - type: web
+    name: akea-action
+    env: docker
+    dockerfilePath: services/action/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: prod
+      - key: APPROVAL_URL
+        fromService:
+          type: web
+          name: akea-approval
+          property: hostport
+      - key: AUDIT_URL
+        fromService:
+          type: web
+          name: akea-audit
+          property: hostport
+      - key: HITL_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: akea-gateway
+          envVarKey: HITL_SERVICE_TOKEN
+      - key: POSTGRES_URL
+        sync: false
+      - key: POSTGRES_SYNC_URL
+        sync: false
+
+  # ── Approval ───────────────────────────────────────────────────────────────
+  - type: web
+    name: akea-approval
+    env: docker
+    dockerfilePath: services/approval/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: prod
+      - key: ORCHESTRATOR_URL
+        fromService:
+          type: web
+          name: akea-orchestrator
+          property: hostport
+      - key: HITL_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: akea-gateway
+          envVarKey: HITL_SERVICE_TOKEN
+      - key: REDIS_URL
+        sync: false
+
+  # ── Memory ─────────────────────────────────────────────────────────────────
+  - type: web
+    name: akea-memory
+    env: docker
+    dockerfilePath: services/memory/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: prod
+      - key: HITL_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: akea-gateway
+          envVarKey: HITL_SERVICE_TOKEN
+      - key: POSTGRES_URL
+        sync: false
+      - key: POSTGRES_SYNC_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+
+  # ── Audit ──────────────────────────────────────────────────────────────────
+  - type: web
+    name: akea-audit
+    env: docker
+    dockerfilePath: services/audit/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: prod
+      - key: HITL_SERVICE_TOKEN
+        fromService:
+          type: web
+          name: akea-gateway
+          envVarKey: HITL_SERVICE_TOKEN
+      - key: POSTGRES_URL
+        sync: false
+      - key: POSTGRES_SYNC_URL
+        sync: false
+
+  # ── React Web Frontend ──────────────────────────────────────────────────────
+  - type: static
+    name: akea-frontend
+    rootDir: frontend-react
+    buildCommand: npm run build
+    staticPublishPath: dist
+    routes:
+      - type: redirect
+        source: /api/*
+        destination: https://akea-gateway.onrender.com/*
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://akea-gateway.onrender.com
