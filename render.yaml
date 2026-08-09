@@ -212,7 +212,6 @@ services:
   - type: web
     name: akea-frontend
     env: static
-    plan: free
     rootDir: frontend-react
     buildCommand: npm run build
     staticPublishPath: dist
