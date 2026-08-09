@@ -4,13 +4,14 @@
 #   1. Push this repository to GitHub.
 #   2. Log in to Render.com (https://dashboard.render.com).
 #   3. Click "New +" -> "Blueprint" and select your repository.
-#   4. Render will automatically read this file and provision all microservices!
+#   4. Render will automatically read this file and provision all microservices on Free tier!
 
 services:
   # ── Gateway (Public API Gateway) ─────────────────────────────────────────────
   - type: web
     name: akea-gateway
     env: docker
+    plan: free
     dockerfilePath: services/gateway/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -31,6 +32,7 @@ services:
   - type: web
     name: akea-orchestrator
     env: docker
+    plan: free
     dockerfilePath: services/orchestrator/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -84,6 +86,7 @@ services:
   - type: web
     name: akea-knowledge
     env: docker
+    plan: free
     dockerfilePath: services/knowledge/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -110,6 +113,7 @@ services:
   - type: web
     name: akea-action
     env: docker
+    plan: free
     dockerfilePath: services/action/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -140,6 +144,7 @@ services:
   - type: web
     name: akea-approval
     env: docker
+    plan: free
     dockerfilePath: services/approval/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -163,6 +168,7 @@ services:
   - type: web
     name: akea-memory
     env: docker
+    plan: free
     dockerfilePath: services/memory/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -185,6 +191,7 @@ services:
   - type: web
     name: akea-audit
     env: docker
+    plan: free
     dockerfilePath: services/audit/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -205,6 +212,7 @@ services:
   - type: web
     name: akea-frontend
     env: static
+    plan: free
     rootDir: frontend-react
     buildCommand: npm run build
     staticPublishPath: dist
