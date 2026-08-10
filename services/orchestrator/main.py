@@ -207,8 +207,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     log.info("orchestrator.startup", model=settings.llm_model)
 
-    # 1. Fail fast on missing LLM key before we try to wire any graph
-    validate_llm_config()
+    # 1. Validate LLM key configuration (log warning if unconfigured so orchestrator boots cleanly)
+    try:
+        validate_llm_config()
+    except Exception as exc:
+        log.warning("orchestrator.llm_unconfigured", error=str(exc))
 
     # 2. Open a sync psycopg connection pool for PostgresSaver if configured
     conn_pool = None

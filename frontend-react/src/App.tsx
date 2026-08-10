@@ -229,7 +229,8 @@ export default function App() {
       let errorMsg = 'Failed to reach the gateway.';
       if (axios.isAxiosError(e)) {
         const status = e.response?.status;
-        const serverError = (e.response?.data as { error?: string })?.error;
+        const data = e.response?.data as { error?: string; detail?: string } | undefined;
+        const serverError = data?.error || data?.detail;
         if (status === 403) {
           errorMsg = serverError || 'Access denied. This operation requires operator-level clearance.';
         } else if (status === 400) {
