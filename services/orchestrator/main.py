@@ -15,14 +15,22 @@ if sys.platform == "win32":
 import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, status
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from psycopg_pool import ConnectionPool
+
+try:
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+except ImportError:
+    AsyncPostgresSaver = None  # type: ignore[assignment, misc]
+
+try:
+    from psycopg_pool import ConnectionPool
+except ImportError:
+    ConnectionPool = None  # type: ignore[assignment, misc]
 from pydantic import BaseModel, Field
 
 from shared.auth import verify_service_token
@@ -77,7 +85,9 @@ async def _reaper_loop(app: FastAPI) -> None:
         await asyncio.sleep(30)
         loop_count += 1
         try:
-            pool: ConnectionPool = app.state.conn_pool
+            pool = getattr(app.state, "conn_pool", None)
+            if pool is None:
+                continue
             with pool.connection() as conn, conn.cursor() as cur:
                 now = datetime.now(UTC)
                 cur.execute(
@@ -196,39 +206,50 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 1. Fail fast on missing LLM key before we try to wire any graph
     validate_llm_config()
 
-    # 2. Open a sync psycopg connection pool for PostgresSaver
-    conn_pool = ConnectionPool(
-        conninfo=settings.postgres_sync_url,
-        min_size=1,
-        max_size=10,
-        max_idle=settings.postgres_max_idle_time,
-        max_lifetime=1800.0,
-        open=True,
-        kwargs={
-            "autocommit": True,
-            "keepalives": settings.postgres_keepalives,
-            "keepalives_idle": settings.postgres_keepalives_idle,
-            "keepalives_interval": settings.postgres_keepalives_interval,
-            "keepalives_count": settings.postgres_keepalives_count,
-        },
-    )
+    # 2. Open a sync psycopg connection pool for PostgresSaver if configured
+    conn_pool = None
+    if ConnectionPool and settings.postgres_sync_url:
+        try:
+            conn_pool = ConnectionPool(
+                conninfo=settings.postgres_sync_url,
+                min_size=1,
+                max_size=10,
+                max_idle=settings.postgres_max_idle_time,
+                max_lifetime=1800.0,
+                open=True,
+                kwargs={
+                    "autocommit": True,
+                    "keepalives": settings.postgres_keepalives,
+                    "keepalives_idle": settings.postgres_keepalives_idle,
+                    "keepalives_interval": settings.postgres_keepalives_interval,
+                    "keepalives_count": settings.postgres_keepalives_count,
+                },
+            )
+            with conn_pool.connection() as conn:
+                conn.execute(_APPROVAL_TABLE_DDL)
+        except Exception as exc:
+            log.warning("orchestrator.postgres_pool_failed", error=str(exc))
+            conn_pool = None
     app.state.conn_pool = conn_pool
 
-    # 3. Create approval_map table if it doesn't exist
-    with conn_pool.connection() as conn:
-        conn.execute(_APPROVAL_TABLE_DDL)
-
     # 4. Build the compiled graph (AsyncPostgresSaver with MemorySaver fallback)
-    try:
-        saver_cm = AsyncPostgresSaver.from_conn_string(settings.postgres_sync_url)
-        saver = await saver_cm.__aenter__()
-        app.state.saver_cm = saver_cm
-        app.state.agent_graph = await build_graph_async(saver)
-        log.info("orchestrator.async_checkpointer_ready")
-    except Exception as exc:
-        log.warning("orchestrator.async_checkpointer_failed", error=str(exc))
+    saver_cm = None
+    if AsyncPostgresSaver and settings.postgres_sync_url:
+        try:
+            saver_cm = AsyncPostgresSaver.from_conn_string(settings.postgres_sync_url)
+            saver = await saver_cm.__aenter__()
+            app.state.saver_cm = saver_cm
+            app.state.agent_graph = await build_graph_async(saver)
+            log.info("orchestrator.async_checkpointer_ready")
+        except Exception as exc:
+            log.warning("orchestrator.async_checkpointer_failed", error=str(exc))
+            saver_cm = None
+
+    if saver_cm is None:
         app.state.saver_cm = None
         app.state.agent_graph = await build_graph_async(None)
+        log.info("orchestrator.memory_checkpointer_ready")
+
     log.info("orchestrator.graph_ready")
 
     # 5. Start the reaper background task

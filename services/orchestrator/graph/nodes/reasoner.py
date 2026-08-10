@@ -86,6 +86,7 @@ async def reasoner_node(state: GraphState) -> dict:
         user_message = user_message[:_MAX_USER_MESSAGE_LEN] + "\n... [Truncated for token budget]"
 
     retrieved_chunks = state.get("retrieved_chunks", [])
+    # pyrefly: ignore [bad-argument-type]
     chunks_text, has_valid_chunks = _format_chunks(retrieved_chunks, threshold=0.40)
 
     if not has_valid_chunks and retrieved_chunks:
