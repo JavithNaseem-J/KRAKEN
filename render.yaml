@@ -1,23 +1,32 @@
-# render.yaml — Render.com Blueprint Infrastructure-as-Code for AKEA
+# render.yaml — Render.com Blueprint Infrastructure-as-Code for KRAKEN
 #
 # Usage:
-#   1. Push this repository to GitHub.
+#   1. Push this repository to GitHub (repo must be named "KRAKEN").
 #   2. Log in to Render.com (https://dashboard.render.com).
 #   3. Click "New +" -> "Blueprint" and select your repository.
-#   4. Render will automatically read this file and provision all microservices on Free tier!
+#   4. Render reads this file and provisions all microservices.
+#
+# Notes:
+#   - Docker web services on Render do NOT support the "free" plan.
+#     Omitting `plan` defaults to "starter" ($7/mo each).
+#     To minimize cost you can delete services you don't need (e.g. audit, memory).
+#   - The React frontend is deployed as a Render Static Site (completely FREE).
+#   - All `sync: false` vars must be added manually in the Render Dashboard
+#     under each service's "Environment" tab after first deploy.
 
 services:
   # ── Gateway (Public API Gateway) ─────────────────────────────────────────────
   - type: web
     name: akea-gateway
     env: docker
-    plan: free
     dockerfilePath: services/gateway/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: prod
+      - key: LOG_FORMAT
+        value: json
       - key: ORCHESTRATOR_URL
         fromService:
           type: web
@@ -32,13 +41,14 @@ services:
   - type: web
     name: akea-orchestrator
     env: docker
-    plan: free
     dockerfilePath: services/orchestrator/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: prod
+      - key: LOG_FORMAT
+        value: json
       - key: KNOWLEDGE_URL
         fromService:
           type: web
@@ -69,6 +79,7 @@ services:
           type: web
           name: akea-gateway
           envVarKey: HITL_SERVICE_TOKEN
+      # ── Set these manually in Dashboard → Environment ──
       - key: LLM_API_KEY
         sync: false
       - key: POSTGRES_URL
@@ -86,13 +97,14 @@ services:
   - type: web
     name: akea-knowledge
     env: docker
-    plan: free
     dockerfilePath: services/knowledge/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: prod
+      - key: LOG_FORMAT
+        value: json
       - key: HITL_SERVICE_TOKEN
         fromService:
           type: web
@@ -113,13 +125,14 @@ services:
   - type: web
     name: akea-action
     env: docker
-    plan: free
     dockerfilePath: services/action/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: prod
+      - key: LOG_FORMAT
+        value: json
       - key: APPROVAL_URL
         fromService:
           type: web
@@ -144,13 +157,14 @@ services:
   - type: web
     name: akea-approval
     env: docker
-    plan: free
     dockerfilePath: services/approval/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: prod
+      - key: LOG_FORMAT
+        value: json
       - key: ORCHESTRATOR_URL
         fromService:
           type: web
@@ -168,13 +182,14 @@ services:
   - type: web
     name: akea-memory
     env: docker
-    plan: free
     dockerfilePath: services/memory/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: prod
+      - key: LOG_FORMAT
+        value: json
       - key: HITL_SERVICE_TOKEN
         fromService:
           type: web
@@ -191,13 +206,14 @@ services:
   - type: web
     name: akea-audit
     env: docker
-    plan: free
     dockerfilePath: services/audit/Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
         value: prod
+      - key: LOG_FORMAT
+        value: json
       - key: HITL_SERVICE_TOKEN
         fromService:
           type: web
@@ -208,12 +224,14 @@ services:
       - key: POSTGRES_SYNC_URL
         sync: false
 
-  # ── React Web Frontend ──────────────────────────────────────────────────────
-  - type: static
+  # ── React Web Frontend (COMPLETELY FREE — Render Static Site) ──────────────
+  - type: web
     name: akea-frontend
+    env: static
     rootDir: frontend-react
-    buildCommand: npm run build
+    buildCommand: npm ci && npm run build
     staticPublishPath: dist
+    pullRequestPreviewsEnabled: true
     routes:
       - type: redirect
         source: /api/*

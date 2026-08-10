@@ -36,15 +36,18 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 5
 
     # ── Databases ────────────────────────────────────────────────────────────
-    postgres_url: str = "postgresql+asyncpg://agent:agent@localhost:5432/kraken"
+    # Leave empty to run in degraded/in-memory mode (no persistent storage).
+    # Set to a real connection string for production-grade Postgres persistence.
+    postgres_url: str = ""
     # psycopg3 sync DSN for PostgresSaver (langgraph-checkpoint-postgres)
-    postgres_sync_url: str = "postgresql://agent:agent@localhost:5432/kraken"
+    postgres_sync_url: str = ""
     postgres_keepalives: int = 1
     postgres_keepalives_idle: int = 30
     postgres_keepalives_interval: int = 10
     postgres_keepalives_count: int = 5
     postgres_max_idle_time: float = 300.0
-    redis_url: str = "redis://localhost:6379/0"
+    # Leave empty to run with no Redis (rate-limiting and caching will be degraded).
+    redis_url: str = ""
     qdrant_url: str = ""
     qdrant_api_key: str = ""
     qdrant_collection_name: str = "kraken_knowledge"
@@ -58,6 +61,9 @@ class Settings(BaseSettings):
     @field_validator("postgres_url")
     @classmethod
     def validate_postgres_url(cls, v: str) -> str:
+        # Empty string = no Postgres configured (degraded / in-memory mode)
+        if v == "":
+            return v
         if not v.startswith("postgresql+asyncpg://"):
             raise ValueError(
                 "postgres_url must start with 'postgresql+asyncpg://' for asyncpg compatibility."
@@ -135,31 +141,31 @@ class Settings(BaseSettings):
     def validate_no_local_hosts(self) -> Settings:
         """Fail fast in non-dev environments when any URL still points to a local host.
 
-        Localhost / compose-internal hostnames are only valid for local development.
-        In staging or prod every URL must point to a cloud-managed service.  A typo
-        that leaves a URL as 'localhost' would silently connect to nothing (or a local
-        stub) instead of the real cloud service — this validator catches that at boot.
+        Optional backing services (postgres, redis, qdrant) use empty string as their
+        'not configured' sentinel — KRAKEN will boot in degraded/in-memory mode for
+        those services. Only non-empty URLs are checked so cloud deployments without
+        optional services still boot successfully.
+
+        Required inter-service URLs (orchestrator, knowledge, action, approval, memory,
+        audit) are always checked because Render injects them via `fromService`.
         """
-        from urllib.parse import urlparse  # stdlib — no extra dependency
+        from urllib.parse import urlparse
 
         if self.environment == "dev":
             return self
 
-        # Hostnames that are only valid in local / compose dev setups.
-        # Checked against the *parsed* hostname so credential strings and
-        # scheme names can never cause false positives.
         _LOCAL_HOSTNAMES: frozenset[str] = frozenset(
             {
                 "localhost",
                 "127.0.0.1",
                 "0.0.0.0",
-                # Docker-compose service names
                 "postgres",
                 "redis",
             }
         )
 
-        _CHECKED_FIELDS: dict[str, str] = {
+        # All URLs to check — empty string means "not configured", skip.
+        _ALL_FIELDS: dict[str, str] = {
             "postgres_url": self.postgres_url,
             "postgres_sync_url": self.postgres_sync_url,
             "redis_url": self.redis_url,
@@ -172,7 +178,9 @@ class Settings(BaseSettings):
         }
 
         offenders: list[str] = []
-        for field_name, url in _CHECKED_FIELDS.items():
+        for field_name, url in _ALL_FIELDS.items():
+            if not url:
+                continue  # Empty = not configured, service runs in degraded mode
             try:
                 hostname = urlparse(url).hostname or ""
             except Exception:  # noqa: BLE001

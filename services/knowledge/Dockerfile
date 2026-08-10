@@ -26,8 +26,10 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONPATH="/app"
 
-COPY --chown=kraken:kraken services/knowledge/ .
+COPY --chown=kraken:kraken services/knowledge/ /app/services/knowledge/
+COPY --chown=kraken:kraken data/ /app/data/
 RUN chown -R kraken:kraken /app
 
 USER kraken
@@ -35,4 +37,4 @@ USER kraken
 EXPOSE 8002
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD ["python", "-c", "import os, httpx; port = os.getenv('PORT', '8002'); httpx.get(f'http://localhost:{port}/health').raise_for_status()"]
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8002}"]
+CMD ["sh", "-c", "uvicorn services.knowledge.main:app --host 0.0.0.0 --port ${PORT:-8002}"]

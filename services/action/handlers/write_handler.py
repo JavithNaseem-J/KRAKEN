@@ -22,6 +22,7 @@ from shared.exceptions import ActionExecutionError
 from ..safety.backup import backup_if_exists
 from ..safety.path_validator import (
     WORKSPACE_ROOT,
+    PathTraversalError,
     atomic_write_json,
     validate_write_target,
 )
