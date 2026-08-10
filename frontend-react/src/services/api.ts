@@ -15,12 +15,13 @@ import type {
 } from '../types/agent';
 
 function getBaseUrl(envUrl: string | undefined, defaultLocal: string): string {
-  const configured = envUrl?.trim();
-  if (configured) {
-    return configured.replace(/\/$/, '');
-  }
+  // Always target the live backend instance on Render
   if (typeof window !== 'undefined' && window.location.hostname.includes('onrender.com')) {
     return 'https://kraken-backend-7op1.onrender.com';
+  }
+  const configured = envUrl?.trim();
+  if (configured && configured !== 'https://kraken-backend.onrender.com') {
+    return configured.replace(/\/$/, '');
   }
   return defaultLocal.replace(/\/$/, '');
 }
