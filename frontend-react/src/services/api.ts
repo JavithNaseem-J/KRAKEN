@@ -15,6 +15,13 @@ import type {
 } from '../types/agent';
 
 function getBaseUrl(envUrl: string | undefined, defaultLocal: string): string {
+  // If running on Render (*.onrender.com), dynamically derive the backend domain to match Render's service suffix (e.g. kraken-pme9 -> kraken-backend-pme9)
+  if (typeof window !== 'undefined' && window.location.hostname.includes('onrender.com')) {
+    const host = window.location.hostname;
+    if (host.startsWith('kraken-')) {
+      return `https://${host.replace('kraken-', 'kraken-backend-')}`;
+    }
+  }
   const configured = envUrl?.trim();
   if (configured) {
     return configured.replace(/\/$/, '');
