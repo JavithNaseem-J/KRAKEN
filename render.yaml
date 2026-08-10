@@ -1,85 +1,25 @@
-# render.yaml — Render.com Blueprint Infrastructure-as-Code for KRAKEN
+# render.yaml — Render.com 100% FREE TIER Blueprint for KRAKEN
 #
 # Usage:
-#   1. Push this repository to GitHub (repo must be named "KRAKEN").
+#   1. Push this repository to GitHub.
 #   2. Log in to Render.com (https://dashboard.render.com).
 #   3. Click "New +" -> "Blueprint" and select your repository.
-#   4. Render reads this file and provisions all microservices.
-#
-# Notes:
-#   - Docker web services on Render do NOT support the "free" plan.
-#     Omitting `plan` defaults to "starter" ($7/mo each).
-#     To minimize cost you can delete services you don't need (e.g. audit, memory).
-#   - The React frontend is deployed as a Render Static Site (completely FREE).
-#   - All `sync: false` vars must be added manually in the Render Dashboard
-#     under each service's "Environment" tab after first deploy.
+#   4. Render will provision 1 Free Web Service + 1 Free Static Site with NO CREDIT CARD required!
 
 services:
-  # ── Gateway (Public API Gateway) ─────────────────────────────────────────────
+  # ── KRAKEN Unified Backend (100% FREE Web Service) ──────────────────────────
   - type: web
-    name: akea-gateway
+    name: akea-backend
     env: docker
-    dockerfilePath: services/gateway/Dockerfile
+    plan: free
+    dockerfilePath: Dockerfile.standalone
     dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: ENVIRONMENT
-        value: prod
+        value: dev
       - key: LOG_FORMAT
         value: json
-      - key: ORCHESTRATOR_URL
-        fromService:
-          type: web
-          name: akea-orchestrator
-          property: hostport
-      - key: GATEWAY_API_KEYS
-        generateValue: true
-      - key: HITL_SERVICE_TOKEN
-        generateValue: true
-
-  # ── Orchestrator ─────────────────────────────────────────────────────────────
-  - type: web
-    name: akea-orchestrator
-    env: docker
-    dockerfilePath: services/orchestrator/Dockerfile
-    dockerContext: .
-    healthCheckPath: /health
-    envVars:
-      - key: ENVIRONMENT
-        value: prod
-      - key: LOG_FORMAT
-        value: json
-      - key: KNOWLEDGE_URL
-        fromService:
-          type: web
-          name: akea-knowledge
-          property: hostport
-      - key: ACTION_URL
-        fromService:
-          type: web
-          name: akea-action
-          property: hostport
-      - key: APPROVAL_URL
-        fromService:
-          type: web
-          name: akea-approval
-          property: hostport
-      - key: MEMORY_URL
-        fromService:
-          type: web
-          name: akea-memory
-          property: hostport
-      - key: AUDIT_URL
-        fromService:
-          type: web
-          name: akea-audit
-          property: hostport
-      - key: HITL_SERVICE_TOKEN
-        fromService:
-          type: web
-          name: akea-gateway
-          envVarKey: HITL_SERVICE_TOKEN
-      # ── Set these manually in Dashboard → Environment ──
       - key: LLM_API_KEY
         sync: false
       - key: POSTGRES_URL
@@ -93,152 +33,20 @@ services:
       - key: QDRANT_API_KEY
         sync: false
 
-  # ── Knowledge ──────────────────────────────────────────────────────────────
-  - type: web
-    name: akea-knowledge
-    env: docker
-    dockerfilePath: services/knowledge/Dockerfile
-    dockerContext: .
-    healthCheckPath: /health
-    envVars:
-      - key: ENVIRONMENT
-        value: prod
-      - key: LOG_FORMAT
-        value: json
-      - key: HITL_SERVICE_TOKEN
-        fromService:
-          type: web
-          name: akea-gateway
-          envVarKey: HITL_SERVICE_TOKEN
-      - key: LLM_API_KEY
-        sync: false
-      - key: POSTGRES_URL
-        sync: false
-      - key: POSTGRES_SYNC_URL
-        sync: false
-      - key: QDRANT_URL
-        sync: false
-      - key: QDRANT_API_KEY
-        sync: false
-
-  # ── Action ─────────────────────────────────────────────────────────────────
-  - type: web
-    name: akea-action
-    env: docker
-    dockerfilePath: services/action/Dockerfile
-    dockerContext: .
-    healthCheckPath: /health
-    envVars:
-      - key: ENVIRONMENT
-        value: prod
-      - key: LOG_FORMAT
-        value: json
-      - key: APPROVAL_URL
-        fromService:
-          type: web
-          name: akea-approval
-          property: hostport
-      - key: AUDIT_URL
-        fromService:
-          type: web
-          name: akea-audit
-          property: hostport
-      - key: HITL_SERVICE_TOKEN
-        fromService:
-          type: web
-          name: akea-gateway
-          envVarKey: HITL_SERVICE_TOKEN
-      - key: POSTGRES_URL
-        sync: false
-      - key: POSTGRES_SYNC_URL
-        sync: false
-
-  # ── Approval ───────────────────────────────────────────────────────────────
-  - type: web
-    name: akea-approval
-    env: docker
-    dockerfilePath: services/approval/Dockerfile
-    dockerContext: .
-    healthCheckPath: /health
-    envVars:
-      - key: ENVIRONMENT
-        value: prod
-      - key: LOG_FORMAT
-        value: json
-      - key: ORCHESTRATOR_URL
-        fromService:
-          type: web
-          name: akea-orchestrator
-          property: hostport
-      - key: HITL_SERVICE_TOKEN
-        fromService:
-          type: web
-          name: akea-gateway
-          envVarKey: HITL_SERVICE_TOKEN
-      - key: REDIS_URL
-        sync: false
-
-  # ── Memory ─────────────────────────────────────────────────────────────────
-  - type: web
-    name: akea-memory
-    env: docker
-    dockerfilePath: services/memory/Dockerfile
-    dockerContext: .
-    healthCheckPath: /health
-    envVars:
-      - key: ENVIRONMENT
-        value: prod
-      - key: LOG_FORMAT
-        value: json
-      - key: HITL_SERVICE_TOKEN
-        fromService:
-          type: web
-          name: akea-gateway
-          envVarKey: HITL_SERVICE_TOKEN
-      - key: POSTGRES_URL
-        sync: false
-      - key: POSTGRES_SYNC_URL
-        sync: false
-      - key: REDIS_URL
-        sync: false
-
-  # ── Audit ──────────────────────────────────────────────────────────────────
-  - type: web
-    name: akea-audit
-    env: docker
-    dockerfilePath: services/audit/Dockerfile
-    dockerContext: .
-    healthCheckPath: /health
-    envVars:
-      - key: ENVIRONMENT
-        value: prod
-      - key: LOG_FORMAT
-        value: json
-      - key: HITL_SERVICE_TOKEN
-        fromService:
-          type: web
-          name: akea-gateway
-          envVarKey: HITL_SERVICE_TOKEN
-      - key: POSTGRES_URL
-        sync: false
-      - key: POSTGRES_SYNC_URL
-        sync: false
-
-  # ── React Web Frontend (COMPLETELY FREE — Render Static Site) ──────────────
+  # ── KRAKEN React Web Frontend (100% FREE Static Site) ───────────────────────
   - type: web
     name: akea-frontend
     env: static
     rootDir: frontend-react
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
-    pullRequestPreviewsEnabled: true
     routes:
       - type: redirect
         source: /api/*
-        destination: https://akea-gateway.onrender.com/*
+        destination: https://akea-backend.onrender.com/*
       - type: rewrite
         source: /*
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        value: https://akea-gateway.onrender.com
+        value: https://akea-backend.onrender.com
