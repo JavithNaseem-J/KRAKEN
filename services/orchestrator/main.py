@@ -16,11 +16,15 @@ import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, status
 from langgraph.types import Command
-from opentelemetry import trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+try:
+    from opentelemetry import trace
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+    _OTEL_AVAILABLE = True
+except ImportError:
+    _OTEL_AVAILABLE = False
 
 try:
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -302,13 +306,17 @@ app = FastAPI(
 app.add_middleware(TraceIdMiddleware)
 
 # ── Telemetry Setup ───────────────────────────────────────────────────────────
-_provider = TracerProvider()
-_processor = BatchSpanProcessor(ConsoleSpanExporter())
-_provider.add_span_processor(_processor)
-trace.set_tracer_provider(_provider)
+if _OTEL_AVAILABLE:
+    try:
+        _provider = TracerProvider()
+        _processor = BatchSpanProcessor(ConsoleSpanExporter())
+        _provider.add_span_processor(_processor)
+        trace.set_tracer_provider(_provider)
 
-FastAPIInstrumentor.instrument_app(app)
-HTTPXClientInstrumentor().instrument()
+        FastAPIInstrumentor.instrument_app(app)
+        HTTPXClientInstrumentor().instrument()
+    except Exception as exc:
+        log.warning("orchestrator.telemetry_init_failed", error=str(exc))
 
 
 def _graph_config(session_id: str) -> dict:

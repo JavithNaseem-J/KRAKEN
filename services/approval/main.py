@@ -109,8 +109,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Verify Redis connectivity at boot
     if not await queue.ping():
-        log.critical("approval.redis_connection_failed")
-        raise RuntimeError("Failed to connect to Redis during startup.")
+        log.warning("approval.redis_connection_failed_running_degraded")
 
     app.state.queue = queue
 

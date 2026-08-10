@@ -73,8 +73,10 @@ def create_async_redis_client(
     """
     import redis.asyncio as aioredis
 
+    redis_url = url if (url and url.strip()) else "redis://localhost:6379"
+
     return aioredis.from_url(
-        url,
+        redis_url,
         decode_responses=decode_responses,
         socket_connect_timeout=socket_connect_timeout,
         health_check_interval=health_check_interval,

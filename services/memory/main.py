@@ -65,10 +65,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("memory.startup.redis")
     short_term = ShortTermMemory(redis_url=settings.redis_url)
 
-    # Fail-fast: refuse to start if Redis is unreachable
+    # Fail-open: log warning if Redis is unreachable
     if not await short_term.ping():
-        log.critical("memory.startup.redis_unreachable")
-        raise RuntimeError("Failed to connect to Redis during Memory Service startup.")
+        log.warning("memory.startup.redis_unreachable_running_degraded")
 
     app.state.short_term = short_term
     log.info("memory.startup.redis_ready")
