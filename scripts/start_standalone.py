@@ -47,6 +47,15 @@ from services.memory.main import app as memory_app
 from services.orchestrator.main import app as orchestrator_app
 
 
+async def serve_service(name: str, server: uvicorn.Server) -> None:
+    try:
+        await server.serve()
+    except SystemExit as exc:
+        print(f"[Launcher] Service '{name}' exited with code {exc.code}", flush=True)
+    except Exception as exc:
+        print(f"[Launcher] Service '{name}' failed: {exc}", flush=True)
+
+
 async def main() -> None:
     port = int(os.getenv("PORT", "8000"))
     print("==========================================================", flush=True)
@@ -64,14 +73,14 @@ async def main() -> None:
         ("gateway", uvicorn.Config(gateway_app, host="0.0.0.0", port=port, log_level="info")),
     ]
 
-    servers: list[uvicorn.Server] = []
+    tasks = []
     for name, cfg in configs:
         print(f"[Launcher] Starting in-process service: {name} ({cfg.host}:{cfg.port})", flush=True)
         server = uvicorn.Server(cfg)
-        servers.append(server)
+        tasks.append(serve_service(name, server))
 
     try:
-        await asyncio.gather(*[s.serve() for s in servers])
+        await asyncio.gather(*tasks)
     except KeyboardInterrupt:
         print("[Launcher] Shutting down all in-process microservices...", flush=True)
 

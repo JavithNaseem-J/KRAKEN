@@ -45,34 +45,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("knowledge.startup.embedder", model=settings.embedding_model)
     embedder = get_embedder()
 
-    from shared.cache import create_async_qdrant_client
-
-    # ── 2. Open Qdrant client ──────────────────────────────────────────────────
-    client = create_async_qdrant_client()
-
-    # ── 3. Ensure collection exists ────────────────────────────────────────────
-    from .ingest import ensure_collection
-
-    await ensure_collection(client, settings.qdrant_collection_name, vector_size=384)
-
-    # ── 4. Store retriever and client in app state ─────────────────────────────
-    app.state.client = client
-    app.state.embedder = embedder
-    app.state.retriever = KnowledgeRetriever(
-        client=client, embedder=embedder, collection_name=settings.qdrant_collection_name
-    )
-
-    # ── 5. Auto-ingest if collection point count is 0 ─────────────────────────
+    # ── 2. Open Qdrant client & ensure collection ──────────────────────────────
     try:
+        from shared.cache import create_async_qdrant_client
+        client = create_async_qdrant_client()
+
+        from .ingest import ensure_collection
+        await ensure_collection(client, settings.qdrant_collection_name, vector_size=384)
+
+        app.state.client = client
+        app.state.embedder = embedder
+        app.state.retriever = KnowledgeRetriever(
+            client=client, embedder=embedder, collection_name=settings.qdrant_collection_name
+        )
+
         info = await client.get_collection(settings.qdrant_collection_name)
         if (info.points_count or 0) == 0:
-            log.info("knowledge.auto_ingest.start")
-            from .ingest import run_ingest_async  # noqa: PLC0415
-
+            log.info("knowledge.startup.auto_ingest_starting")
+            from .ingest import run_ingest_async
             counts = await run_ingest_async(client, embedder)
-            log.info("knowledge.auto_ingest.done", counts=counts)
+            log.info("knowledge.startup.auto_ingest_complete", counts=counts)
     except Exception as exc:
-        log.warning("knowledge.auto_ingest_skipped", error=str(exc))
+        log.warning("knowledge.startup.qdrant_degraded", error=str(exc))
+        app.state.client = None
+        app.state.embedder = embedder
+        app.state.retriever = None
 
     log.info("knowledge.startup.complete")
     yield
