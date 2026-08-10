@@ -202,8 +202,7 @@ export default function RuixenMoonChat({
                   KRAKEN
                 </h1>
                 <p className="mt-3 text-neutral-300 text-sm leading-relaxed drop-shadow-sm">
-                  Autonomous Knowledge Execution Agent with inline Human-in-the-Loop safety approval gates.
-                  Start by typing your security or helpdesk query below.
+                  Autonomous Cyber Operations & Security Triage Platform. Enterprise AI assistant with integrated Human-in-the-Loop safety gates.
                 </p>
               </div>
             </div>
@@ -321,7 +320,7 @@ export default function RuixenMoonChat({
           {/* Caution / Disclaimer Footer */}
           <div className="mt-3.5 text-center px-4">
             <p className="text-[11px] font-mono tracking-tight text-neutral-400/90 leading-relaxed">
-              KRAKEN will analyze your request and provide intelligent, secure assistance. KRAKEN can make mistakes. Verify important security information.
+              KRAKEN can make mistakes. Verify important security information.
             </p>
           </div>
         </div>
