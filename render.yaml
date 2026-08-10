@@ -43,10 +43,13 @@ services:
     routes:
       - type: rewrite
         source: /api/*
-        destination: https://kraken-backend.onrender.com/*
+        destination: https://kraken-backend-7op1.onrender.com/*
       - type: rewrite
         source: /*
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        value: https://kraken-backend.onrender.com
+        fromService:
+          type: web
+          name: kraken-backend
+          property: url
