@@ -17,6 +17,23 @@ import sys
 import structlog
 
 
+def safe_remove_processors_meta(logger: Any, method_name: str, event_dict: Any) -> Any:
+    """Safe wrapper around structlog remove_processors_meta to prevent tuple mutation errors."""
+    if isinstance(event_dict, dict):
+        event_dict.pop("_record", None)
+        event_dict.pop("_from_structlog", None)
+        return event_dict
+    if isinstance(event_dict, tuple):
+        try:
+            d = dict(event_dict)
+            d.pop("_record", None)
+            d.pop("_from_structlog", None)
+            return d
+        except Exception:
+            return {}
+    return event_dict
+
+
 def configure_logging(
     log_level: str = "INFO",
     log_format: str = "console",  # "json" | "console"
@@ -43,7 +60,7 @@ def configure_logging(
     if log_format == "json":
         formatter = structlog.stdlib.ProcessorFormatter(
             processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                safe_remove_processors_meta,
                 structlog.processors.dict_tracebacks,
                 structlog.processors.JSONRenderer(),
             ],
@@ -52,7 +69,7 @@ def configure_logging(
     else:
         formatter = structlog.stdlib.ProcessorFormatter(
             processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                safe_remove_processors_meta,
                 structlog.dev.ConsoleRenderer(colors=True),
             ],
             foreign_pre_chain=shared_processors,

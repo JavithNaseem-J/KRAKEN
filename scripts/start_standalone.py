@@ -19,6 +19,12 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
+
+# Ensure workspace root is on sys.path
+root_dir = Path(__file__).resolve().parent.parent
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
 
 # Ensure localhost URLs are permitted for internal intra-container communication
 os.environ["ORCHESTRATOR_URL"] = os.getenv("ORCHESTRATOR_URL", "http://127.0.0.1:8001")
