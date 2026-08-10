@@ -24,6 +24,19 @@ _embedder_instance: BGEEmbedder | None = None
 _embedder_lock = threading.Lock()
 
 
+class ZeroVectorEmbedder:
+    """Lightweight zero-vector fallback embedder when no API keys are set and local PyTorch models are skipped to stay within RAM limits."""
+
+    def __init__(self, dim: int = 1536) -> None:
+        self.dim = dim
+
+    def embed_query(self, text: str) -> list[float]:
+        return [0.0] * self.dim
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[0.0] * self.dim for _ in texts]
+
+
 class BGEEmbedder:
     """
     Shared embedding wrapper supporting Cloud API embeddings or local models.
@@ -49,13 +62,23 @@ class BGEEmbedder:
                 openai_api_base=base_url,
             )
             log.info("embedder.cloud_api_ready", model=model_name)
+        elif provider in ("cloud", "openai"):
+            log.warning("embedder.no_api_key_provided_using_zero_vector_fallback")
+            dim = 1536 if "3-small" in model_name or "ada" in model_name else 384
+            self._model = ZeroVectorEmbedder(dim=dim)
         else:
-            self._model = HuggingFaceEmbeddings(
-                model_name=model_name,
-                model_kwargs={"device": device},
-                encode_kwargs={"normalize_embeddings": True},
-            )
-            log.info("embedder.local_hf_ready", model=model_name)
+            try:
+                from langchain_huggingface import HuggingFaceEmbeddings
+
+                self._model = HuggingFaceEmbeddings(
+                    model_name=model_name,
+                    model_kwargs={"device": device},
+                    encode_kwargs={"normalize_embeddings": True},
+                )
+                log.info("embedder.local_hf_ready", model=model_name)
+            except Exception as exc:
+                log.warning("embedder.fallback_zero_vectors", reason=str(exc))
+                self._model = ZeroVectorEmbedder(dim=384)
 
         self.model_name = model_name
         self.device = device
