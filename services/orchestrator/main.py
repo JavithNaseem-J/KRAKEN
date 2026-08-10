@@ -131,14 +131,14 @@ async def _reaper_loop(app: FastAPI) -> None:
             log.error("reaper.loop_error", error=str(exc))
 
 
-def prune_stale_checkpoints(pool: ConnectionPool) -> dict[str, int]:
+def prune_stale_checkpoints(pool: ConnectionPool | None) -> dict[str, int]:
     """
-    Prunes orphaned PostgreSQL LangGraph checkpoints for:
-    1. Timed-out approvals (older than 1 hour).
-    2. Inactive sessions older than 7 days.
-    Returns the count of deleted checkpoint and checkpoint_writes rows.
+    Safely delete stale checkpoints from PostgreSQL for timed-out or inactive sessions.
+    Prevents database bloat over time.
     """
     deleted_counts = {"checkpoints": 0, "checkpoint_writes": 0}
+    if not pool:
+        return deleted_counts
     try:
         with pool.connection() as conn, conn.cursor() as cur:
             # 1. Prune checkpoints & writes for timed-out approvals older than 1 hour
@@ -296,7 +296,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         with contextlib.suppress(Exception):
             await app.state.saver_cm.__aexit__(None, None, None)
 
-    conn_pool.close()
+    if getattr(app.state, "conn_pool", None):
+        with contextlib.suppress(Exception):
+            app.state.conn_pool.close()
     log.info("orchestrator.shutdown")
 
 
@@ -339,13 +341,14 @@ def _graph_config(session_id: str) -> dict:
 async def health() -> dict[str, Any]:
     """Liveness probe. Checks connectivity to the Postgres saver pool."""
     db_ok = False
-    try:
-        pool: ConnectionPool = app.state.conn_pool
-        with pool.connection() as conn:
-            conn.execute("SELECT 1;")
-        db_ok = True
-    except Exception as exc:
-        log.error("orchestrator.health_db_check_failed", error=str(exc))
+    pool: ConnectionPool | None = getattr(app.state, "conn_pool", None)
+    if pool is not None:
+        try:
+            with pool.connection() as conn:
+                conn.execute("SELECT 1;")
+            db_ok = True
+        except Exception as exc:
+            log.error("orchestrator.health_db_check_failed", error=str(exc))
 
     return {
         "status": "ok" if db_ok else "degraded",
