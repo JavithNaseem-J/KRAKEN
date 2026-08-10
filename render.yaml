@@ -41,7 +41,7 @@ services:
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
     routes:
-      - type: redirect
+      - type: rewrite
         source: /api/*
         destination: https://kraken-backend.onrender.com/*
       - type: rewrite
