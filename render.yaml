@@ -54,4 +54,4 @@ services:
         fromService:
           type: web
           name: kraken-backend
-          property: url
+          property: host
