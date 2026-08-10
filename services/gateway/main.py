@@ -80,12 +80,23 @@ allowed_cors_origins = [
     origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()
 ]
 
+if "*" in allowed_cors_origins:
+    cors_kwargs = {
+        "allow_origins": ["*"],
+        "allow_credentials": False,
+    }
+else:
+    cors_kwargs = {
+        "allow_origins": allowed_cors_origins,
+        "allow_origin_regex": r"https://.*\.onrender\.com|http://localhost:.*",
+        "allow_credentials": True,
+    }
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_cors_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["X-API-Key", "Content-Type", "X-Request-Id"],
+    **cors_kwargs,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

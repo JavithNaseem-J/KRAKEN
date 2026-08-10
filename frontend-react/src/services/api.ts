@@ -14,16 +14,33 @@ import type {
   RunResponse,
 } from '../types/agent';
 
-const GATEWAY_URL = (
-  import.meta.env.VITE_GATEWAY_URL ??
-  import.meta.env.VITE_API_URL ??
-  'http://localhost:8000'
-).replace(/\/$/, '');
-const APPROVAL_URL = (
-  import.meta.env.VITE_APPROVAL_URL ??
-  import.meta.env.VITE_API_URL ??
-  'http://localhost:8004'
-).replace(/\/$/, '');
+function getBaseUrl(envUrl: string | undefined, defaultLocal: string): string {
+  const configured = envUrl?.trim();
+  if (configured && !configured.includes('onrender.com')) {
+    return configured.replace(/\/$/, '');
+  }
+  // Dynamic Render hostname resolution: if frontend is on https://kraken-prne9.onrender.com -> backend is https://kraken-backend-prne9.onrender.com
+  if (typeof window !== 'undefined' && window.location.hostname.includes('onrender.com')) {
+    const host = window.location.hostname;
+    if (host.startsWith('kraken-')) {
+      const backendHost = host.replace('kraken-', 'kraken-backend-');
+      return `https://${backendHost}`;
+    }
+    if (host === 'kraken.onrender.com') {
+      return 'https://kraken-backend.onrender.com';
+    }
+  }
+  return (configured || defaultLocal).replace(/\/$/, '');
+}
+
+const GATEWAY_URL = getBaseUrl(
+  import.meta.env.VITE_GATEWAY_URL || import.meta.env.VITE_API_URL,
+  'http://localhost:8000',
+);
+const APPROVAL_URL = getBaseUrl(
+  import.meta.env.VITE_APPROVAL_URL || import.meta.env.VITE_API_URL,
+  'http://localhost:8004',
+);
 
 function gatewayClient(apiKey: string): AxiosInstance {
   return axios.create({

@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     gateway_api_keys: str = (
         "dev-key-alice-longer-secure-key:alice,dev-key-bob-longer-secure-key:bob"
     )
-    cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000"
+    cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,https://*.onrender.com,*"
     gateway_rate_limit_requests: int = 60
     gateway_rate_limit_window_seconds: int = 60
 
