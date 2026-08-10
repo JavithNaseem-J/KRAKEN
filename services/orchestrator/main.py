@@ -75,6 +75,9 @@ CREATE INDEX IF NOT EXISTS approval_map_status_expires
     WHERE status = 'pending';
 """
 
+# In-memory fallback for approval mappings when running without Postgres
+_IN_MEMORY_APPROVAL_MAP: dict[str, dict[str, Any]] = {}
+
 
 # ── Reaper background task ────────────────────────────────────────────────────
 async def _reaper_loop(app: FastAPI) -> None:
@@ -499,17 +502,28 @@ async def run(body: QueryRequest) -> Any:
         action_name = interrupt_val.get("action_name", "unknown")
         expires_at = datetime.now(UTC) + timedelta(seconds=settings.approval_timeout_seconds)
 
-        # Persist approval record to Postgres (durable, multi-replica safe)
-        pool: ConnectionPool = app.state.conn_pool
-        with pool.connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO approval_map (approval_id, session_id, action_name, status, expires_at)
-                VALUES (%s, %s, %s, 'pending', %s)
-                ON CONFLICT (approval_id) DO NOTHING
-                """,
-                (approval_id, body.session_id, action_name, expires_at),
-            )
+        # Persist approval record to Postgres (durable) or in-memory fallback
+        pool: ConnectionPool | None = getattr(app.state, "conn_pool", None)
+        if pool is not None:
+            try:
+                with pool.connection() as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO approval_map (approval_id, session_id, action_name, status, expires_at)
+                        VALUES (%s, %s, %s, 'pending', %s)
+                        ON CONFLICT (approval_id) DO NOTHING
+                        """,
+                        (approval_id, body.session_id, action_name, expires_at),
+                    )
+            except Exception as exc:
+                log.warning("orchestrator.approval_db_save_failed", error=str(exc))
+        else:
+            _IN_MEMORY_APPROVAL_MAP[approval_id] = {
+                "session_id": body.session_id,
+                "action_name": action_name,
+                "status": "pending",
+                "expires_at": expires_at,
+            }
 
         log.info(
             "orchestrator.hitl_paused",
@@ -544,42 +558,57 @@ async def approval_callback(
         decision=body.decision,
     )
 
-    pool: ConnectionPool = app.state.conn_pool
+    pool: ConnectionPool | None = getattr(app.state, "conn_pool", None)
 
     # ── Phase 1: Idempotency check (read-only, no commit yet) ─────────────────
-    # SELECT FOR UPDATE acquires a row-level lock so two concurrent callbacks
-    # serialize here. We do NOT update yet — the UPDATE is deferred to after
-    # semaphore acquisition so a 503 leaves the row as 'pending' (retryable).
     session_id: str | None = None
-    with pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-                SELECT session_id, status
-                FROM   approval_map
-                WHERE  approval_id = %s
-                FOR UPDATE
-                """,
-            (body.approval_id,),
-        )
-        row = cur.fetchone()
+    if pool is not None:
+        try:
+            with pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                        SELECT session_id, status
+                        FROM   approval_map
+                        WHERE  approval_id = %s
+                        FOR UPDATE
+                        """,
+                    (body.approval_id,),
+                )
+                row = cur.fetchone()
 
-        if not row:
-            log.warning("orchestrator.callback_not_found", approval_id=body.approval_id)
+                if not row:
+                    log.warning("orchestrator.callback_not_found", approval_id=body.approval_id)
+                    raise HTTPException(status_code=404, detail="Approval ID not found.")
+
+                session_id, current_status = row
+
+                if current_status != "pending":
+                    log.warning(
+                        "orchestrator.callback_already_resolved",
+                        approval_id=body.approval_id,
+                        status=current_status,
+                    )
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Approval already resolved with status '{current_status}'.",
+                    )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            log.warning("orchestrator.postgres_callback_check_failed", error=str(exc))
+            pool = None
+
+    if pool is None:
+        rec = _IN_MEMORY_APPROVAL_MAP.get(body.approval_id)
+        if not rec:
             raise HTTPException(status_code=404, detail="Approval ID not found.")
-
-        session_id, current_status = row
-
+        current_status = rec.get("status", "pending")
         if current_status != "pending":
-            log.warning(
-                "orchestrator.callback_already_resolved",
-                approval_id=body.approval_id,
-                status=current_status,
-            )
             raise HTTPException(
                 status_code=409,
                 detail=f"Approval already resolved with status '{current_status}'.",
             )
-        # Transaction exits here — row lock released. The row is still 'pending'.
+        session_id = rec.get("session_id")
 
     # ── Phase 2: Acquire bounded semaphore — same guard as /run ───────────────
     # A 503 here leaves the row 'pending' so the caller can retry the callback.
@@ -598,19 +627,26 @@ async def approval_callback(
         await semaphore.acquire()
 
     graph = app.state.agent_graph
-    config = _graph_config(session_id)
+    config = _graph_config(session_id or "")
 
     try:
         # ── Phase 3: Commit UPDATE then resume graph (semaphore held) ──────────
-        with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                    UPDATE approval_map
-                    SET    status = %s, resolved_at = %s
-                    WHERE  approval_id = %s AND status = 'pending'
-                    """,
-                (body.decision, datetime.now(UTC), body.approval_id),
-            )
+        if pool is not None:
+            try:
+                with pool.connection() as conn, conn.cursor() as cur:
+                    cur.execute(
+                        """
+                            UPDATE approval_map
+                            SET    status = %s, resolved_at = %s
+                            WHERE  approval_id = %s AND status = 'pending'
+                            """,
+                        (body.decision, datetime.now(UTC), body.approval_id),
+                    )
+            except Exception as exc:
+                log.warning("orchestrator.postgres_update_failed", error=str(exc))
+        else:
+            if body.approval_id in _IN_MEMORY_APPROVAL_MAP:
+                _IN_MEMORY_APPROVAL_MAP[body.approval_id]["status"] = body.decision
         log.info(
             "orchestrator.resuming",
             session_id=session_id,

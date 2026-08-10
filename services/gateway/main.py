@@ -194,10 +194,11 @@ async def _proxy(
         try:
             resp_data = resp.json()
         except ValueError:
-            log.error("gateway.upstream_non_json", status_code=resp.status_code)
+            raw = resp.text[:300] if resp.text else "Empty response"
+            log.error("gateway.upstream_non_json", status_code=resp.status_code, body=raw)
             return JSONResponse(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                content={"error": "Invalid JSON response from upstream service."},
+                content={"error": f"Upstream service error ({resp.status_code}): {raw}"},
                 headers={"X-Request-Id": request_id},
             )
 
