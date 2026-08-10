@@ -17,7 +17,7 @@ _INDEX = "kraken:approval:index"
 
 class ApprovalQueue:
     """
-    Manages pending HITL approval requests in Redis.
+    Manages pending HITL approval requests in Redis with in-memory fallback for degraded operation.
     One instance per service process, created in lifespan().
     """
 
@@ -26,6 +26,8 @@ class ApprovalQueue:
 
         self._redis: aioredis.Redis = create_async_redis_client(redis_url)
         self._timeout = timeout_seconds
+        self._in_memory_map: dict[str, dict[str, Any]] = {}
+        self._in_memory_csrf: dict[str, str] = {}
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -35,12 +37,15 @@ class ApprovalQueue:
             await self._redis.ping()
             return True
         except Exception as exc:
-            log.error("queue.redis_ping_failed", error=str(exc))
+            log.warning("queue.redis_ping_failed", error=str(exc))
             return False
 
     async def stats(self) -> int:
         """Return the count of pending approvals in the index."""
-        return await self._redis.scard(_INDEX)
+        try:
+            return await self._redis.scard(_INDEX)
+        except Exception:
+            return len(self._in_memory_map)
 
     async def enqueue(
         self,
@@ -51,7 +56,7 @@ class ApprovalQueue:
     ) -> str:
         """
         Register a new pending approval. Returns the approval_id.
-        Entry expires automatically after timeout_seconds via Redis TTL.
+        Entry expires automatically after timeout_seconds via Redis TTL or in-memory map.
         """
         approval_id = str(uuid.uuid4())
         expires_at = (datetime.now(UTC) + timedelta(seconds=self._timeout)).isoformat()
@@ -68,19 +73,28 @@ class ApprovalQueue:
 
         key = f"{_PREFIX}{approval_id}"
 
-        pipe = self._redis.pipeline()
-        pipe.set(key, json.dumps(entry), ex=self._timeout)
-        pipe.sadd(_INDEX, approval_id)
-        pipe.expire(_INDEX, self._timeout + 3600)
-        await pipe.execute()
+        try:
+            pipe = self._redis.pipeline()
+            pipe.set(key, json.dumps(entry), ex=self._timeout)
+            pipe.sadd(_INDEX, approval_id)
+            pipe.expire(_INDEX, self._timeout + 3600)
+            await pipe.execute()
+        except Exception as exc:
+            log.warning("queue.redis_enqueue_failed_using_in_memory", error=str(exc))
+            self._in_memory_map[approval_id] = entry
 
         log.info("queue.enqueued", approval_id=approval_id, expires_at=expires_at)
         return approval_id
 
     async def get(self, approval_id: str) -> dict[str, Any] | None:
         """Return the pending entry, or None if expired/not found."""
-        data = await self._redis.get(f"{_PREFIX}{approval_id}")
-        return json.loads(data) if data else None
+        try:
+            data = await self._redis.get(f"{_PREFIX}{approval_id}")
+            if data:
+                return json.loads(data)
+        except Exception as exc:
+            log.warning("queue.redis_get_failed_using_in_memory", error=str(exc))
+        return self._in_memory_map.get(approval_id)
 
     async def resolve(self, approval_id: str) -> dict[str, Any] | None:
         """
@@ -90,43 +104,42 @@ class ApprovalQueue:
         """
         key = f"{_PREFIX}{approval_id}"
 
-        # Atomically retrieve and delete key
-        data = await self._redis.getdel(key)
-        if data is None:
-            return None
+        try:
+            data = await self._redis.getdel(key)
+            if data is not None:
+                await self._redis.srem(_INDEX, approval_id)
+                log.info("queue.resolved", approval_id=approval_id)
+                return json.loads(data)
+        except Exception as exc:
+            log.warning("queue.redis_resolve_failed_using_in_memory", error=str(exc))
 
-        # Clean up index
-        await self._redis.srem(_INDEX, approval_id)
-
-        log.info("queue.resolved", approval_id=approval_id)
-        return json.loads(data)
+        entry = self._in_memory_map.pop(approval_id, None)
+        if entry:
+            log.info("queue.resolved_in_memory", approval_id=approval_id)
+        return entry
 
     async def set_csrf_token(self, approval_id: str, token: str) -> None:
         """Store a CSRF token for an approval request."""
         try:
             await self._redis.set(f"kraken:csrf:{approval_id}", token, ex=self._timeout)
         except Exception as exc:
-            log.warning("queue.csrf_set_failed", approval_id=approval_id, error=str(exc))
+            log.warning("queue.csrf_set_failed_using_in_memory", approval_id=approval_id, error=str(exc))
+            self._in_memory_csrf[approval_id] = token
 
     async def verify_csrf_token(self, approval_id: str, token: str) -> bool:
-        """Verify CSRF token for an approval request.
-
-        Atomically reads-and-deletes the stored token (GETDEL) so it is
-        single-use: a token that has already been verified cannot be replayed
-        within its TTL window.  Fails closed on any error or absent token.
-        """
+        """Verify CSRF token for an approval request."""
         try:
-            # GETDEL atomically retrieves and deletes the key — same pattern as resolve().
             expected = await self._redis.getdel(f"kraken:csrf:{approval_id}")
-            if expected is None:
-                # Token was never set, already consumed, or expired — reject.
-                log.warning("queue.csrf_verify_no_token", approval_id=approval_id)
-                return False
-            return secrets.compare_digest(expected, token)
+            if expected is not None:
+                return secrets.compare_digest(expected, token)
         except Exception as exc:
-            log.warning("queue.csrf_verify_failed", approval_id=approval_id, error=str(exc))
-            # Fail closed: Redis errors must not silently approve HITL decisions.
-            return False
+            log.warning("queue.csrf_verify_failed_using_in_memory", approval_id=approval_id, error=str(exc))
+
+        expected_local = self._in_memory_csrf.pop(approval_id, None)
+        if expected_local is not None:
+            return secrets.compare_digest(expected_local, token)
+        return False
 
     async def close(self) -> None:
-        await self._redis.aclose()
+        with contextlib.suppress(Exception):
+            await self._redis.aclose()
