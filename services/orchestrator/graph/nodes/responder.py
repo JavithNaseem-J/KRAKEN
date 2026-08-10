@@ -117,10 +117,17 @@ async def responder_node(state: GraphState) -> dict:
         final_answer = response.content.strip()
     except Exception as exc:
         log.error("responder.llm_error", error=str(exc))
-        final_answer = (
-            "I encountered an issue composing a response. "
-            "Please try again or contact support if the issue persists."
-        )
+        err_msg = str(exc)
+        if "llm_api_key must be configured" in err_msg or "API key" in err_msg or "api_key" in err_msg:
+            final_answer = (
+                "⚠️ **LLM Service Unconfigured**: `LLM_API_KEY` is missing in backend environment variables. "
+                "Please add `LLM_API_KEY` (or `GROQ_API_KEY` / `OPENAI_API_KEY`) in your Render Dashboard environment variables."
+            )
+        else:
+            final_answer = (
+                f"I encountered an issue composing a response: {err_msg}. "
+                "Please check your LLM provider credentials or try again."
+            )
 
     # Build action explanation (used in audit log)
     if selected_action:
