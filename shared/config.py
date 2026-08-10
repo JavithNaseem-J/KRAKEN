@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     # ── LLM ───────────────────────────────────────────────────────────────────
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
-    llm_model: str = "gpt-oss-120b"
-    llm_fallback_model: str = "llama-3.1-70b-versatile"
+    llm_model: str = "llama-3.3-70b-versatile"
+    llm_fallback_model: str = "llama-3.1-8b-instant"
     llm_temperature: float = 0.0
     llm_max_tokens: int = 4096
     llm_timeout_seconds: int = 60
@@ -57,6 +57,26 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
     semantic_cache_enabled: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_api_keys(cls, values: dict) -> dict:
+        if isinstance(values, dict):
+            import os
+
+            llm_key = (
+                values.get("llm_api_key")
+                or os.getenv("LLM_API_KEY")
+                or os.getenv("GROQ_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or ""
+            )
+            values["llm_api_key"] = llm_key.strip()
+            if not values.get("embedding_api_key"):
+                values["embedding_api_key"] = (
+                    os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY") or llm_key.strip()
+                )
+        return values
 
     @field_validator("postgres_url")
     @classmethod
