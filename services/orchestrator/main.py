@@ -420,37 +420,40 @@ async def run(body: QueryRequest) -> Any:
     # ── SemanticCache Lookup ──────────────────────────────────────────────────
     cache: SemanticCache | None = getattr(app.state, "semantic_cache", None)
     if cache and body.message and http_client:
-        from shared.embedder import get_embedder
-        embedder = get_embedder()
-        query_vector = await asyncio.to_thread(embedder.embed_query, body.message)
-        cached = await cache.get(query_vector)
-        if cached:
-            log.info("orchestrator.semantic_cache_hit", session_id=body.session_id)
-            from services.action.audit_client import fire_audit_log
-            asyncio.create_task(
-                fire_audit_log(
-                    client=http_client,
-                    session_id=body.session_id,
-                    user_id=body.user_id,
-                    action_type="READ",
-                    action_name="cache_hit",
-                    risk_level="SAFE",
-                    hitl_required=False,
-                    status="success",
-                    reasoning="Returned answer directly from SemanticCache hit.",
-                    payload={"query": body.message},
-                    result={"answer": cached.get("response", cached.get("answer", ""))},
+        try:
+            from shared.embedder import get_embedder
+            embedder = get_embedder()
+            query_vector = await asyncio.to_thread(embedder.embed_query, body.message)
+            cached = await cache.get(query_vector)
+            if cached:
+                log.info("orchestrator.semantic_cache_hit", session_id=body.session_id)
+                from services.action.audit_client import fire_audit_log
+                asyncio.create_task(
+                    fire_audit_log(
+                        client=http_client,
+                        session_id=body.session_id,
+                        user_id=body.user_id,
+                        action_type="READ",
+                        action_name="cache_hit",
+                        risk_level="SAFE",
+                        hitl_required=False,
+                        status="success",
+                        reasoning="Returned answer directly from SemanticCache hit.",
+                        payload={"query": body.message},
+                        result={"answer": cached.get("response", cached.get("answer", ""))},
+                    )
                 )
-            )
-            return QueryResponse(
-                session_id=body.session_id,
-                answer=cached.get("response", cached.get("answer", "")),
-                action_taken="auto_respond",
-                confidence=0.95,
-                reasoning="Answer retrieved from semantic response cache.",
-                evidence=["Semantic cache hit (similarity >= 0.92)"],
-                execution_time_sec=0.01,
-            )
+                return QueryResponse(
+                    session_id=body.session_id,
+                    answer=cached.get("response", cached.get("answer", "")),
+                    action_taken="auto_respond",
+                    confidence=0.95,
+                    reasoning="Answer retrieved from semantic response cache.",
+                    evidence=["Semantic cache hit (similarity >= 0.92)"],
+                    execution_time_sec=0.01,
+                )
+        except Exception as exc:
+            log.warning("orchestrator.semantic_cache_lookup_failed", error=str(exc))
 
     session_messages = await _fetch_session_messages(body.session_id, client=http_client)
 

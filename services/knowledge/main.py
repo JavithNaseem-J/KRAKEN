@@ -112,10 +112,18 @@ async def retrieve(
 ) -> RetrievalResult:
     """Semantic search across all requested knowledge sources."""
     try:
-        return await app.state.retriever.retrieve(body)
+        retriever = getattr(app.state, "retriever", None)
+        if not retriever:
+            log.warning("knowledge.retriever_uninitialized_fallback")
+            return RetrievalResult(
+                query=body.query, chunks=[], total_retrieved=0, sources_queried=body.sources
+            )
+        return await retriever.retrieve(body)
     except Exception as exc:
         log.error("knowledge.retrieve_error", error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Retrieval failed: {exc}") from exc
+        return RetrievalResult(
+            query=body.query, chunks=[], total_retrieved=0, sources_queried=body.sources
+        )
 
 
 @app.post("/ingest", tags=["admin"])
