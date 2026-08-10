@@ -4,12 +4,12 @@
 #   1. Push this repository to GitHub.
 #   2. Log in to Render.com (https://dashboard.render.com).
 #   3. Click "New +" -> "Blueprint" and select your repository.
-#   4. Render will provision 1 Free Web Service + 1 Free Static Site with NO CREDIT CARD required!
+#   4. Render provisions kraken.onrender.com (Frontend) & kraken-backend.onrender.com (API) 100% FREE!
 
 services:
-  # ── KRAKEN Unified Backend (100% FREE Web Service) ──────────────────────────
+  # ── KRAKEN Unified Backend API (https://kraken-backend.onrender.com) ───────
   - type: web
-    name: akea-backend
+    name: kraken-backend
     env: docker
     plan: free
     dockerfilePath: Dockerfile.standalone
@@ -33,9 +33,9 @@ services:
       - key: QDRANT_API_KEY
         sync: false
 
-  # ── KRAKEN React Web Frontend (100% FREE Static Site) ───────────────────────
+  # ── KRAKEN React Web Frontend (https://kraken.onrender.com) ──────────────────
   - type: web
-    name: akea-frontend
+    name: kraken
     env: static
     rootDir: frontend-react
     buildCommand: npm ci && npm run build
@@ -43,10 +43,10 @@ services:
     routes:
       - type: redirect
         source: /api/*
-        destination: https://akea-backend.onrender.com/*
+        destination: https://kraken-backend.onrender.com/*
       - type: rewrite
         source: /*
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        value: https://akea-backend.onrender.com
+        value: https://kraken-backend.onrender.com
