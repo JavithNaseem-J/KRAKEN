@@ -61,11 +61,16 @@ async def retriever_node(state: GraphState) -> dict:
     else:
         target_sources = [KnowledgeSource.FAQ, KnowledgeSource.SLA]
 
+    user_id = (state.get("user_id") or "public").lower().strip()
+    role_map = {"alice": "tier1", "bob": "security_lead", "admin": "admin"}
+    user_role = role_map.get(user_id, user_id)
+
     request_payload = RetrievalRequest(
         query=user_message,
         sources=target_sources,
         top_k=settings.retrieval_top_k,
         session_id=session_id,
+        user_role=user_role,
     ).model_dump(mode="json")
 
     chunks: list[dict[str, Any]] = []

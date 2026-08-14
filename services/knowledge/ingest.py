@@ -30,6 +30,7 @@ async def upsert_chunks_async(
     embedder: BGEEmbedder,
     chunks: list[dict[str, Any]],
     source_name: str,
+    default_allowed_roles: list[str] | None = None,
 ) -> int:
     """Batch embed and upsert chunks into Qdrant collection using AsyncQdrantClient."""
     if not chunks:
@@ -38,6 +39,8 @@ async def upsert_chunks_async(
 
     doc_texts = [c["document"] for c in chunks]
     vectors = embedder.embed_documents(doc_texts)
+
+    roles = default_allowed_roles or ["public"]
 
     points: list[PointStruct] = []
     for c, vector in zip(chunks, vectors, strict=True):
@@ -52,6 +55,8 @@ async def upsert_chunks_async(
         meta = c.get("metadata", {})
         doc_id = str(meta.get("file") or meta.get("ticket_id") or meta.get("rule_id") or c.get("id") or "unknown")
 
+        chunk_roles = c.get("allowed_roles") or meta.get("allowed_roles") or roles
+
         payload_obj = KnowledgeChunkPayload(
             content=c["document"],
             source=KnowledgeSource(source_name),
@@ -59,6 +64,7 @@ async def upsert_chunks_async(
             chunk_id=str(c.get("id") or point_uuid),
             title=str(meta.get("title") or meta.get("subject") or ""),
             category=str(meta.get("category") or "general"),
+            allowed_roles=chunk_roles,
             metadata=meta,
         )
 
@@ -76,6 +82,95 @@ async def upsert_chunks_async(
     )
     log.info("ingest.upserted", source=source_name, count=len(points))
     return len(points)
+
+
+def extract_text_from_file_bytes(filename: str, file_bytes: bytes) -> str:
+    """Extract plain text from uploaded PDF, Docx, Markdown, or plain text bytes."""
+    ext = filename.split(".")[-1].lower() if "." in filename else ""
+
+    if ext == "pdf":
+        try:
+            import io
+            import pypdf
+            reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+            text = "\n".join([page.extract_text() or "" for page in reader.pages])
+            if text.strip():
+                return text
+        except Exception as exc:
+            log.warning("ingest.pdf_extraction_fallback", error=str(exc))
+        return file_bytes.decode("utf-8", errors="ignore")
+
+    elif ext == "docx":
+        try:
+            import io
+            import docx
+            doc = docx.Document(io.BytesIO(file_bytes))
+            return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+        except Exception as exc:
+            log.warning("ingest.docx_extraction_fallback", error=str(exc))
+        return file_bytes.decode("utf-8", errors="ignore")
+
+    return file_bytes.decode("utf-8", errors="ignore")
+
+
+async def ingest_uploaded_file_async(
+    client: AsyncQdrantClient,
+    embedder: BGEEmbedder,
+    filename: str,
+    file_bytes: bytes,
+    allowed_roles: list[str] | None = None,
+) -> int:
+    """
+    Parse an uploaded document file, split into semantic chunks, embed,
+    and upsert into Qdrant with associated RBAC allowed_roles.
+    """
+    raw_text = extract_text_from_file_bytes(filename, file_bytes)
+    if not raw_text.strip():
+        log.warning("ingest.uploaded_file_empty", filename=filename)
+        return 0
+
+    roles = allowed_roles or ["public"]
+    doc_id = filename.lower().replace(" ", "_")
+
+    # Split document into ~400 character / ~80 word chunks with 80 character overlap
+    chunk_size = 400
+    overlap = 80
+    text_chunks: list[str] = []
+    start = 0
+
+    while start < len(raw_text):
+        end = min(start + chunk_size, len(raw_text))
+        chunk_str = raw_text[start:end].strip()
+        if chunk_str:
+            text_chunks.append(chunk_str)
+        start += chunk_size - overlap
+
+    chunks_data: list[dict[str, Any]] = []
+    for idx, text_str in enumerate(text_chunks):
+        cid = f"upload_{doc_id}_{idx}"
+        chunks_data.append(
+            {
+                "id": cid,
+                "document": text_str,
+                "allowed_roles": roles,
+                "metadata": {
+                    "file": filename,
+                    "document_id": doc_id,
+                    "title": filename,
+                    "category": "user_uploaded",
+                    "chunk_index": idx,
+                    "allowed_roles": roles,
+                },
+            }
+        )
+
+    return await upsert_chunks_async(
+        client=client,
+        embedder=embedder,
+        chunks=chunks_data,
+        source_name=KnowledgeSource.FAQ.value,
+        default_allowed_roles=roles,
+    )
 
 
 async def ensure_collection(

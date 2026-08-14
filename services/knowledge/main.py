@@ -141,3 +141,36 @@ async def ingest(
     except Exception as exc:
         log.error("knowledge.ingest_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
+
+
+from fastapi import File, Form, UploadFile
+
+
+@app.post("/upload", tags=["admin"])
+async def upload_document(
+    file: UploadFile = File(...),
+    allowed_roles: str = Form("public"),
+    _token: str = Depends(verify_service_token),
+) -> dict[str, Any]:
+    """Dynamically parse, embed, and ingest an uploaded document file into Qdrant."""
+    try:
+        from .ingest import ingest_uploaded_file_async
+
+        content_bytes = await file.read()
+        roles_list = [r.strip().lower() for r in allowed_roles.split(",") if r.strip()] or ["public"]
+        count = await ingest_uploaded_file_async(
+            client=app.state.client,
+            embedder=app.state.embedder,
+            filename=file.filename or "uploaded_doc.txt",
+            file_bytes=content_bytes,
+            allowed_roles=roles_list,
+        )
+        return {
+            "status": "success",
+            "filename": file.filename,
+            "chunks_ingested": count,
+            "allowed_roles": roles_list,
+        }
+    except Exception as exc:
+        log.error("knowledge.upload_failed", filename=file.filename, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"File ingestion failed: {exc}") from exc

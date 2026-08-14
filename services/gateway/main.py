@@ -364,3 +364,40 @@ async def run(request: Request) -> JSONResponse:
     for k, v in rl_headers.items():
         response.headers[k] = v
     return response
+
+
+from fastapi import File, Form, UploadFile
+
+
+@app.post("/v1/knowledge/upload", tags=["knowledge"])
+async def upload_knowledge(
+    request: Request,
+    file: UploadFile = File(...),
+    allowed_roles: str = Form("public"),
+) -> JSONResponse:
+    """Proxy multipart file upload to Knowledge Service."""
+    request_id = str(uuid.uuid4())
+    headers = service_headers(trace_id=request_id)
+    try:
+        content_bytes = await file.read()
+        files = {"file": (file.filename, content_bytes, file.content_type)}
+        data = {"allowed_roles": allowed_roles}
+        async with create_async_http_client(timeout_seconds=60.0) as client:
+            resp = await client.post(
+                f"{settings.knowledge_url}/upload",
+                files=files,
+                data=data,
+                headers=headers,
+            )
+            return JSONResponse(
+                content=resp.json(),
+                status_code=resp.status_code,
+                headers={"X-Request-Id": request_id},
+            )
+    except Exception as exc:
+        log.error("gateway.upload_proxy_failed", error=str(exc))
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"error": f"Upload failed: {exc}"},
+            headers={"X-Request-Id": request_id},
+        )

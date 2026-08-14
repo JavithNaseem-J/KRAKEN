@@ -71,6 +71,29 @@ export async function pollSessionStatus(
   return runAgentQuery('', sessionId, apiKey);
 }
 
+/** Upload a document file dynamically into the knowledge vector store. */
+export async function uploadKnowledgeDocument(
+  file: File,
+  apiKey: string,
+  allowedRoles: string = 'public',
+): Promise<{ status: string; filename: string; chunks_ingested: number }> {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('allowed_roles', allowedRoles);
+
+  const { data } = await axios.post<{ status: string; filename: string; chunks_ingested: number }>(
+    `${GATEWAY_URL}/v1/knowledge/upload`,
+    formData,
+    {
+      headers: {
+        'X-API-Key': apiKey,
+        'Content-Type': 'multipart/form-data',
+      },
+    },
+  );
+  return data;
+}
+
 /**
  * Fetch pending approval details (action name, reasoning, payload) and the
  * CSRF token required to submit a decision. Parsed from the Approval Service

@@ -311,12 +311,15 @@ class KnowledgeRetriever:
         # Lightweight Cross-Encoder Re-Ranking
         reranked_hits = _heuristic_rerank(request.query, rrf_candidates)[: request.top_k]
 
-        # Post-filter 1: Ticket Isolation
+        # Post-filter 1: Ticket Isolation & RBAC Security Clearance
         t_lowers = [t.lower() for t in ticket_ids_in_query] if ticket_ids_in_query else []
+        user_role = (request.user_role or "public").lower().strip()
         sanitized_hits = []
+
         for hit, score in reranked_hits:
             payload = hit.payload or {}
             chunk_source = str(payload.get("source", "")).lower()
+
             # Enterprise Ticket Isolation: Drop any ticket chunk unless query explicitly matches its Ticket ID
             if chunk_source == "tickets":
                 p_content = payload.get("content", "").lower()
@@ -324,6 +327,22 @@ class KnowledgeRetriever:
                 if not t_lowers or not any(t in p_content or t == p_t_id for t in t_lowers):
                     log.warning("retriever.cross_ticket_leak_blocked", doc_id=payload.get("document_id"))
                     continue
+
+            # Enterprise RBAC Security Clearance Filter
+            raw_roles = payload.get("allowed_roles") or (payload.get("metadata") or {}).get("allowed_roles") or ["public"]
+            allowed_roles = [str(r).lower().strip() for r in raw_roles] if isinstance(raw_roles, list) else ["public"]
+
+            # Admin persona overrides all RBAC checks; public documents are open to everyone
+            if "public" not in allowed_roles and user_role not in ("admin", "approver"):
+                if user_role not in allowed_roles:
+                    log.warning(
+                        "retriever.rbac_access_denied",
+                        doc_id=payload.get("document_id"),
+                        user_role=user_role,
+                        allowed_roles=allowed_roles,
+                    )
+                    continue
+
             sanitized_hits.append((hit, score))
         reranked_hits = sanitized_hits
 

@@ -59,6 +59,7 @@ class KnowledgeChunkPayload(BaseModel):
     chunk_id: str = Field(..., min_length=1)
     title: str = Field(default="")
     category: str = Field(default="general")
+    allowed_roles: list[str] = Field(default_factory=lambda: ["public"])
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -69,6 +70,7 @@ class KnowledgeChunk(BaseModel):
     source: KnowledgeSource
     document_id: str
     chunk_id: str
+    allowed_roles: list[str] = Field(default_factory=lambda: ["public"])
     metadata: dict[str, Any] = Field(default_factory=dict)
     relevance_score: float = Field(default=0.0, ge=0.0, le=1.0)
 
@@ -80,6 +82,7 @@ class RetrievalRequest(BaseModel):
     sources: list[KnowledgeSource] = Field(default_factory=lambda: list(KnowledgeSource))
     top_k: int = Field(default=5, ge=1, le=20)
     session_id: str
+    user_role: str = Field(default="public")
 
 
 class RetrievalResult(BaseModel):

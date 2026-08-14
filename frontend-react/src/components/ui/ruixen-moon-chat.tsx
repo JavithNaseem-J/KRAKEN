@@ -73,7 +73,7 @@ export default function RuixenMoonChat({
   disabled,
   onSend,
   messages,
-  activeRole: _activeRole,
+  activeRole,
   pendingSessionId,
   activeSessionId,
   sessionTitle,
@@ -115,6 +115,28 @@ export default function RuixenMoonChat({
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeRole) return;
+    setIsUploading(true);
+    setUploadNotice(null);
+    try {
+      const { uploadKnowledgeDocument } = await import("@/services/api");
+      const userRole = activeRole.user_id === "alice" ? "tier1" : activeRole.user_id === "bob" ? "security_lead" : "public";
+      const res = await uploadKnowledgeDocument(file, activeRole.api_key, userRole);
+      setUploadNotice(`✅ Ingested ${res.filename} (${res.chunks_ingested} chunks)`);
+    } catch (err: any) {
+      setUploadNotice(`⚠️ Ingestion failed: ${err.message || 'Error uploading'}`);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -261,15 +283,34 @@ export default function RuixenMoonChat({
               style={{ overflow: "hidden" }}
             />
 
+            {/* Hidden File Input for Knowledge Ingestion */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept=".pdf,.docx,.md,.txt"
+              className="hidden"
+            />
+
             {/* Footer Buttons */}
             <div className="flex items-center justify-between p-3 border-t border-white/5">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-neutral-400 hover:text-white hover:bg-neutral-800/80 rounded-xl"
-              >
-                <Paperclip className="w-4 h-4" />
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled || isUploading}
+                  className="text-neutral-400 hover:text-white hover:bg-neutral-800/80 rounded-xl"
+                  title="Upload Document (.pdf, .docx, .md, .txt) to Knowledge Base"
+                >
+                  {isUploading ? <Loader2 className="w-4 h-4 animate-spin text-purple-400" /> : <Paperclip className="w-4 h-4" />}
+                </Button>
+                {uploadNotice && (
+                  <span className="text-[11px] font-mono text-neutral-300 bg-white/10 px-2.5 py-1 rounded-md">
+                    {uploadNotice}
+                  </span>
+                )}
+              </div>
 
               <div className="flex items-center gap-2">
                 <Button
