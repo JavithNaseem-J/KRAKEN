@@ -13,6 +13,7 @@ interface ChatMessageProps {
   onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject') => void;
   onApprovalExpired?: (approvalId: string) => void;
   onInspectReasoning: (message: ChatMessageType) => void;
+  onInspectTelemetry?: (message: ChatMessageType) => void;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -40,6 +41,7 @@ export function ChatMessage({
   onApprovalResolved,
   onApprovalExpired,
   onInspectReasoning,
+  onInspectTelemetry,
 }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -94,11 +96,12 @@ export function ChatMessage({
       {/* Bubble Container */}
       <div className={`group min-w-0 max-w-[80%] ${isUser ? 'text-right' : ''}`}>
         <div
-          className={`relative rounded-2xl px-4 py-3 text-xs md:text-sm leading-relaxed ${
+          className={`relative rounded-2xl px-4 py-3 text-xs md:text-sm leading-relaxed cursor-pointer ${
             isUser
               ? 'bg-neutral-800 text-white rounded-tr-none border border-white/10'
-              : 'bg-black/60 backdrop-blur-md text-neutral-200 rounded-tl-none border border-neutral-800'
+              : 'bg-black/60 backdrop-blur-md text-neutral-200 rounded-tl-none border border-neutral-800 hover:border-purple-500/40 transition-colors'
           }`}
+          onClick={() => !isUser && onInspectTelemetry && onInspectTelemetry(message)}
         >
           <div className="absolute top-2 right-2">
             <CopyButton text={message.content} />
@@ -184,6 +187,15 @@ export function ChatMessage({
           }`}
         >
           <span>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+          {!isUser && onInspectTelemetry && (
+            <button
+              onClick={() => onInspectTelemetry(message)}
+              className="flex items-center gap-1 rounded border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-purple-300 hover:bg-purple-500/20 hover:text-white transition-colors"
+            >
+              <BrainCircuit size={11} />
+              Telemetry
+            </button>
+          )}
           {message.metadata &&
             (message.metadata.reasoning ||
               (message.metadata.retrieved_chunks && message.metadata.retrieved_chunks.length > 0) ||

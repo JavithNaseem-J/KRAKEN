@@ -15,7 +15,7 @@ if sys.platform == "win32":
 import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from langgraph.types import Command
 
 try:
@@ -570,7 +570,77 @@ async def run(body: QueryRequest) -> Any:
     return response
 
 
-# ── /approval-callback ────────────────────────────────────────────────────────
+# ── /run/stream ───────────────────────────────────────────────────────────────
+@app.post("/run/stream", tags=["agent"])
+async def run_stream(body: QueryRequest) -> StreamingResponse:
+    """
+    Execute the agent graph and stream LangGraph node execution events
+    to the client via Server-Sent Events (SSE).
+    Each event carries: {node, status, elapsed_ms} JSON.
+    A ':ping' comment is sent every 15 s to keep Render free-tier connections alive.
+    """
+    graph = app.state.agent_graph
+    config = _graph_config(body.session_id)
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        import json
+        import time
+
+        start = time.monotonic()
+        last_ping = start
+
+        try:
+            async for event in graph.astream_events(  # type: ignore[attr-defined]
+                {"message": body.message, "user_id": body.user_id, "session_id": body.session_id},
+                config=config,
+                version="v2",
+            ):
+                now = time.monotonic()
+                # Send ping every 15 s to prevent proxy/Render timeout
+                if now - last_ping >= 15:
+                    yield ": ping\n\n"
+                    last_ping = now
+
+                kind = event.get("event", "")
+                name = event.get("name", "")
+                if not name or name in ("LangGraph", ""):
+                    continue
+                if kind == "on_chain_start":
+                    payload = json.dumps(
+                        {"node": name, "status": "start", "elapsed_ms": round((now - start) * 1000)}
+                    )
+                    yield f"data: {payload}\n\n"
+                elif kind == "on_chain_end":
+                    output = event.get("data", {}).get("output") or {}
+                    # If final node, include full response
+                    extra = {}
+                    if "final_answer" in output:
+                        snapshot = await graph.aget_state(config)
+                        response = _build_response(body.session_id, snapshot.values)
+                        extra = {"response": response.model_dump()}
+                    payload = json.dumps(
+                        {"node": name, "status": "end", "elapsed_ms": round((now - start) * 1000), **extra}
+                    )
+                    yield f"data: {payload}\n\n"
+
+            done_payload = json.dumps({"node": "done", "status": "end", "elapsed_ms": round((time.monotonic() - start) * 1000)})
+            yield f"data: {done_payload}\n\n"
+
+        except Exception as exc:
+            log.error("orchestrator.stream_error", session_id=body.session_id, error=str(exc))
+            err_payload = json.dumps({"node": "error", "status": "error", "message": str(exc)})
+            yield f"data: {err_payload}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.post("/approval-callback", tags=["hitl"])
 async def approval_callback(
     body: ApprovalCallbackRequest,
@@ -744,6 +814,8 @@ def _build_response(session_id: str, state: dict[str, Any]) -> QueryResponse:
                 "metadata": meta if isinstance(meta, dict) else {},
             })
 
+    chunk_scores = [c["relevance_score"] for c in formatted_chunks] if formatted_chunks else [float(c.get("relevance_score", 0.0)) for c in state.get("retrieved_chunks", []) if isinstance(c, dict)]
+
     return QueryResponse(
         session_id=session_id,
         answer=state.get("final_answer", "No answer generated."),
@@ -752,4 +824,6 @@ def _build_response(session_id: str, state: dict[str, Any]) -> QueryResponse:
         action_result=state.get("action_result"),
         sources=[c["source"] for c in formatted_chunks],
         retrieved_chunks=formatted_chunks,
+        chunk_scores=chunk_scores,
+        trace_id=session_id,
     )

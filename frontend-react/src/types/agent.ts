@@ -25,6 +25,8 @@ export interface QueryResponse {
   action_result: unknown | null;
   sources: string[];
   retrieved_chunks?: RetrievedChunk[];
+  chunk_scores?: number[];
+  execution_ms?: number | null;
   confidence?: number | null;
   evidence?: string[];
   execution_time_sec?: number | null;
@@ -65,6 +67,8 @@ export interface AgentMetadata {
   action_result: unknown | null;
   sources: string[];
   retrieved_chunks?: RetrievedChunk[];
+  chunk_scores?: number[];
+  execution_ms?: number | null;
   trace_id: string | null;
   timestamp: string;
 }
@@ -72,6 +76,13 @@ export interface AgentMetadata {
 export type ChatMessageRole = 'user' | 'assistant' | 'system';
 
 export type ApprovalState = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export interface TelemetryData {
+  role?: string;
+  chunk_scores?: number[];
+  trace_id?: string | null;
+  execution_ms?: number | null;
+}
 
 /** A single entry in the chat stream. */
 export interface ChatMessage {
@@ -85,6 +96,7 @@ export interface ChatMessage {
   approval_id?: string;
   approval_state?: ApprovalState;
   approval_details?: ApprovalDetails;
+  telemetry?: TelemetryData;
 }
 
 /** A persisted chat session/thread. */

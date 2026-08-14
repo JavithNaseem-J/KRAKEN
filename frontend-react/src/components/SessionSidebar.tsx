@@ -1,5 +1,21 @@
 import { useMemo } from 'react';
+
+function formatRelative(dateStr: string): string {
+  const date = new Date(dateStr);
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
 import {
+  Download,
   MessageSquare,
   PanelLeftClose,
   Plus,
@@ -20,6 +36,7 @@ interface SessionSidebarProps {
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
   onSelectRole: (role: UserRole) => void;
+  onExportPDF?: (session: ChatSession) => void;
 }
 
 interface GroupedSessions {
@@ -69,6 +86,7 @@ export function SessionSidebar({
   onNewSession,
   onDeleteSession,
   onSelectRole,
+  onExportPDF,
 }: SessionSidebarProps) {
   const grouped = useMemo(() => groupSessionsByDate(sessions), [sessions]);
 
@@ -88,19 +106,37 @@ export function SessionSidebar({
       >
         <div className="flex items-center gap-2.5 min-w-0 flex-1">
           <MessageSquare size={14} className={active ? 'text-purple-400' : 'text-neutral-400'} />
-          <span className="truncate">{s.title || 'New Chat'}</span>
+          <div className="flex flex-col min-w-0">
+            <span className="truncate">{s.title || 'New Chat'}</span>
+            <span className="text-[10px] text-neutral-500 truncate">{formatRelative(s.updated_at)}</span>
+          </div>
         </div>
 
-        <button
-          aria-label="Delete session"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDeleteSession(s.session_id);
-          }}
-          className="rounded p-1 text-neutral-400 opacity-0 hover:bg-neutral-800 hover:text-red-400 group-hover:opacity-100 transition-opacity"
-        >
-          <Trash2 size={13} />
-        </button>
+        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {onExportPDF && (
+            <button
+              aria-label="Export PDF"
+              title="Export Incident PDF"
+              onClick={(e) => {
+                e.stopPropagation();
+                onExportPDF(s);
+              }}
+              className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-purple-400"
+            >
+              <Download size={13} />
+            </button>
+          )}
+          <button
+            aria-label="Delete session"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDeleteSession(s.session_id);
+            }}
+            className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-red-400"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
       </div>
     );
   };

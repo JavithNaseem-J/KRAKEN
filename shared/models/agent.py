@@ -37,6 +37,8 @@ class QueryResponse(BaseModel):
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence: list[str] = Field(default_factory=list)
     execution_time_sec: float | None = None
+    execution_ms: int | None = None
+    chunk_scores: list[float] | None = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     trace_id: str | None = Field(
         default=None, description="Unique request trace ID for distributed tracing"

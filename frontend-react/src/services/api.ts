@@ -141,4 +141,86 @@ export async function submitApprovalDecision(
   return { session_id: sessionMatch ? sessionMatch[1] : '' };
 }
 
+/** Shape of each SSE event streamed from /v1/run/stream */
+export interface AgentStreamEvent {
+  node: string;
+  status: 'start' | 'end' | 'error';
+  elapsed_ms?: number;
+  response?: QueryResponse;
+  message?: string;
+}
+
+/**
+ * Stream agent query via SSE. Calls onEvent for each node step.
+ * Returns the final QueryResponse (from the done event payload, or undefined).
+ */
+export async function streamAgentQuery(
+  message: string,
+  sessionId: string,
+  apiKey: string,
+  onEvent: (event: AgentStreamEvent) => void,
+): Promise<QueryResponse | undefined> {
+  const response = await fetch(`${GATEWAY_URL}/v1/run/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey,
+    },
+    body: JSON.stringify({ message, session_id: sessionId }),
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Stream request failed: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResponse: QueryResponse | undefined;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const event: AgentStreamEvent = JSON.parse(line.slice(6));
+          onEvent(event);
+          if (event.response) finalResponse = event.response;
+        } catch {
+          // ignore malformed SSE lines
+        }
+      }
+    }
+  }
+
+  return finalResponse;
+}
+
+/** Export a session as a downloadable incident briefing PDF report. */
+export async function exportSessionPDF(
+  sessionId: string,
+  messages: unknown[],
+  persona: { label: string; title: string },
+  apiKey: string,
+): Promise<Blob> {
+  const response = await fetch(`${GATEWAY_URL}/v1/report/export`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey,
+    },
+    body: JSON.stringify({ session_id: sessionId, messages, persona }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`PDF export failed with status ${response.status}`);
+  }
+
+  return await response.blob();
+}
+
 export type { PendingApproval, QueryResponse, RunResponse };

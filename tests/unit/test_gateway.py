@@ -120,7 +120,7 @@ def test_prompt_injection_blocked(client):
         headers={"X-API-Key": "dev-key-alice-longer-secure-key"},
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "prompt injection pattern detected" in response.json()["error"]
+    assert "prompt injection detected" in response.json()["error"]
 
 
 def test_pii_redacted(client):

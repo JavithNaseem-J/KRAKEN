@@ -66,7 +66,7 @@ Rules:
 1. CITATION REQUIREMENT: You MUST locate and extract specific, verbatim facts from the retrieved knowledge chunks to justify your choice. Put this in the 'evidence' field.
 2. ACTION SELECTION CRITERIA:
    - Use 'auto_respond' when the inquiry is a general compliance, SLA, policy, troubleshooting, or pentesting FAQ, or when answering a user question using retrieved facts.
-   - Use 'create_ticket' when the user explicitly requests to create, open, submit, file, or request a new IT or security ticket (e.g. broken hardware, monitor replacement, access request).
+   - Use 'create_ticket' when the user explicitly requests to create, open, submit, file, or request a new IT or security ticket (e.g. broken hardware, monitor replacement, access request). Extract and populate action_payload with 'user_name' (e.g. Alice), 'category' (e.g. Hardware/Software/Access), 'priority' (low/medium/high/critical), and 'description'.
    - Use 'escalate' if an existing ticket contains a critical vulnerability (e.g., RCE, SQLi, Auth Bypass), represents an active security incident, requires Tier 2/Senior/L3 review, or has breached SLA.
    - Use 'request_info' if operating on an existing ticket whose details are insufficient.
    - Use 'close' if operating on an existing ticket where the client confirms that a security vulnerability is mitigated.

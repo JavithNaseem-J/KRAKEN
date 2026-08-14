@@ -3,9 +3,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { ReasoningInspectorDrawer } from './components/ReasoningInspectorDrawer';
 import { SessionSidebar } from './components/SessionSidebar';
+import { TelemetryDrawer } from './components/TelemetryDrawer';
 import RuixenMoonChat from './components/ui/ruixen-moon-chat';
 import { useApprovalPoller } from './hooks/useApprovalPoller';
-import { runAgentQuery } from './services/api';
+import { exportSessionPDF, runAgentQuery, streamAgentQuery, type AgentStreamEvent } from './services/api';
 import {
   isPendingApproval,
   type ChatMessage as ChatMessageType,
@@ -110,6 +111,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
   const [inspectedMessage, setInspectedMessage] = useState<ChatMessageType | null>(null);
+  const [telemetryMessage, setTelemetryMessage] = useState<ChatMessageType | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const activeSession = sessions.find((s) => s.session_id === activeSessionId) ?? null;
@@ -146,7 +148,9 @@ export default function App() {
     (sessionId: string, message: ChatMessageType) => {
       updateSession(sessionId, (s) => ({
         ...s,
-        title: s.title || (message.role === 'user' ? message.content.slice(0, 40) : s.title),
+        title: s.title || (message.role === 'user'
+          ? (message.content.length > 50 ? message.content.slice(0, 50) + '…' : message.content)
+          : s.title),
         messages: [...s.messages, message],
       }));
     },
@@ -198,6 +202,8 @@ export default function App() {
     },
   });
 
+  const [streamingSteps, setStreamingSteps] = useState<AgentStreamEvent[]>([]);
+
   const sendMessage = async (text: string) => {
     if (!activeSession || busy) return;
     const sessionId = activeSession.session_id;
@@ -209,24 +215,51 @@ export default function App() {
       timestamp: new Date().toISOString(),
     });
     setBusy(true);
+    setStreamingSteps([]);
 
     try {
-      const res = await runAgentQuery(text, sessionId, activeRole.api_key);
-      if (isPendingApproval(res)) {
-        appendMessage(sessionId, {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: res.message,
-          timestamp: new Date().toISOString(),
-          approval_id: res.approval_id,
-          approval_state: 'pending',
-        });
-        setPendingSessionId(sessionId);
+      const finalRes = await streamAgentQuery(
+        text,
+        sessionId,
+        activeRole.api_key,
+        (event) => setStreamingSteps((prev) => [...prev, event]),
+      );
+      setStreamingSteps([]);
+
+      if (finalRes) {
+        if (isPendingApproval(finalRes)) {
+          appendMessage(sessionId, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: (finalRes as any).message,
+            timestamp: new Date().toISOString(),
+            approval_id: (finalRes as any).approval_id,
+            approval_state: 'pending',
+          });
+          setPendingSessionId(sessionId);
+        } else {
+          appendMessage(sessionId, queryResponseToMessage(finalRes));
+        }
       } else {
-        appendMessage(sessionId, queryResponseToMessage(res));
+        // SSE ended without a response payload — fall back to poll
+        const res = await runAgentQuery('', sessionId, activeRole.api_key);
+        if (isPendingApproval(res)) {
+          appendMessage(sessionId, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: res.message,
+            timestamp: new Date().toISOString(),
+            approval_id: res.approval_id,
+            approval_state: 'pending',
+          });
+          setPendingSessionId(sessionId);
+        } else {
+          appendMessage(sessionId, queryResponseToMessage(res));
+        }
       }
     } catch (e: unknown) {
-      let errorMsg = 'Failed to reach the gateway.';
+      setStreamingSteps([]);
+      let errorMsg = 'The agent encountered an error processing your request. Please try again.';
       if (axios.isAxiosError(e)) {
         const status = e.response?.status;
         const data = e.response?.data as { error?: string; detail?: string } | undefined;
@@ -235,13 +268,13 @@ export default function App() {
           errorMsg = serverError || 'Access denied. This operation requires operator-level clearance.';
         } else if (status === 400) {
           errorMsg = serverError || 'Security violation: request blocked by gateway.';
+        } else if (status && status >= 500) {
+          const incidentId = Math.random().toString(36).substring(2, 10).toUpperCase();
+          errorMsg = `The agent encountered an error processing your request. Incident ID: #${incidentId}`;
         } else {
-          errorMsg = serverError || e.message;
+          errorMsg = serverError || 'The agent encountered an error. Please try again.';
         }
-      } else if (e instanceof Error) {
-        errorMsg = e.message;
       }
-
       appendMessage(sessionId, {
         id: crypto.randomUUID(),
         role: 'system',
@@ -317,6 +350,27 @@ export default function App() {
     if (sessionId === pendingSessionId) setPendingSessionId(null);
   };
 
+  const handleExportPDF = async (session: ChatSession) => {
+    try {
+      const blob = await exportSessionPDF(
+        session.session_id,
+        session.messages,
+        { label: activeRole.label, title: activeRole.title },
+        activeRole.api_key,
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `kraken-incident-${session.session_id.slice(0, 8)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      console.error('PDF export failed:', err);
+    }
+  };
+
   const messages = useMemo(() => activeSession?.messages ?? [], [activeSession]);
 
   return (
@@ -333,6 +387,7 @@ export default function App() {
         onNewSession={createSession}
         onDeleteSession={deleteSession}
         onSelectRole={setActiveRole}
+        onExportPDF={handleExportPDF}
       />
 
       {/* Main Ruixen Moon Chat Component */}
@@ -350,6 +405,8 @@ export default function App() {
           onApprovalResolved={handleApprovalResolved}
           onApprovalExpired={handleApprovalExpired}
           onInspectReasoning={setInspectedMessage}
+          onInspectTelemetry={setTelemetryMessage}
+          streamingSteps={streamingSteps}
         />
       </main>
 
@@ -357,6 +414,13 @@ export default function App() {
       <ReasoningInspectorDrawer
         message={inspectedMessage}
         onClose={() => setInspectedMessage(null)}
+      />
+
+      {/* Slide-Over Telemetry Inspector */}
+      <TelemetryDrawer
+        message={telemetryMessage}
+        activeRole={activeRole}
+        onClose={() => setTelemetryMessage(null)}
       />
     </div>
   );

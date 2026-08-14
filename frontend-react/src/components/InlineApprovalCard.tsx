@@ -126,6 +126,23 @@ export function InlineApprovalCard({
       ? 'border-neutral-800 border-l-4 border-l-red-500 bg-neutral-900/95'
       : 'border-neutral-800 border-l-4 border-l-amber-500 bg-neutral-900/95';
 
+  const [ticketUser, setTicketUser] = useState('');
+  const [ticketCategory, setTicketCategory] = useState('');
+  const [ticketPriority, setTicketPriority] = useState('medium');
+  const [ticketDescription, setTicketDescription] = useState('');
+
+  useEffect(() => {
+    if (details?.payload) {
+      const p = details.payload as Record<string, string>;
+      setTicketUser(p.user_name || p.user || 'Alice');
+      setTicketCategory(p.category || 'Hardware');
+      setTicketPriority((p.priority || 'medium').toLowerCase());
+      setTicketDescription(p.description || '');
+    }
+  }, [details]);
+
+  const isTicketAction = details?.action_name === 'create_ticket' || details?.action_name?.includes('ticket');
+
   return (
     <div className={`w-full rounded-2xl border backdrop-blur-xl p-4 shadow-2xl transition-all ${cardStateClass}`}>
       {/* Minimal Clean Header */}
@@ -133,7 +150,7 @@ export function InlineApprovalCard({
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-white tracking-wide">
-              Action Approval Gate
+              Action Approval Gate — {details?.action_name || 'Verification'}
             </span>
           </div>
           <p className="text-[11px] text-neutral-400 mt-0.5">
@@ -166,6 +183,64 @@ export function InlineApprovalCard({
 
       {details && (
         <div className="mt-3 space-y-3">
+          {/* Editable Ticket Creation Form (if create_ticket action) */}
+          {isTicketAction && state === 'pending' && !isExpired && (
+            <div className="rounded-xl border border-purple-500/30 bg-purple-950/20 p-3.5 space-y-2.5">
+              <div className="flex items-center justify-between border-b border-purple-500/20 pb-1.5">
+                <span className="text-[11px] font-black uppercase tracking-wider text-purple-300 font-mono">
+                  🎫 Pre-Filled IT Ticket Details (Editable)
+                </span>
+                <span className="text-[10px] text-neutral-400">Extracted from prompt</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[10px] font-mono text-neutral-400 mb-1">Affected User</label>
+                  <input
+                    type="text"
+                    value={ticketUser}
+                    onChange={(e) => setTicketUser(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-700 bg-black/80 px-2.5 py-1 text-xs text-white focus:border-purple-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-neutral-400 mb-1">Category</label>
+                  <input
+                    type="text"
+                    value={ticketCategory}
+                    onChange={(e) => setTicketCategory(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-700 bg-black/80 px-2.5 py-1 text-xs text-white focus:border-purple-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[10px] font-mono text-neutral-400 mb-1">Priority Level</label>
+                  <select
+                    value={ticketPriority}
+                    onChange={(e) => setTicketPriority(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-700 bg-black/80 px-2.5 py-1 text-xs text-white focus:border-purple-500 focus:outline-none"
+                  >
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-neutral-400 mb-1">Description</label>
+                  <input
+                    type="text"
+                    value={ticketDescription}
+                    onChange={(e) => setTicketDescription(e.target.value)}
+                    className="w-full rounded-lg border border-neutral-700 bg-black/80 px-2.5 py-1 text-xs text-white focus:border-purple-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Agent Reasoning */}
           <div className="rounded-xl border border-white/5 bg-black/50 p-3 text-xs text-neutral-300 leading-relaxed">
             <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">

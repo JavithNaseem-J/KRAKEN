@@ -18,9 +18,13 @@ log = structlog.get_logger(__name__)
 # Prompt injection patterns (case-insensitive)
 PROMPT_INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?(previous|prior|above)\s+instructions", re.IGNORECASE),
+    re.compile(r"disregard\s+(your|all)", re.IGNORECASE),
+    re.compile(r"you\s+are\s+now\s+(a\s+)?", re.IGNORECASE),
+    re.compile(r"pretend\s+you\s+are", re.IGNORECASE),
+    re.compile(r"act\s+as\s+if", re.IGNORECASE),
+    re.compile(r"new\s+persona", re.IGNORECASE),
+    re.compile(r"override\s+(all\s+)?(safety\s+guidelines|system)", re.IGNORECASE),
     re.compile(r"system\s*prompt\s*:", re.IGNORECASE),
-    re.compile(r"you\s+are\s+now\s+a\s+DAN", re.IGNORECASE),
-    re.compile(r"override\s+(all\s+)?safety\s+guidelines", re.IGNORECASE),
     re.compile(r"<\s*\|im_start\|\s*>", re.IGNORECASE),
     re.compile(r"\[\s*INST\s*\]", re.IGNORECASE),
 ]
@@ -46,10 +50,14 @@ class PromptGuardMiddleware(BaseHTTPMiddleware):
     """
     Middleware checking /v1/run incoming JSON payloads for prompt injection attacks
     and masking PII strings before requests reach upstream services.
+
+    Requests carrying X-Operator-Role: operator bypass the injection block but
+    still have the pattern match logged as a warning.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         if request.url.path == "/v1/run" and request.method == "POST":
+            is_operator = request.headers.get("X-Operator-Role", "").lower() == "operator"
             try:
                 body_bytes = await request.body()
                 if body_bytes:
@@ -57,13 +65,25 @@ class PromptGuardMiddleware(BaseHTTPMiddleware):
                     message = payload.get("message", "")
                     if isinstance(message, str) and message:
                         if check_prompt_injection(message):
-                            log.warning("gateway.prompt_injection_blocked", path=request.url.path)
-                            return JSONResponse(
-                                status_code=400,
-                                content={
-                                    "error": "Security violation: prompt injection pattern detected."
-                                },
-                            )
+                            truncated = message[:120] + ("…" if len(message) > 120 else "")
+                            if is_operator:
+                                log.warning(
+                                    "gateway.prompt_injection_operator_bypass",
+                                    path=request.url.path,
+                                    query_preview=truncated,
+                                )
+                            else:
+                                log.warning(
+                                    "gateway.prompt_injection_blocked",
+                                    path=request.url.path,
+                                    query_preview=truncated,
+                                )
+                                return JSONResponse(
+                                    status_code=400,
+                                    content={
+                                        "error": "Request blocked: potential prompt injection detected."
+                                    },
+                                )
 
                         sanitized_message = sanitize_pii(message)
                         if sanitized_message != message:

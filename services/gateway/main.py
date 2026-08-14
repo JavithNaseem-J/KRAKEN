@@ -10,7 +10,7 @@ import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 
 from shared.config import get_settings
 from shared.cors import cors_middleware_kwargs
@@ -366,6 +366,97 @@ async def run(request: Request) -> JSONResponse:
     return response
 
 
+@app.post(
+    "/v1/run/stream",
+    tags=["agent"],
+    response_model=None,
+    dependencies=[Depends(_limit_request_body_size)],
+)
+async def run_stream(request: Request) -> Any:
+    """
+    Submit a query to the agent with real-time SSE streaming.
+    Rate limited per user. Proxied to orchestrator /run/stream.
+    """
+    allowed, rl_headers = await _check_rate_limit(request)
+    if not allowed:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={"error": "Rate limit exceeded. Try again shortly."},
+            headers=rl_headers,
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST, content={"error": "Invalid JSON body."}
+        )
+
+    user_id = getattr(request.state, "user_id", "anonymous")
+    if isinstance(body, dict):
+        body.setdefault("session_id", str(uuid.uuid4()))
+        body["user_id"] = user_id
+
+    message = body.get("message", "") if isinstance(body, dict) else ""
+    if isinstance(message, str) and _HIGH_PRIVILEGE_PATTERNS.search(message):
+        operator_role = request.headers.get("X-Operator-Role", "").strip().lower()
+        if operator_role != "operator":
+            log.warning(
+                "gateway.privilege_escalation_denied",
+                user_id=user_id,
+                message_preview=message[:80],
+            )
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={
+                    "error": (
+                        "Access denied. This operation requires operator-level clearance. "
+                        "Please contact your security administrator to request elevated access."
+                    )
+                },
+            )
+
+    try:
+        from shared.models.agent import QueryRequest
+
+        QueryRequest.model_validate(body)
+    except ValidationError as err:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"error": "Invalid request payload", "details": err.errors(include_url=False)},
+        )
+
+    request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
+    forward_headers = service_headers(trace_id=request_id)
+    forward_headers.update({
+        "X-Request-Id": request_id,
+        "Content-Type": "application/json",
+    })
+
+    async def stream_generator():
+        client: httpx.AsyncClient = request.app.state.http
+        async with client.stream(
+            "POST",
+            f"{settings.orchestrator_url}/run/stream",
+            json=body,
+            headers=forward_headers,
+            timeout=120.0,
+        ) as upstream_resp:
+            async for chunk in upstream_resp.aiter_bytes():
+                yield chunk
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            **rl_headers,
+        },
+    )
+
+
+
 from fastapi import File, Form, UploadFile
 
 
@@ -401,3 +492,39 @@ async def upload_knowledge(
             content={"error": f"Upload failed: {exc}"},
             headers={"X-Request-Id": request_id},
         )
+
+
+@app.post("/v1/report/export", tags=["report"])
+async def export_report(request: Request) -> Response:
+    """
+    Generate and export a formatted Executive Incident Briefing PDF report for a session.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST, content={"error": "Invalid JSON body."}
+        )
+
+    messages = payload.get("messages", [])
+    if not messages:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "Session has no messages to export"},
+        )
+
+    from .report import generate_incident_pdf
+
+    pdf_bytes = generate_incident_pdf(payload)
+    session_id = payload.get("session_id", "incident")[:8]
+    filename = f"kraken-incident-{session_id}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Accel-Buffering": "no",
+        },
+    )
+

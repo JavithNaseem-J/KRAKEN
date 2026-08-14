@@ -5,18 +5,16 @@ import { cn } from "@/lib/utils";
 import {
   ArrowUpIcon,
   Bot,
-  Clock,
   Paperclip,
   Code2,
   Rocket,
-  ShieldCheck,
-  Activity,
   Loader2,
   FileText,
   Key,
   PanelLeftOpen,
 } from "lucide-react";
 import type { ChatMessage as ChatMessageType, UserRole } from "@/types/agent";
+import type { AgentStreamEvent } from "@/services/api";
 import { ChatMessage } from "@/components/ChatMessage";
 
 interface AutoResizeProps {
@@ -67,6 +65,8 @@ interface RuixenMoonChatProps {
   onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject') => void;
   onApprovalExpired?: (approvalId: string) => void;
   onInspectReasoning: (message: ChatMessageType) => void;
+  onInspectTelemetry?: (message: ChatMessageType) => void;
+  streamingSteps?: AgentStreamEvent[];
 }
 
 export default function RuixenMoonChat({
@@ -82,6 +82,8 @@ export default function RuixenMoonChat({
   onApprovalResolved,
   onApprovalExpired,
   onInspectReasoning,
+  onInspectTelemetry,
+  streamingSteps = [],
 }: RuixenMoonChatProps) {
   const [message, setMessage] = useState("");
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
@@ -91,9 +93,15 @@ export default function RuixenMoonChat({
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const scrollToBottom = () => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  };
+
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages.length]);
+    scrollToBottom();
+  }, [messages, disabled]);
 
   const handleSend = (textToSend?: string) => {
     const content = (textToSend ?? message).trim();
@@ -141,75 +149,64 @@ export default function RuixenMoonChat({
   };
 
   const latestApprovalMsg = messages.slice().reverse().find((m) => m.approval_id);
-  const isPendingAuthorization =
-    pendingSessionId === activeSessionId &&
-    (!latestApprovalMsg || latestApprovalMsg.approval_state === "pending");
-  const isExecutingAuthorized =
-    pendingSessionId === activeSessionId &&
-    latestApprovalMsg?.approval_state === "approved";
 
   return (
-    <div
-      className="relative w-full h-full bg-cover bg-center flex flex-col items-center overflow-hidden"
-      style={{
-        backgroundImage:
-          "url('https://pub-940ccf6255b54fa799a9b01050e6c227.r2.dev/ruixen_moon_2.png')",
-        backgroundAttachment: "fixed",
-      }}
-    >
-      {/* Dark overlay for contrast */}
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] pointer-events-none" />
+    <div className="relative flex flex-col h-full w-full bg-black overflow-hidden font-sans select-none">
+      {/* Background Ambience */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-neutral-900 via-black to-black opacity-80" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#1f1f1f10_1px,transparent_1px),linear-gradient(to_bottom,#1f1f1f10_1px,transparent_1px)] bg-[size:4rem_4rem]" />
 
-      {/* Top Header Bar */}
-      <header className="relative z-10 w-full flex items-center justify-between border-b border-white/10 bg-black/40 px-4 md:px-6 py-3.5 backdrop-blur-md">
+      {/* Header Bar */}
+      <header className="relative z-20 flex h-14 w-full items-center justify-between border-b border-neutral-800/80 bg-black/60 backdrop-blur-xl px-4 md:px-6">
         <div className="flex items-center gap-3">
           {!sidebarOpen && (
             <button
               onClick={onToggleSidebar}
               aria-label="Open Sidebar"
-              className="rounded-lg p-2 text-neutral-300 hover:bg-white/10 hover:text-white transition-colors"
+              className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-800 hover:text-white transition-colors"
             >
               <PanelLeftOpen size={18} />
             </button>
           )}
 
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-xs font-semibold text-neutral-200">
-                {sessionTitle || "New Session"}
-              </span>
-            </div>
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-purple-500 animate-pulse" />
+            <span className="text-xs md:text-sm font-bold tracking-tight text-white">
+              {sessionTitle || "KRAKEN Operations Console"}
+            </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/40 px-2.5 py-1 text-[10px]">
-              <Activity size={12} className="text-emerald-400" />
-              <span className="text-neutral-400">Gateway:</span>
-              <span className="font-mono text-emerald-400">200 OK</span>
-            </div>
-            <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-black/40 px-2.5 py-1 text-[10px]">
-              <ShieldCheck size={12} className="text-sky-400" />
-              <span className="text-neutral-400">Orchestrator:</span>
-              <span className="font-mono text-sky-400">ONLINE</span>
-            </div>
-          </div>
-
-          {isPendingAuthorization && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold text-amber-300 border border-amber-500/30 bg-amber-500/10 animate-pulse">
-              <Clock size={12} className="text-amber-400" />
-              Awaiting Security Authorization…
+        {/* Header Right Actions */}
+        <div className="flex items-center gap-2">
+          {uploadNotice && (
+            <span className="text-[11px] text-purple-300 bg-purple-950/40 border border-purple-800/50 rounded-full px-2.5 py-0.5 max-w-[200px] truncate">
+              {uploadNotice}
             </span>
           )}
 
-          {isExecutingAuthorized && (
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-semibold text-emerald-300 border border-emerald-500/30 bg-emerald-500/10 animate-pulse">
-              <Loader2 size={12} className="animate-spin text-emerald-400" />
-              Executing Authorized Action…
-            </span>
-          )}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            accept=".pdf,.docx,.txt,.md"
+            className="hidden"
+          />
+
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isUploading || disabled}
+            onClick={() => fileInputRef.current?.click()}
+            className="h-8 rounded-lg border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:text-white text-xs gap-1.5 font-medium transition-all"
+          >
+            {isUploading ? (
+              <Loader2 size={13} className="animate-spin text-purple-400" />
+            ) : (
+              <FileText size={13} />
+            )}
+            <span>{isUploading ? "Ingesting..." : "Ingest Document"}</span>
+          </Button>
         </div>
       </header>
 
@@ -242,6 +239,7 @@ export default function RuixenMoonChat({
                   onApprovalResolved={onApprovalResolved}
                   onApprovalExpired={onApprovalExpired}
                   onInspectReasoning={onInspectReasoning}
+                  onInspectTelemetry={onInspectTelemetry}
                 />
               ))}
               {disabled && (
@@ -249,11 +247,43 @@ export default function RuixenMoonChat({
                   <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-purple-600/30 text-purple-300 ring-1 ring-purple-500/40">
                     <Bot size={15} />
                   </div>
-                  <div className="group min-w-0 max-w-[80%]">
+                  <div className="group min-w-0 max-w-[80%] flex flex-col gap-1.5">
                     <div className="relative rounded-2xl px-4 py-3 text-xs md:text-sm bg-black/60 backdrop-blur-md text-neutral-200 rounded-tl-none border border-neutral-800 flex items-center gap-2.5">
-                      <Loader2 size={15} className="animate-spin text-purple-400" />
-                      <span className="font-medium text-neutral-300">Agent is thinking…</span>
+                      <span className="font-medium text-neutral-300">KRAKEN is thinking</span>
+                      <span className="flex items-end gap-0.5 pb-0.5">
+                        <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-bounce [animation-delay:0ms]" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-bounce [animation-delay:150ms]" />
+                        <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-bounce [animation-delay:300ms]" />
+                      </span>
                     </div>
+                    {streamingSteps.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pl-1">
+                        {streamingSteps
+                          .filter((s) => s.status === 'start')
+                          .map((s, i) => {
+                            const nodeLabels: Record<string, { icon: string; label: string }> = {
+                              retriever: { icon: '🔍', label: 'Retrieving knowledge' },
+                              decider: { icon: '🛡️', label: 'Evaluating intent' },
+                              executor: { icon: '⚙️', label: 'Executing action' },
+                              memory_writer: { icon: '📝', label: 'Updating memory' },
+                              responder: { icon: '💬', label: 'Generating response' },
+                            };
+                            const meta = nodeLabels[s.node.toLowerCase()] ?? { icon: '●', label: s.node };
+                            return (
+                              <span
+                                key={i}
+                                className="inline-flex items-center gap-1 rounded-full bg-purple-900/40 border border-purple-500/30 px-2.5 py-0.5 text-[11px] text-purple-300 font-medium animate-pulse"
+                              >
+                                <span>{meta.icon}</span>
+                                <span>{meta.label}</span>
+                                {s.elapsed_ms !== undefined && (
+                                  <span className="text-purple-500 ml-0.5">{s.elapsed_ms}ms</span>
+                                )}
+                              </span>
+                            );
+                          })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
