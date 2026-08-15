@@ -428,6 +428,21 @@ async def run(body: QueryRequest) -> Any:
                 "message": "A CRITICAL triage action requires human approval. Check the approval service.",
             }
 
+    # ── If session is stuck in a HITL interrupt, auto-reject it so the new ────
+    # message can be processed as a fresh graph invocation on this thread.
+    # Without this, LangGraph ignores `initial_state` and re-returns the same
+    # interrupted state for every subsequent message in the same session.
+    if snapshot.next:
+        log.info(
+            "orchestrator.clearing_stale_hitl_interrupt",
+            session_id=body.session_id,
+            reason="new_message_on_interrupted_session",
+        )
+        try:
+            await graph.ainvoke(Command(resume={"decision": "reject"}), config)
+        except Exception as exc:
+            log.warning("orchestrator.stale_hitl_clear_failed", error=str(exc))
+
     http_client: httpx.AsyncClient | None = getattr(app.state, "http", None)
 
     # ── SemanticCache Lookup ──────────────────────────────────────────────────
@@ -581,6 +596,19 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
     """
     graph = app.state.agent_graph
     config = _graph_config(body.session_id)
+
+    # ── If session is stuck in a HITL interrupt, auto-reject it first ─────────
+    # so the new message starts a fresh graph run on this thread.
+    try:
+        snapshot = await graph.aget_state(config)
+        if snapshot.next:
+            log.info(
+                "orchestrator.stream_clearing_stale_hitl_interrupt",
+                session_id=body.session_id,
+            )
+            await graph.ainvoke(Command(resume={"decision": "reject"}), config)
+    except Exception as exc:
+        log.warning("orchestrator.stream_stale_hitl_clear_failed", error=str(exc))
 
     async def event_generator() -> AsyncGenerator[str, None]:
         import json
