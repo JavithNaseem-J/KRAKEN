@@ -127,16 +127,14 @@ async def decider_node(state: GraphState) -> dict:
             ActionDecision(selected_action=action_name, action_payload=payload)
         ]
 
-        # Code-level deterministic safety guard for status queries:
-        # Queries asking for ticket status (e.g., "What is the status of ticket T-1001?") are READ-ONLY
-        # and MUST NOT trigger HITL escalation.
-        user_msg_lower = user_message.lower()
-        is_status_query = any(
-            phrase in user_msg_lower
-            for phrase in ("status of", "ticket status", "check status", "what is the status")
-        )
-        if is_status_query and action_name in ("escalate", "request_info", "close"):
-            log.info("decider.override_status_query_to_auto_respond", original_action=action_name)
+        # Code-level deterministic safety guard for ticket write actions:
+        # Actions like 'escalate', 'request_info', or 'close' REQUIRE an explicit ticket ID
+        # (e.g. T-1001, TCK-1001). Any prompt without a ticket ID (including general policy/SLA questions)
+        # MUST NOT trigger HITL escalation.
+        import re
+        has_ticket_id = bool(re.search(r"\b(TCK|T|TK|INC|SR)[-_]?\d+\b", user_message, re.IGNORECASE))
+        if action_name in ("escalate", "request_info", "close") and not has_ticket_id:
+            log.info("decider.override_action_missing_ticket_id", original_action=action_name, query=user_message[:50])
             action_name = "auto_respond"
             actions_to_process = [ActionDecision(selected_action="auto_respond", action_payload={})]
 

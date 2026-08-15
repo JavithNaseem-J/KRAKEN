@@ -738,6 +738,48 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                     )
                     yield f"data: {payload}\n\n"
 
+            snapshot = await graph.aget_state(config)
+            if snapshot.next:
+                interrupt_val = _extract_interrupt(snapshot)
+                approval_id = interrupt_val.get("approval_id", str(uuid.uuid4()))
+                action_name = interrupt_val.get("action_name", "unknown")
+                expires_at = datetime.now(UTC) + timedelta(seconds=settings.approval_timeout_seconds)
+
+                pool: ConnectionPool | None = getattr(app.state, "conn_pool", None)
+                if pool is not None:
+                    try:
+                        with pool.connection() as conn:
+                            conn.execute(
+                                """
+                                INSERT INTO approval_map (approval_id, session_id, action_name, status, expires_at)
+                                VALUES (%s, %s, %s, 'pending', %s)
+                                ON CONFLICT (approval_id) DO NOTHING
+                                """,
+                                (approval_id, body.session_id, action_name, expires_at),
+                            )
+                    except Exception as exc:
+                        log.warning("orchestrator.stream_approval_db_save_failed", error=str(exc))
+                else:
+                    _IN_MEMORY_APPROVAL_MAP[approval_id] = {
+                        "session_id": body.session_id,
+                        "action_name": action_name,
+                        "status": "pending",
+                        "expires_at": expires_at,
+                    }
+
+                hitl_payload = json.dumps({
+                    "node": "interrupt",
+                    "status": "pending_approval",
+                    "elapsed_ms": round((time.monotonic() - start) * 1000),
+                    "response": {
+                        "status": "pending_approval",
+                        "approval_id": approval_id,
+                        "session_id": body.session_id,
+                        "message": "A CRITICAL triage action requires human approval. Check the approval service.",
+                    },
+                })
+                yield f"data: {hitl_payload}\n\n"
+
             done_payload = json.dumps({"node": "done", "status": "end", "elapsed_ms": round((time.monotonic() - start) * 1000)})
             yield f"data: {done_payload}\n\n"
 

@@ -244,16 +244,18 @@ export default function App() {
         // SSE ended without a response payload — fall back to poll
         const res = await runAgentQuery('', sessionId, activeRole.api_key);
         if (isPendingApproval(res)) {
-          appendMessage(sessionId, {
-            id: crypto.randomUUID(),
-            role: 'assistant',
-            content: res.message,
-            timestamp: new Date().toISOString(),
-            approval_id: res.approval_id,
-            approval_state: 'pending',
-          });
-          setPendingSessionId(sessionId);
-        } else {
+          if (res.approval_id) {
+            appendMessage(sessionId, {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: res.message,
+              timestamp: new Date().toISOString(),
+              approval_id: res.approval_id,
+              approval_state: 'pending',
+            });
+            setPendingSessionId(sessionId);
+          }
+        } else if (res && res.answer) {
           appendMessage(sessionId, queryResponseToMessage(res));
         }
       }
