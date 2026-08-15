@@ -9,8 +9,9 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from shared.auth import verify_service_token
 from shared.config import get_settings
-from shared.db import create_pool
+from shared.db import create_pool, ensure_schema_async
 from shared.logging import configure_logging
+from shared.middleware.trace_id import TraceIdMiddleware
 from shared.models.audit import AuditLogRequest
 
 from .audit_store import AuditStore
@@ -35,6 +36,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             min_size=2,
             max_size=8,  # Higher than memory: audit is write-heavy
         )
+        await ensure_schema_async(pool)
         app.state.store = AuditStore(pool)
         app.state.db_pool = pool
         log.info("audit.db_ready")
@@ -49,8 +51,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await app.state.db_pool.close()
     log.info("audit.shutdown")
 
-
-from shared.middleware.trace_id import TraceIdMiddleware
 
 app = FastAPI(
     title="KRAKEN Audit",

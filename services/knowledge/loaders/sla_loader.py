@@ -1,52 +1,88 @@
 """
 SLA / Escalation rules loader.
 Reads .json files from data/knowledge/sla/.
-Converts rules into human-readable text chunks for semantic search.
+Converts severities (P1-P4) and action_risk_mapping into text chunks for semantic search.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from .base import load_structured_chunks, resolve_data_dir
+import structlog
 
-from shared.models.knowledge import SLADocument
+from .base import resolve_data_dir
 
+log = structlog.get_logger(__name__)
 SLA_DIR = resolve_data_dir("sla")
 
 
-def _rule_to_text(rule_raw: dict[str, Any]) -> str:
-    """Convert an SLA rule dict to a natural-language text chunk via SLADocument validation."""
-    rule_id = rule_raw.get("rule_id") or rule_raw.get("id") or "sla_unknown"
-    severity = rule_raw.get("severity") or rule_raw.get("priority") or "medium"
-    resp_mins = rule_raw.get("response_sla_minutes") or (rule_raw.get("response_time_hours", 1) * 60)
-    res_mins = rule_raw.get("resolution_sla_minutes") or (rule_raw.get("resolution_time_hours", 4) * 60)
-
-    sla_doc = SLADocument(
-        rule_id=str(rule_id),
-        severity=str(severity),
-        response_sla_minutes=int(resp_mins),
-        resolution_sla_minutes=int(res_mins),
-        description=str(rule_raw.get("notes") or rule_raw.get("name") or "SLA Policy Rule"),
-    )
-
-    escalation = " → ".join(rule_raw.get("escalation_path", []))
-    parts = [
-        f"SLA Rule: {sla_doc.rule_id}",
-        f"Severity level: {sla_doc.severity}",
-        f"Response time: {sla_doc.response_sla_minutes} minutes",
-        f"Resolution time: {sla_doc.resolution_sla_minutes} minutes",
-        f"Escalation path: {escalation}" if escalation else "",
-        f"Description: {sla_doc.description}",
-    ]
-    return "\n".join(p for p in parts if p)
-
-
 def load_sla_chunks() -> list[dict[str, Any]]:
-    """Load all SLA rules from JSON files."""
-    return load_structured_chunks(
-        data_dir=SLA_DIR,
-        allowed_suffixes={".json"},
-        record_to_text=_rule_to_text,
-        id_prefix="sla",
-    )
+    """
+    Load SLA rules from data/knowledge/sla/sla_rules.json.
+    Iterates severities (P1-P4) and action_risk_mapping, returning structured text chunks.
+    """
+    chunks: list[dict[str, Any]] = []
+    if not SLA_DIR.exists():
+        return chunks
+
+    for json_path in sorted(SLA_DIR.glob("*.json")):
+        try:
+            with open(json_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as exc:
+            log.warning("sla_loader.json_load_failed", path=str(json_path), error=str(exc))
+            continue
+
+        if not isinstance(data, dict):
+            continue
+
+        severities = data.get("severities", {})
+        if isinstance(severities, dict):
+            for p_level, p_info in severities.items():
+                if not isinstance(p_info, dict):
+                    continue
+                name = p_info.get("name", "")
+                desc = p_info.get("description", "")
+                resp_mins = p_info.get("response_time_minutes")
+                res_hours = p_info.get("resolution_time_hours")
+                app_level = p_info.get("approval_level", "")
+                escalation = p_info.get("escalation_chain", [])
+                esc_str = " → ".join(escalation) if isinstance(escalation, list) else str(escalation)
+
+                content_parts = [
+                    f"SLA Severity Level: {p_level} ({name})",
+                    f"Description: {desc}",
+                    f"Response SLA: {resp_mins} minutes" if resp_mins is not None else "",
+                    f"Resolution SLA: {res_hours} hours" if res_hours is not None else "",
+                    f"Required Approval Level: {app_level}" if app_level else "",
+                    f"Escalation Chain: {esc_str}" if esc_str else "",
+                ]
+                content = "\n".join(p for p in content_parts if p)
+
+                chunks.append({
+                    "chunk_id": f"sla_{p_level.lower()}",
+                    "content": content,
+                    "metadata": {
+                        "severity": p_level,
+                        "name": name,
+                        "response_time_minutes": resp_mins,
+                        "resolution_time_hours": res_hours,
+                        "file_name": json_path.name,
+                    },
+                })
+
+        risk_mapping = data.get("action_risk_mapping", {})
+        if isinstance(risk_mapping, dict) and risk_mapping:
+            mapping_lines = [f"- {action}: {risk}" for action, risk in risk_mapping.items()]
+            content = "SLA Action Risk Level Mapping:\n" + "\n".join(mapping_lines)
+            chunks.append({
+                "chunk_id": "sla_action_risk_mapping",
+                "content": content,
+                "metadata": {
+                    "type": "action_risk_mapping",
+                    "file_name": json_path.name,
+                },
+            })
+
+    return chunks

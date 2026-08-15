@@ -7,28 +7,30 @@ Provides vector embedding services for Knowledge and Memory microservices.
 
 from __future__ import annotations
 
+import threading
+from typing import Any
+
 import structlog
-from langchain_huggingface import HuggingFaceEmbeddings
 
 from shared.config import get_settings
 
-import threading
-from functools import lru_cache
-
 log = structlog.get_logger(__name__)
 settings = get_settings()
-
-EMBEDDING_DIM = 384  # Default BAAI/bge-small-en dimension
 
 _embedder_instance: BGEEmbedder | None = None
 _embedder_lock = threading.Lock()
 
 
 class ZeroVectorEmbedder:
-    """Lightweight zero-vector fallback embedder when no API keys are set and local PyTorch models are skipped to stay within RAM limits."""
+    """Lightweight zero-vector fallback embedder when no API keys are set and local models are unconfigured."""
 
     def __init__(self, dim: int = 1536) -> None:
         self.dim = dim
+        log.error(
+            "embedder.zero_vector_fallback_active",
+            dim=dim,
+            message="ZeroVectorEmbedder is active. Embeddings will be zero vectors; retrieval will return empty or default results.",
+        )
 
     def embed_query(self, text: str) -> list[float]:
         return [0.0] * self.dim
@@ -47,6 +49,7 @@ class BGEEmbedder:
         provider = settings.embedding_provider.lower()
         model_name = model_name or settings.embedding_model
         device = device or settings.embedding_device
+        self._query_cache: dict[str, list[float]] = {}
 
         log.info("embedder.loading", provider=provider, model=model_name)
 
@@ -56,7 +59,7 @@ class BGEEmbedder:
             api_key = settings.embedding_api_key or settings.llm_api_key
             base_url = settings.embedding_base_url or None
 
-            self._model = OpenAIEmbeddings(
+            self._model: Any = OpenAIEmbeddings(
                 model=model_name,
                 openai_api_key=api_key,
                 openai_api_base=base_url,
@@ -64,7 +67,7 @@ class BGEEmbedder:
             log.info("embedder.cloud_api_ready", model=model_name)
         elif provider in ("cloud", "openai"):
             log.warning("embedder.no_api_key_provided_using_zero_vector_fallback")
-            dim = 1536 if "3-small" in model_name or "ada" in model_name else 384
+            dim = settings.embedding_dim
             self._model = ZeroVectorEmbedder(dim=dim)
         else:
             try:
@@ -78,19 +81,18 @@ class BGEEmbedder:
                 log.info("embedder.local_hf_ready", model=model_name)
             except Exception as exc:
                 log.warning("embedder.fallback_zero_vectors", reason=str(exc))
-                self._model = ZeroVectorEmbedder(dim=384)
+                self._model = ZeroVectorEmbedder(dim=settings.embedding_dim)
 
         self.model_name = model_name
         self.device = device
 
-    @lru_cache(maxsize=1024)
-    def _cached_embed_query(self, text: str) -> tuple[float, ...]:
-        """Internal cached vector generator returning hashable tuple."""
-        return tuple(self._model.embed_query(text))
-
     def embed_query(self, text: str) -> list[float]:
-        """Embed a single query string using in-memory LRU cache."""
-        return list(self._cached_embed_query(text))
+        """Embed a single query string using in-memory dict cache."""
+        if text not in self._query_cache:
+            if len(self._query_cache) >= 1024:
+                self._query_cache.clear()
+            self._query_cache[text] = list(self._model.embed_query(text))
+        return self._query_cache[text]
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch of document strings."""

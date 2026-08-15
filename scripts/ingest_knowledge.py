@@ -9,10 +9,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import structlog
 
-from shared.embedder import BGEEmbedder
 from services.knowledge.ingest import run_ingest_async
 from shared.cache import create_async_qdrant_client
 from shared.config import get_settings
+from shared.embedder import BGEEmbedder
 
 structlog.configure(
     processors=[structlog.dev.ConsoleRenderer()],

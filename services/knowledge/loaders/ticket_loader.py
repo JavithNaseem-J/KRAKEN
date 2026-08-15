@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import load_structured_chunks, resolve_data_dir
-
 from shared.models.knowledge import TicketDocument
+
+from .base import load_structured_chunks, resolve_data_dir
 
 TICKETS_DIR = resolve_data_dir("tickets")
 

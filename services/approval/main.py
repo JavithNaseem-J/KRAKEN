@@ -32,8 +32,11 @@ from pydantic import BaseModel, Field
 
 from shared.auth import verify_service_token
 from shared.config import get_settings
+from shared.cors import cors_middleware_kwargs
 from shared.http_client import create_async_http_client, service_headers
 from shared.logging import configure_logging
+from shared.middleware.rate_limit import RateLimitMiddleware
+from shared.middleware.trace_id import TraceIdMiddleware
 
 from .notifier import print_approval_notice
 from .queue import ApprovalQueue
@@ -124,9 +127,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("approval.shutdown")
 
 
-from shared.middleware.rate_limit import RateLimitMiddleware
-from shared.middleware.trace_id import TraceIdMiddleware
-
 app = FastAPI(
     title="KRAKEN Approval",
     description="HITL Approval Service — KRAKEN",
@@ -139,27 +139,9 @@ app.add_middleware(RateLimitMiddleware, path_prefix="/approve/", max_requests=60
 # ── CORS (React frontend origins) ─────────────────────────────────────────────
 # Required so the React SPA can fetch approval details/CSRF token and submit
 # inline approval decisions directly from the browser.
-allowed_cors_origins = [
-    origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()
-]
-
-if "*" in allowed_cors_origins:
-    cors_kwargs = {
-        "allow_origins": ["*"],
-        "allow_credentials": False,
-    }
-else:
-    cors_kwargs = {
-        "allow_origins": allowed_cors_origins,
-        "allow_origin_regex": r"https://.*\.onrender\.com|http://localhost:.*",
-        "allow_credentials": True,
-    }
-
 app.add_middleware(
     CORSMiddleware,
-    **cors_kwargs,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_middleware_kwargs(),
 )
 
 

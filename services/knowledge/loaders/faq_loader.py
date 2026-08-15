@@ -16,6 +16,7 @@ from typing import Any
 import structlog
 
 from shared.models.knowledge import FAQDocument
+
 from .base import resolve_data_dir
 
 log = structlog.get_logger(__name__)

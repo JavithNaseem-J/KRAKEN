@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import secrets
 import uuid
@@ -139,6 +140,19 @@ class ApprovalQueue:
         if expected_local is not None:
             return secrets.compare_digest(expected_local, token)
         return False
+
+    def sweep_expired_in_memory(self) -> int:
+        """Evict expired items from in-memory fallback dicts to prevent memory leaks."""
+        now = datetime.now(UTC)
+        expired_ids = [
+            app_id
+            for app_id, data in self._in_memory_map.items()
+            if data.get("expires_at") and datetime.fromisoformat(data["expires_at"]) < now
+        ]
+        for app_id in expired_ids:
+            self._in_memory_map.pop(app_id, None)
+            self._in_memory_csrf.pop(app_id, None)
+        return len(expired_ids)
 
     async def close(self) -> None:
         with contextlib.suppress(Exception):

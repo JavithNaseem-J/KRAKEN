@@ -22,7 +22,6 @@ from __future__ import annotations
 import time
 import uuid
 
-import redis.asyncio as aioredis
 import structlog
 
 log = structlog.get_logger(__name__)

@@ -34,8 +34,10 @@ def client(monkeypatch):
     mock_queue.verify_csrf_token = AsyncMock(return_value=True)
     mock_queue.close = AsyncMock()
 
-    with patch("services.approval.main.ApprovalQueue", return_value=mock_queue):
-        with TestClient(app) as c:
+    with (
+        patch("services.approval.main.ApprovalQueue", return_value=mock_queue),
+        TestClient(app) as c,
+    ):
             c.app.state.queue = mock_queue
             c.app.state.http = AsyncMock()
             mock_resp = MagicMock()

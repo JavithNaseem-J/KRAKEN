@@ -27,12 +27,11 @@ def seed_postgres() -> None:
 
         from shared.db.tickets import seed_tickets
 
-        with ConnectionPool(conninfo=pg_url, timeout=5) as pool:
-            with pool.connection() as conn:
-                if SAMPLE_TICKETS_FILE.exists():
-                    tickets = json.loads(SAMPLE_TICKETS_FILE.read_text(encoding="utf-8"))
-                    count = seed_tickets(conn, tickets, update_on_conflict=True)
-                    print(f"Successfully seeded PostgreSQL tickets table ({count} rows).")
+        with ConnectionPool(conninfo=pg_url, timeout=5) as pool, pool.connection() as conn:
+            if SAMPLE_TICKETS_FILE.exists():
+                tickets = json.loads(SAMPLE_TICKETS_FILE.read_text(encoding="utf-8"))
+                count = seed_tickets(conn, tickets, update_on_conflict=True)
+                print(f"Successfully seeded PostgreSQL tickets table ({count} rows).")
     except Exception as exc:
         print(f"PostgreSQL seed warning: {exc}")
 

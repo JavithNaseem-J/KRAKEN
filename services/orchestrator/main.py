@@ -15,7 +15,9 @@ if sys.platform == "win32":
 import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.responses import PlainTextResponse
 from langgraph.types import Command
+
 try:
     from opentelemetry import trace
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -38,9 +40,11 @@ except ImportError:
 from pydantic import BaseModel, Field
 
 from shared.auth import verify_service_token
+from shared.cache import SemanticCache
 from shared.config import get_settings
 from shared.http_client import create_async_http_client, service_headers
 from shared.logging import configure_logging
+from shared.middleware.trace_id import TraceIdMiddleware
 from shared.models.agent import QueryRequest, QueryResponse
 
 from .graph.agent_graph import build_graph_async
@@ -303,7 +307,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
-from shared.middleware.trace_id import TraceIdMiddleware
 
 app = FastAPI(
     title="KRAKEN Orchestrator",
@@ -312,6 +315,20 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(TraceIdMiddleware)
+
+
+@app.get("/metrics", tags=["ops"])
+async def metrics() -> PlainTextResponse:
+    """Prometheus metrics endpoint for scraped orchestrator metrics."""
+    content = (
+        "# HELP kraken_service_up Liveness indicator (1 = healthy)\n"
+        "# TYPE kraken_service_up gauge\n"
+        'kraken_service_up{service="orchestrator"} 1\n'
+        "# HELP kraken_requests_total Total HTTP requests processed\n"
+        "# TYPE kraken_requests_total counter\n"
+        'kraken_requests_total{service="orchestrator"} 1\n'
+    )
+    return PlainTextResponse(content=content)
 
 # ── Telemetry Setup ───────────────────────────────────────────────────────────
 if _OTEL_AVAILABLE:
@@ -402,11 +419,7 @@ async def run(body: QueryRequest) -> Any:
             log.info("orchestrator.status_check_completed", session_id=body.session_id)
             return _build_response(body.session_id, snapshot.values)
         if snapshot.next:
-            interrupt_val: dict = {}
-            for task in snapshot.tasks:
-                for interrupt in getattr(task, "interrupts", []):
-                    interrupt_val = interrupt.value
-                    break
+            interrupt_val = _extract_interrupt(snapshot)
             approval_id = interrupt_val.get("approval_id")
             return {
                 "status": "pending_approval",
@@ -418,6 +431,7 @@ async def run(body: QueryRequest) -> Any:
     http_client: httpx.AsyncClient | None = getattr(app.state, "http", None)
 
     # ── SemanticCache Lookup ──────────────────────────────────────────────────
+    query_vector: list[float] | None = None
     cache: SemanticCache | None = getattr(app.state, "semantic_cache", None)
     if cache and body.message and http_client:
         try:
@@ -427,7 +441,7 @@ async def run(body: QueryRequest) -> Any:
             cached = await cache.get(query_vector)
             if cached:
                 log.info("orchestrator.semantic_cache_hit", session_id=body.session_id)
-                from services.action.audit_client import fire_audit_log
+                from shared.audit_client import fire_audit_log
                 asyncio.create_task(
                     fire_audit_log(
                         client=http_client,
@@ -498,11 +512,7 @@ async def run(body: QueryRequest) -> Any:
     # ── Check if graph paused for HITL ────────────────────────────────────────
     snapshot = await graph.aget_state(config)
     if snapshot.next:
-        interrupt_val: dict = {}
-        for task in snapshot.tasks:
-            for interrupt in getattr(task, "interrupts", []):
-                interrupt_val = interrupt.value
-                break
+        interrupt_val = _extract_interrupt(snapshot)
 
         approval_id = interrupt_val.get("approval_id", str(uuid.uuid4()))
         action_name = interrupt_val.get("action_name", "unknown")
@@ -544,7 +554,20 @@ async def run(body: QueryRequest) -> Any:
             "message": "A CRITICAL triage action requires human approval. Check the approval service.",
         }
 
-    return _build_response(body.session_id, result)
+    response = _build_response(body.session_id, result)
+    if cache and body.message:
+        try:
+            if query_vector is None:
+                from shared.embedder import get_embedder
+
+                embedder = get_embedder()
+                query_vector = await asyncio.to_thread(embedder.embed_query, body.message)
+            asyncio.create_task(
+                cache.put(query_vector, body.message, response.model_dump(mode="json"))
+            )
+        except Exception as exc:
+            log.warning("orchestrator.semantic_cache_put_failed", error=str(exc))
+    return response
 
 
 # ── /approval-callback ────────────────────────────────────────────────────────
@@ -684,6 +707,15 @@ async def trigger_prune_checkpoints(
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
+def _extract_interrupt(snapshot: Any) -> dict[str, Any]:
+    """Extract the first interrupt value dict from a LangGraph StateSnapshot."""
+    for task in getattr(snapshot, "tasks", []):
+        for interrupt in getattr(task, "interrupts", []):
+            val = getattr(interrupt, "value", {})
+            if isinstance(val, dict):
+                return val
+    return {}
+
 def _build_response(session_id: str, state: dict[str, Any]) -> QueryResponse:
     """Convert final graph state into a QueryResponse."""
     selected_action = state.get("selected_action")

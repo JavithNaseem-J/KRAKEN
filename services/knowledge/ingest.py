@@ -81,17 +81,31 @@ async def upsert_chunks_async(
 async def ensure_collection(
     client: AsyncQdrantClient,
     collection_name: str,
-    vector_size: int = 384,
+    vector_size: int | None = None,
 ) -> bool:
     """Ensure the Qdrant collection exists with the specified vector dimension."""
     from qdrant_client.models import Distance, PayloadSchemaType, VectorParams
 
+    dim = vector_size or settings.embedding_dim
     if not await client.collection_exists(collection_name):
         await client.create_collection(
             collection_name=collection_name,
-            vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
         )
-        log.info("qdrant.collection_created", collection=collection_name, vector_size=vector_size)
+        log.info("qdrant.collection_created", collection=collection_name, vector_size=dim)
+    else:
+        info = await client.get_collection(collection_name=collection_name)
+        vectors = info.config.params.vectors
+        existing_size = getattr(vectors, "size", None)
+        if isinstance(vectors, dict):
+            existing_size = vectors.get("size")
+        if existing_size and existing_size != dim:
+            log.error(
+                "qdrant.dimension_mismatch",
+                collection=collection_name,
+                existing_dim=existing_size,
+                configured_dim=dim,
+            )
 
     try:
         await client.create_payload_index(
@@ -111,7 +125,7 @@ async def run_ingest_async(client: AsyncQdrantClient, embedder: BGEEmbedder) -> 
     from .loaders.sla_loader import load_sla_chunks
     from .loaders.ticket_loader import load_ticket_chunks
 
-    await ensure_collection(client, settings.qdrant_collection_name, vector_size=384)
+    await ensure_collection(client, settings.qdrant_collection_name, vector_size=settings.embedding_dim)
 
     counts: dict[str, int] = {}
 

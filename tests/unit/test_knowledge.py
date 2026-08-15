@@ -22,8 +22,10 @@ def client(monkeypatch):
     mock_retriever = AsyncMock()
 
     with (
-        patch("services.knowledge.main.BGEEmbedder", return_value=mock_embedder),
+        patch("shared.embedder.get_embedder", return_value=mock_embedder),
         patch("shared.cache.create_async_qdrant_client", return_value=mock_qdrant),
+        patch("services.knowledge.main.KnowledgeRetriever", return_value=mock_retriever),
+        patch("services.knowledge.ingest.ensure_collection", new_callable=AsyncMock),
         TestClient(app) as c,
     ):
         c.app.state.retriever = mock_retriever

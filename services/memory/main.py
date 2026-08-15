@@ -33,22 +33,21 @@ from pydantic import BaseModel, Field
 
 from shared.auth import verify_service_token
 from shared.config import get_settings
-from shared.db import create_pool
+from shared.db import create_pool, ensure_schema_async
 from shared.logging import configure_logging
-
-from .long_term import LongTermMemory
-from .short_term import ShortTermMemory
-
-log = structlog.get_logger(__name__)
-settings = get_settings()
-
-
+from shared.middleware.trace_id import TraceIdMiddleware
 from shared.models.memory import (
     EpisodeChunk,
     EpisodeSearchRequest,
     EpisodeSearchResponse,
     EpisodeStoreRequest,
 )
+
+from .long_term import LongTermMemory
+from .short_term import ShortTermMemory
+
+log = structlog.get_logger(__name__)
+settings = get_settings()
 
 
 # ── Request / Response models ─────────────────────────────────────────────────
@@ -80,6 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             min_size=2,
             max_size=5,
         )
+        await ensure_schema_async(pool)
         long_term = LongTermMemory(
             pool=pool,
             embedding_model=settings.embedding_model,
@@ -102,8 +102,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await app.state.db_pool.close()
     log.info("memory.shutdown")
 
-
-from shared.middleware.trace_id import TraceIdMiddleware
 
 app = FastAPI(
     title="KRAKEN Memory",

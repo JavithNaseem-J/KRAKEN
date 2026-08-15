@@ -8,7 +8,7 @@ from shared.auth import safe_compare_tokens
 log = structlog.get_logger(__name__)
 
 # Endpoints that bypass standard user API key authentication
-_BYPASS_PATHS = {"/", "/health", "/docs", "/openapi.json"}
+_BYPASS_PATHS = {"/", "/health", "/ready"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):

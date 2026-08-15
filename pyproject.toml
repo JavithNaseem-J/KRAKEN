@@ -45,3 +45,7 @@ explicit_package_bases = true
 asyncio_mode = "auto"
 testpaths    = ["tests"]
 python_files = ["test_*.py"]
+markers = [
+    "integration: mark test as integration test requiring multiple running components or test clients",
+]
+addopts = "-m \"not integration\""

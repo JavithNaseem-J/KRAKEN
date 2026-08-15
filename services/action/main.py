@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
-
-import asyncio
 
 import httpx
 import structlog
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
+from shared.audit_client import fire_audit_log
 from shared.auth import verify_service_token
 from shared.config import get_settings
 from shared.exceptions import (
@@ -20,10 +20,10 @@ from shared.exceptions import (
 )
 from shared.http_client import create_async_http_client
 from shared.logging import configure_logging
+from shared.middleware.trace_id import TraceIdMiddleware
 from shared.models.action import ActionRequest, ActionResult
 from shared.registry import REGISTRY, get_action
 
-from .audit_client import fire_audit_log
 from .handlers.ticket_handler import (
     execute_auto_respond,
     execute_close,
@@ -50,13 +50,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Persistent HTTP client for outgoing audit logging calls
     app.state.http = create_async_http_client()
 
+    if settings.postgres_sync_url or settings.postgres_url:
+        try:
+            from shared.db import create_sync_pool, ensure_schema_sync
+
+            sync_url = settings.postgres_sync_url or settings.postgres_url
+            pool = create_sync_pool(sync_url)
+            ensure_schema_sync(pool)
+            pool.close()
+        except Exception as exc:
+            log.warning("action.schema_bootstrap_failed", error=str(exc))
+
     yield
 
     await app.state.http.aclose()
     log.info("action.shutdown")
 
-
-from shared.middleware.trace_id import TraceIdMiddleware
 
 app = FastAPI(
     title="KRAKEN Action",
@@ -200,11 +209,10 @@ def validate_action_payload(action_name: str, payload: dict[str, Any]) -> None:
                 raise ActionExecutionError(
                     f"Invalid payload parameter '{param}': expected string, got {type(val).__name__}"
                 )
-        elif "dict" in expected_type and val is not None:
-            if not isinstance(val, dict):
-                raise ActionExecutionError(
-                    f"Invalid payload parameter '{param}': expected dict, got {type(val).__name__}"
-                )
+        elif "dict" in expected_type and val is not None and not isinstance(val, dict):
+            raise ActionExecutionError(
+                f"Invalid payload parameter '{param}': expected dict, got {type(val).__name__}"
+            )
 
 
 def _dispatch(action_name: str, payload: dict[str, Any]) -> dict[str, Any]:

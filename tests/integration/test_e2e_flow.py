@@ -31,6 +31,7 @@ def integration_clients():
         }
 
 
+@pytest.mark.integration
 class TestE2EFlow:
     def test_gateway_liveness_and_readiness(self, integration_clients) -> None:
         client = integration_clients["gateway"]

@@ -42,8 +42,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             cutoff = now - self.window_seconds
 
             # Clean expired timestamps for this IP
-            timestamps = [t for t in self.requests[client_ip] if t > cutoff]
-            self.requests[client_ip] = timestamps
+            timestamps = [t for t in self.requests.get(client_ip, []) if t > cutoff]
+            if timestamps:
+                self.requests[client_ip] = timestamps
+            elif client_ip in self.requests:
+                del self.requests[client_ip]
+
+            # Periodic sweep if dictionary grows large
+            if len(self.requests) > 500:
+                expired_ips = [
+                    ip for ip, ts in self.requests.items() if not ts or max(ts) <= cutoff
+                ]
+                for expired_ip in expired_ips:
+                    self.requests.pop(expired_ip, None)
 
             if len(timestamps) >= self.max_requests:
                 log.warning("rate_limit.exceeded", client_ip=client_ip, path=request.url.path)

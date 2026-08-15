@@ -25,6 +25,9 @@ export interface QueryResponse {
   action_result: unknown | null;
   sources: string[];
   retrieved_chunks?: RetrievedChunk[];
+  confidence?: number | null;
+  evidence?: string[];
+  execution_time_sec?: number | null;
   timestamp: string;
   trace_id: string | null;
 }

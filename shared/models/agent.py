@@ -34,6 +34,9 @@ class QueryResponse(BaseModel):
     action_result: Any | None = None
     sources: list[str] = Field(default_factory=list)
     retrieved_chunks: list[dict[str, Any]] = Field(default_factory=list)
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    evidence: list[str] = Field(default_factory=list)
+    execution_time_sec: float | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     trace_id: str | None = Field(
         default=None, description="Unique request trace ID for distributed tracing"

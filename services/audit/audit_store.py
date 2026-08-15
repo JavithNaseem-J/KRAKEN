@@ -59,8 +59,10 @@ class AuditStore:
         payload_str = json.dumps(entry.payload or {}, sort_keys=True)
         result_str = json.dumps(entry.result or {}, sort_keys=True)
 
-        async with self._pool.acquire() as conn:
-            async with conn.transaction(isolation="serializable"):
+        async with (
+            self._pool.acquire() as conn,
+            conn.transaction(isolation="serializable"),
+        ):
                 # 1. Fetch previous entry_hash to form hash chain
                 prev_row = await conn.fetchrow(
                     "SELECT entry_hash FROM audit_log WHERE entry_hash IS NOT NULL ORDER BY timestamp DESC, id DESC LIMIT 1"
@@ -174,42 +176,73 @@ class AuditStore:
                 r["timestamp"] = r["timestamp"].isoformat()
         return records
 
-    async def verify_chain(self) -> dict[str, Any]:
+    async def verify_chain(self, page_size: int = 500) -> dict[str, Any]:
         """
-        Recompute SHA-256 hash chains across all audit log entries.
+        Recompute SHA-256 hash chains using keyset pagination (500 records/page).
         Returns {"valid": True, "count": N} or {"valid": False, "broken_at_id": id, ...}.
         """
-        async with self._pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT id, session_id, user_id, action_name, status, payload, previous_hash, entry_hash
-                FROM audit_log
-                ORDER BY timestamp ASC, id ASC
-                """
-            )
-
         previous_hash = _GENESIS_HASH
-        for row in rows:
-            payload_data = row["payload"]
-            if isinstance(payload_data, str):
-                try:
-                    payload_data = json.loads(payload_data)
-                except Exception:
-                    payload_data = {}
-            p_str = json.dumps(payload_data or {}, sort_keys=True)
+        total_count = 0
+        last_timestamp = None
+        last_id = None
 
-            raw = f"{previous_hash}:{row['session_id']}:{row['user_id']}:{row['action_name']}:{row['status']}:{p_str}"
-            computed = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        async with self._pool.acquire() as conn:
+            while True:
+                if last_timestamp is None:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, timestamp, session_id, user_id, action_name, status, payload, previous_hash, entry_hash
+                        FROM audit_log
+                        ORDER BY timestamp ASC, id ASC
+                        LIMIT $1
+                        """,
+                        page_size,
+                    )
+                else:
+                    rows = await conn.fetch(
+                        """
+                        SELECT id, timestamp, session_id, user_id, action_name, status, payload, previous_hash, entry_hash
+                        FROM audit_log
+                        WHERE (timestamp, id) > ($1, $2)
+                        ORDER BY timestamp ASC, id ASC
+                        LIMIT $3
+                        """,
+                        last_timestamp,
+                        last_id,
+                        page_size,
+                    )
 
-            if row["previous_hash"] and row["previous_hash"] != previous_hash:
-                return {
-                    "valid": False,
-                    "broken_at_id": row["id"],
-                    "reason": "previous_hash mismatch",
-                }
-            if row["entry_hash"] and row["entry_hash"] != computed:
-                return {"valid": False, "broken_at_id": row["id"], "reason": "entry_hash mismatch"}
+                if not rows:
+                    break
 
-            previous_hash = row["entry_hash"] if row["entry_hash"] else previous_hash
+                for row in rows:
+                    total_count += 1
+                    payload_data = row["payload"]
+                    if isinstance(payload_data, str):
+                        try:
+                            payload_data = json.loads(payload_data)
+                        except Exception:
+                            payload_data = {}
+                    p_str = json.dumps(payload_data or {}, sort_keys=True)
 
-        return {"valid": True, "count": len(rows)}
+                    raw = f"{previous_hash}:{row['session_id']}:{row['user_id']}:{row['action_name']}:{row['status']}:{p_str}"
+                    computed = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+                    if row["previous_hash"] and row["previous_hash"] != previous_hash:
+                        return {
+                            "valid": False,
+                            "broken_at_id": str(row["id"]),
+                            "reason": "previous_hash mismatch",
+                        }
+                    if row["entry_hash"] and row["entry_hash"] != computed:
+                        return {
+                            "valid": False,
+                            "broken_at_id": str(row["id"]),
+                            "reason": "entry_hash mismatch",
+                        }
+
+                    previous_hash = row["entry_hash"] if row["entry_hash"] else previous_hash
+                    last_timestamp = row["timestamp"]
+                    last_id = row["id"]
+
+        return {"valid": True, "count": total_count}

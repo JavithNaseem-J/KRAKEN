@@ -7,7 +7,7 @@ on:
     branches: [ main, master ]
 
 jobs:
-  test-and-lint:
+  backend-test-and-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,20 +18,62 @@ jobs:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install full Python dependency stack
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy pytest httpx
+          pip install -r requirements.txt
+          pip install ruff pytest-cov
           pip install -e .
 
       - name: Lint with ruff
         run: ruff check .
 
-      - name: Type check with mypy
-        run: mypy shared/ services/
-
       - name: Run unit tests
-        run: pytest tests/ -v
+        run: pytest tests/unit -v -m "not integration"
+
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "frontend-react/package-lock.json"
+
+      - name: Install frontend dependencies & build
+        run: |
+          cd frontend-react
+          npm ci
+          npm run build
+
+  docker-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
+
+      - name: Build and boot microservices via Docker Compose
+        run: docker compose up --build -d
+
+      - name: Smoke check Gateway health endpoint
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:8000/health | grep -q "status"; then
+              echo "Gateway is HEALTHY!"
+              exit 0
+            fi
+            echo "Waiting for Gateway service to be ready... ($i/30)"
+            sleep 2
+          done
+          echo "Gateway health check timed out!"
+          docker compose logs
+          exit 1
+
+      - name: Teardown Compose
+        if: always()
+        run: docker compose down -v

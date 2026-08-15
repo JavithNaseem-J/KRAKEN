@@ -25,9 +25,9 @@ from fastapi import Depends, FastAPI, HTTPException
 from shared.auth import verify_service_token
 from shared.config import get_settings
 from shared.logging import configure_logging
+from shared.middleware.trace_id import TraceIdMiddleware
 from shared.models.knowledge import RetrievalRequest, RetrievalResult
 
-from shared.embedder import BGEEmbedder
 from .retriever import KnowledgeRetriever
 
 log = structlog.get_logger(__name__)
@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         client = create_async_qdrant_client()
 
         from .ingest import ensure_collection
-        await ensure_collection(client, settings.qdrant_collection_name, vector_size=384)
+        await ensure_collection(client, settings.qdrant_collection_name, vector_size=settings.embedding_dim)
 
         app.state.client = client
         app.state.embedder = embedder
@@ -76,8 +76,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     log.info("knowledge.shutdown")
 
-
-from shared.middleware.trace_id import TraceIdMiddleware
 
 app = FastAPI(
     title="KRAKEN Knowledge",

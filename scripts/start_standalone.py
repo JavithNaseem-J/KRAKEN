@@ -34,23 +34,20 @@ os.environ["APPROVAL_URL"] = os.getenv("APPROVAL_URL", "http://127.0.0.1:8004")
 os.environ["MEMORY_URL"] = os.getenv("MEMORY_URL", "http://127.0.0.1:8005")
 os.environ["AUDIT_URL"] = os.getenv("AUDIT_URL", "http://127.0.0.1:8006")
 os.environ["APPROVAL_BASE_URL"] = os.getenv("APPROVAL_BASE_URL", "http://127.0.0.1:8004")
-os.environ["HITL_SERVICE_TOKEN"] = os.getenv(
-    "HITL_SERVICE_TOKEN", "4f8a9c3e2b1d0e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f"
-)
 
 # Set single-container environment flag
 os.environ["ENVIRONMENT"] = os.getenv("ENVIRONMENT", "dev")
 
-import uvicorn
+import uvicorn  # noqa: E402
 
 # Import all FastAPI apps in a single Python process to share module memory space (~120MB total RSS)
-from services.action.main import app as action_app
-from services.approval.main import app as approval_app
-from services.audit.main import app as audit_app
-from services.gateway.main import app as gateway_app
-from services.knowledge.main import app as knowledge_app
-from services.memory.main import app as memory_app
-from services.orchestrator.main import app as orchestrator_app
+from services.action.main import app as action_app  # noqa: E402
+from services.approval.main import app as approval_app  # noqa: E402
+from services.audit.main import app as audit_app  # noqa: E402
+from services.gateway.main import app as gateway_app  # noqa: E402
+from services.knowledge.main import app as knowledge_app  # noqa: E402
+from services.memory.main import app as memory_app  # noqa: E402
+from services.orchestrator.main import app as orchestrator_app  # noqa: E402
 
 
 async def serve_service(name: str, server: uvicorn.Server) -> None:

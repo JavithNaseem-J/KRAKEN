@@ -9,10 +9,9 @@ All microservices call this in their lifespan to get consistent structured logs
 with timestamp, log level, service name, and caller info.
 """
 
-from __future__ import annotations
-
 import logging
 import sys
+from typing import Any
 
 import structlog
 

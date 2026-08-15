@@ -7,9 +7,10 @@ across golden IT support queries against the Knowledge microservice.
 
 from __future__ import annotations
 
-import pytest
-import httpx
 from typing import Any
+
+import httpx
+import pytest
 
 KNOWLEDGE_URL = "http://localhost:8002/retrieve"
 
@@ -65,6 +66,7 @@ def calculate_faithfulness(chunks: list[dict[str, Any]]) -> float:
     return round(avg_score, 4)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_rag_precision_and_faithfulness():
     """Verify RAG retrieval precision and grounding scores exceed enterprise thresholds."""

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any
 
@@ -24,9 +25,6 @@ def create_async_qdrant_client() -> AsyncQdrantClient:
         return AsyncQdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
     log.info("qdrant.in_memory_client")
     return AsyncQdrantClient(location=":memory:")
-
-
-import time
 
 
 class SemanticCache:
@@ -60,9 +58,21 @@ class SemanticCache:
             if not await self._client.collection_exists(SEMANTIC_CACHE_COLLECTION):
                 await self._client.create_collection(
                     collection_name=SEMANTIC_CACHE_COLLECTION,
-                    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
+                    vectors_config=VectorParams(size=settings.embedding_dim, distance=Distance.COSINE),
                 )
-                log.info("semantic_cache.collection_created", collection=SEMANTIC_CACHE_COLLECTION)
+                log.info("semantic_cache.collection_created", collection=SEMANTIC_CACHE_COLLECTION, size=settings.embedding_dim)
+            else:
+                info = await self._client.get_collection(collection_name=SEMANTIC_CACHE_COLLECTION)
+                vectors = info.config.params.vectors
+                existing_size = getattr(vectors, "size", None)
+                if isinstance(vectors, dict):
+                    existing_size = vectors.get("size")
+                if existing_size and existing_size != settings.embedding_dim:
+                    log.error(
+                        "semantic_cache.dimension_mismatch",
+                        existing_dim=existing_size,
+                        configured_dim=settings.embedding_dim,
+                    )
         except Exception as exc:
             log.warning("semantic_cache.init_failed", error=str(exc))
 

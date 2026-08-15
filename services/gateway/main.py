@@ -10,9 +10,10 @@ import httpx
 import structlog
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from shared.config import get_settings
+from shared.cors import cors_middleware_kwargs
 from shared.http_client import create_async_http_client, service_headers
 from shared.logging import configure_logging
 from shared.middleware.trace_id import TraceIdMiddleware
@@ -76,28 +77,24 @@ app.add_middleware(PromptGuardMiddleware)
 # ── CORS (React frontend origins) ─────────────────────────────────────────────
 # Starlette runs middleware in reverse add order, so CORS is added LAST to run
 # FIRST — preflight OPTIONS requests must be answered before auth rejects them.
-allowed_cors_origins = [
-    origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()
-]
-
-if "*" in allowed_cors_origins:
-    cors_kwargs = {
-        "allow_origins": ["*"],
-        "allow_credentials": False,
-    }
-else:
-    cors_kwargs = {
-        "allow_origins": allowed_cors_origins,
-        "allow_origin_regex": r"https://.*\.onrender\.com|http://localhost:.*",
-        "allow_credentials": True,
-    }
-
 app.add_middleware(
     CORSMiddleware,
-    **cors_kwargs,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_middleware_kwargs(),
 )
+
+
+@app.get("/metrics", tags=["ops"])
+async def metrics() -> PlainTextResponse:
+    """Prometheus metrics endpoint for gateway service."""
+    content = (
+        "# HELP kraken_service_up Liveness indicator (1 = healthy)\n"
+        "# TYPE kraken_service_up gauge\n"
+        'kraken_service_up{service="gateway"} 1\n'
+        "# HELP kraken_requests_total Total HTTP requests processed\n"
+        "# TYPE kraken_requests_total counter\n"
+        'kraken_requests_total{service="gateway"} 1\n'
+    )
+    return PlainTextResponse(content=content)
 
 
 # ── Dependency: Request Body Size Limiter ─────────────────────────────────────

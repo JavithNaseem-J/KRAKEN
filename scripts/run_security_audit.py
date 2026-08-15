@@ -66,21 +66,21 @@ def check_secrets_and_injection_defenses() -> tuple[int, list[str]]:
 
 
 def main() -> int:
-    print(f"\n========================================================")
-    print(f"  AKEA Automated SAST & Security Audit")
-    print(f"========================================================")
+    print("\n========================================================")
+    print("  AKEA Automated SAST & Security Audit")
+    print("========================================================")
 
     count, violations = check_secrets_and_injection_defenses()
 
     if count == 0:
         print("[PASS] Security Audit passed: Zero hardcoded secrets, prompt injection guardrails active, path traversal sandboxed.")
-        print(f"========================================================\n")
+        print("========================================================\n")
         return 0
     else:
         print(f"[FAIL] Security Audit found {count} violation(s):")
         for v in violations:
             print(f"  - {v}")
-        print(f"========================================================\n")
+        print("========================================================\n")
         return 1
 
 

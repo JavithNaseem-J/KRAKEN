@@ -8,7 +8,6 @@ is used rather than creating a second standalone client and thread pool.
 
 import asyncio
 import textwrap
-from typing import Any
 
 import structlog
 

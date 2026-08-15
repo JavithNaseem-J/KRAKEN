@@ -277,24 +277,29 @@ class KnowledgeRetriever:
                 log.error("retriever.unfiltered_query_error", error=str(exc2))
                 hits = []
 
-        # If explicit ticket IDs (e.g. TCK-1001) are in query, scroll to guarantee candidate inclusion
+        # If explicit ticket IDs (e.g. TCK-1001) are in query, scroll using payload filter to avoid unneeded points
         ticket_ids_in_query = TICKET_ID_REGEX.findall(request.query)
         if ticket_ids_in_query:
             try:
+                ticket_filter = Filter(
+                    must=[
+                        FieldCondition(
+                            key="metadata.ticket_id",
+                            match=MatchAny(any=ticket_ids_in_query),
+                        )
+                    ]
+                )
                 scroll_res = await self._client.scroll(
                     collection_name=self.collection_name,
-                    limit=100,
+                    scroll_filter=ticket_filter,
+                    limit=50,
                     with_payload=True,
                 )
                 scrolled_points = scroll_res[0] if isinstance(scroll_res, tuple) else getattr(scroll_res, "points", [])
                 existing_ids = {h.id for h in hits}
 
                 for p in scrolled_points:
-                    if p.id in existing_ids:
-                        continue
-                    p_content = (p.payload or {}).get("content", "").lower()
-                    p_doc_id = str((p.payload or {}).get("metadata", {}).get("ticket_id") or "").lower()
-                    if any(t.lower() in p_content or t.lower() == p_doc_id for t in ticket_ids_in_query):
+                    if p.id not in existing_ids:
                         hits.insert(0, p)
                         existing_ids.add(p.id)
             except Exception as scroll_exc:

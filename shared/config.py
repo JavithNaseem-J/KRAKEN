@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_base_url: str = ""
     embedding_device: str = "cpu"
+    embedding_dim: int = 0
     retrieval_top_k: int = 5
 
     # ── Databases ────────────────────────────────────────────────────────────
@@ -76,6 +77,12 @@ class Settings(BaseSettings):
                 values["embedding_api_key"] = (
                     os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY") or llm_key.strip()
                 )
+            if not values.get("embedding_dim"):
+                model_name = str(values.get("embedding_model", "text-embedding-3-small")).lower()
+                if "3-small" in model_name or "ada" in model_name:
+                    values["embedding_dim"] = 1536
+                else:
+                    values["embedding_dim"] = 384
         return values
 
     @field_validator("postgres_url")
@@ -115,7 +122,7 @@ class Settings(BaseSettings):
     approval_base_url: str = "http://localhost:8004"
     # Shared secret the approval service sends as X-Service-Token header
     # on every /approval-callback request. Must match in both services.
-    hitl_service_token: str = "4f8a9c3e2b1d0e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f"
+    hitl_service_token: str = "change-me-in-production"
     orchestrator_service_token: str = ""
     approval_service_token: str = ""
     action_service_token: str = ""
@@ -125,8 +132,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> Settings:
-        _DEFAULT = "change-me-in-production"
-        if self.hitl_service_token == _DEFAULT:
+        default_token = "change-me-in-production"
+        if self.hitl_service_token == default_token:
             raise ValueError(
                 "hitl_service_token is still set to the shipped default "
                 "('change-me-in-production'). Set a unique HITL_SERVICE_TOKEN of "
@@ -148,7 +155,7 @@ class Settings(BaseSettings):
             "audit_service_token",
         ]:
             val = getattr(self, name)
-            if val and (val == _DEFAULT or len(val) < 32):
+            if val and (val == default_token or len(val) < 32):
                 raise ValueError(f"{name} is invalid. It must be at least 32 characters long.")
         return self
 
@@ -169,7 +176,7 @@ class Settings(BaseSettings):
         if self.environment == "dev":
             return self
 
-        _LOCAL_HOSTNAMES: frozenset[str] = frozenset(
+        local_hostnames: frozenset[str] = frozenset(
             {
                 "localhost",
                 "127.0.0.1",
@@ -180,7 +187,7 @@ class Settings(BaseSettings):
         )
 
         # All URLs to check — empty string means "not configured", skip.
-        _ALL_FIELDS: dict[str, str] = {
+        all_fields: dict[str, str] = {
             "postgres_url": self.postgres_url,
             "postgres_sync_url": self.postgres_sync_url,
             "redis_url": self.redis_url,
@@ -193,14 +200,14 @@ class Settings(BaseSettings):
         }
 
         offenders: list[str] = []
-        for field_name, url in _ALL_FIELDS.items():
+        for field_name, url in all_fields.items():
             if not url:
                 continue  # Empty = not configured, service runs in degraded mode
             try:
                 hostname = urlparse(url).hostname or ""
             except Exception:  # noqa: BLE001
                 hostname = ""
-            if hostname in _LOCAL_HOSTNAMES:
+            if hostname in local_hostnames:
                 offenders.append(f"  {field_name} = {url!r}  (host: {hostname!r})")
 
         if offenders:

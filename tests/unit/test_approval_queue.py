@@ -32,6 +32,8 @@ async def queue() -> ApprovalQueue:
     q = ApprovalQueue.__new__(ApprovalQueue)
     q._redis = fakeredis.FakeRedis(decode_responses=True)
     q._timeout = 900
+    q._in_memory_map = {}
+    q._in_memory_csrf = {}
     return q
 
 

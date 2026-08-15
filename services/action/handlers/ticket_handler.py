@@ -323,6 +323,21 @@ def execute_close(ticket_id: str, reason: str, evidence: str) -> dict[str, Any]:
     )
 
 
+def _build_ticket_payload(
+    new_id: str, cat_str: str, desc_str: str, user_str: str, valid_prio: str
+) -> dict[str, Any]:
+    """Build standardized ticket payload dict."""
+    return {
+        "id": new_id,
+        "title": f"{cat_str}: {desc_str[:40]}...",
+        "user": user_str,
+        "category": cat_str,
+        "priority": valid_prio,
+        "description": desc_str,
+        "status": "open",
+    }
+
+
 def execute_create_ticket(
     user_name: str,
     category: str,
@@ -346,15 +361,7 @@ def execute_create_ticket(
                 row = cur.fetchone()
                 max_num = row[0] if (row and row[0] is not None) else 13
                 new_id = f"TK-{max_num + 1:03d}"
-                payload = {
-                    "id": new_id,
-                    "title": f"{cat_str}: {desc_str[:40]}...",
-                    "user": user_str,
-                    "category": cat_str,
-                    "priority": valid_prio,
-                    "description": desc_str,
-                    "status": "open",
-                }
+                payload = _build_ticket_payload(new_id, cat_str, desc_str, user_str, valid_prio)
                 cur.execute(
                     "INSERT INTO tickets (id, title, status, priority, payload) VALUES (%s, %s, %s, %s, %s);",
                     (new_id, payload["title"], "open", valid_prio, json.dumps(payload)),
@@ -383,15 +390,7 @@ def execute_create_ticket(
                 nums.append(int(m.group(0)))
         next_num = (max(nums) + 1) if nums else 14
         new_id = f"TK-{next_num:03d}"
-        new_ticket = {
-            "id": new_id,
-            "title": f"{cat_str}: {desc_str[:40]}...",
-            "user": user_str,
-            "category": cat_str,
-            "priority": valid_prio,
-            "description": desc_str,
-            "status": "open",
-        }
+        new_ticket = _build_ticket_payload(new_id, cat_str, desc_str, user_str, valid_prio)
         tickets.append(new_ticket)
         _save_tickets(tickets)
 

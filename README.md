@@ -8,6 +8,15 @@ For a detailed topology and sequence diagrams of the HITL workflow, see the [Sys
 
 ---
 
+## 🌟 Key Architecture & Security Features
+
+- **Microservice Architecture**: 7 decoupled microservices communicating asynchronously over HTTP with timing-attack safe service tokens.
+- **LangGraph State Machine**: ReAct agent orchestrator with state persistence, checkpointer recovery, and concurrency limits.
+- **Human-in-the-Loop (HITL) Security**: Automated risk-classification that pauses CRITICAL actions for human review via CSRF-protected Web UI.
+- **Append-Only Cryptographic Audit Trail**: Every executed action is signed into a SHA-256 hash-chain stored in PostgreSQL with keyset-paginated verification.
+- **Qdrant Vector RAG**: Hybrid search combining dense embeddings (BAAI/bge-small-en), keyword frequency RRF fusion, and payload-filtered ticket isolation.
+- **Production Observability**: OpenTelemetry tracing, Prometheus `/metrics` endpoints, and Langfuse LLM monitoring.
+
 ## Prerequisites
 
 - **Python 3.12+**

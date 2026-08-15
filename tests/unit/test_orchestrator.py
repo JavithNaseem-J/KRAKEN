@@ -170,5 +170,17 @@ class TestOrchestratorAPI:
         )
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_prune_stale_checkpoints_runs_cleanly(self) -> None:
+        from services.orchestrator.main import prune_stale_checkpoints
+
+        mock_pool = MagicMock()
+        mock_cur = MagicMock()
+        mock_cur.rowcount = 5
+        mock_pool.connection.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = mock_cur
+
+        counts = prune_stale_checkpoints(mock_pool)
+        assert "checkpoints" in counts
+        assert "checkpoint_writes" in counts
+
 
 
