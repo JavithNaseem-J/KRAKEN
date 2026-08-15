@@ -396,6 +396,64 @@ async def _fetch_session_messages(
     return []
 
 
+
+async def _get_graph(session_id: str) -> tuple[Any, dict]:
+    """
+    Return the compiled graph and its LangGraph config for a given session_id.
+
+    If the Postgres async checkpointer connection has been dropped (Supabase idle
+    timeout / PgBouncer reset), rebuild the graph with MemorySaver so requests
+    always succeed rather than crashing with psycopg.OperationalError.
+    """
+    graph = app.state.agent_graph
+    config = _graph_config(session_id)
+
+    # Quick liveness probe: try aget_state and catch a dead connection.
+    try:
+        await graph.aget_state(config)
+        return graph, config
+    except Exception as exc:
+        err_str = str(exc).lower()
+        is_conn_error = any(
+            kw in err_str
+            for kw in ("connection is closed", "connection closed", "server closed", "consuming input failed")
+        )
+        if not is_conn_error:
+            # Non-connection error — let the caller deal with it.
+            raise
+
+    # ── Connection is dead: rebuild graph with MemorySaver fallback ───────────
+    log.warning("orchestrator.checkpointer_reconnect", session_id=session_id)
+    try:
+        # Try to teardown the old saver context cleanly
+        old_saver_cm = getattr(app.state, "saver_cm", None)
+        if old_saver_cm is not None:
+            with contextlib.suppress(Exception):
+                await old_saver_cm.__aexit__(None, None, None)
+            app.state.saver_cm = None
+
+        # Attempt reconnection
+        if AsyncPostgresSaver and settings.postgres_sync_url:
+            new_saver_cm = AsyncPostgresSaver.from_conn_string(settings.postgres_sync_url)
+            new_saver = await new_saver_cm.__aenter__()
+            app.state.saver_cm = new_saver_cm
+            app.state.agent_graph = await build_graph_async(new_saver)
+            log.info("orchestrator.checkpointer_reconnected")
+        else:
+            raise RuntimeError("No postgres_sync_url configured for reconnect")
+    except Exception as reconnect_exc:
+        log.warning(
+            "orchestrator.checkpointer_reconnect_failed_fallback_memory",
+            error=str(reconnect_exc),
+        )
+        app.state.saver_cm = None
+        app.state.agent_graph = await build_graph_async(None)
+
+    graph = app.state.agent_graph
+    config = _graph_config(session_id)
+    return graph, config
+
+
 # ── /run ──────────────────────────────────────────────────────────────────────
 @app.post("/run", tags=["agent"])
 async def run(body: QueryRequest) -> Any:
@@ -405,8 +463,13 @@ async def run(body: QueryRequest) -> Any:
     """
     log.info("orchestrator.run", session_id=body.session_id, user_id=body.user_id)
 
-    graph = app.state.agent_graph
-    config = _graph_config(body.session_id)
+    # _get_graph() returns a healthy (graph, config) pair — auto-reconnects if
+    # the Postgres async connection was dropped by Supabase's idle timeout.
+    try:
+        graph, config = await _get_graph(body.session_id)
+    except Exception as exc:
+        log.error("orchestrator.graph_init_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # ── Check if session is already completed or currently paused ─────────────
     snapshot = await graph.aget_state(config)
@@ -594,8 +657,18 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
     Each event carries: {node, status, elapsed_ms} JSON.
     A ':ping' comment is sent every 15 s to keep Render free-tier connections alive.
     """
-    graph = app.state.agent_graph
-    config = _graph_config(body.session_id)
+    # _get_graph() returns a healthy (graph, config) pair — auto-reconnects if
+    # the Postgres async connection was dropped by Supabase's idle timeout.
+    try:
+        graph, config = await _get_graph(body.session_id)
+    except Exception as exc:
+        log.error("orchestrator.stream_graph_init_failed", error=str(exc))
+        # Return an SSE error event rather than a hard 500
+        async def _err_gen() -> AsyncGenerator[str, None]:
+            import json
+            yield f"data: {json.dumps({'node': 'error', 'status': 'error', 'message': str(exc)})}\n\n"
+        return StreamingResponse(_err_gen(), media_type="text/event-stream",
+                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     # ── If session is stuck in a HITL interrupt, auto-reject it first ─────────
     # so the new message starts a fresh graph run on this thread.
