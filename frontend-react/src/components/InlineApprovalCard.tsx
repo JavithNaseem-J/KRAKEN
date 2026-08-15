@@ -55,21 +55,36 @@ export function InlineApprovalCard({
     }
 
     let cancelled = false;
-    fetchApprovalDetails(approvalId)
-      .then((d) => {
-        if (!cancelled) setDetails(d);
-      })
-      .catch((e: Error) => {
-        if (!cancelled) {
-          const msg = e.message.toLowerCase();
-          if (msg.includes('404') || msg.includes('not found')) {
-            setIsExpired(true);
-            onExpired?.(approvalId);
+    let attempts = 0;
+
+    const load = async () => {
+      while (attempts < 3 && !cancelled) {
+        try {
+          attempts++;
+          const d = await fetchApprovalDetails(approvalId);
+          if (!cancelled) {
+            setDetails(d);
+            setError(null);
+            return;
+          }
+        } catch (e: unknown) {
+          if (cancelled) return;
+          const msg = e instanceof Error ? e.message.toLowerCase() : '';
+          if (attempts >= 3) {
+            if (msg.includes('404') || msg.includes('not found')) {
+              setIsExpired(true);
+              onExpired?.(approvalId);
+            } else {
+              setError(e instanceof Error ? e.message : 'Error fetching approval details');
+            }
           } else {
-            setError(e.message);
+            await new Promise((r) => setTimeout(r, 1000));
           }
         }
-      });
+      }
+    };
+
+    void load();
 
     return () => {
       cancelled = true;

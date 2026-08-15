@@ -473,11 +473,8 @@ async def run(body: QueryRequest) -> Any:
 
     # ── Check if session is already completed or currently paused ─────────────
     snapshot = await graph.aget_state(config)
-    if not body.message or body.message.strip().lower() in (
-        "",
-        "check status",
-        "check approval status",
-    ):
+    clean_msg = body.message.strip().lower() if body.message else ""
+    if not clean_msg or clean_msg in ("", ".", "check status", "check approval status"):
         if snapshot.values and "final_answer" in snapshot.values and not snapshot.next:
             log.info("orchestrator.status_check_completed", session_id=body.session_id)
             return _build_response(body.session_id, snapshot.values)
@@ -491,10 +488,8 @@ async def run(body: QueryRequest) -> Any:
                 "message": "A CRITICAL triage action requires human approval. Check the approval service.",
             }
 
-    # ── If session is stuck in a HITL interrupt, auto-reject it so the new ────
-    # message can be processed as a fresh graph invocation on this thread.
-    # Without this, LangGraph ignores `initial_state` and re-returns the same
-    # interrupted state for every subsequent message in the same session.
+    # ── If session is stuck in a HITL interrupt, update state directly to clear 
+    # the interrupt without invoking responder_node on the stale query state.
     if snapshot.next:
         log.info(
             "orchestrator.clearing_stale_hitl_interrupt",
@@ -502,7 +497,11 @@ async def run(body: QueryRequest) -> Any:
             reason="new_message_on_interrupted_session",
         )
         try:
-            await graph.ainvoke(Command(resume={"decision": "reject"}), config)
+            await graph.aupdate_state(
+                config,
+                {"approval_status": "rejected"},
+                as_node="executor",
+            )
         except Exception as exc:
             log.warning("orchestrator.stale_hitl_clear_failed", error=str(exc))
 
@@ -670,8 +669,8 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
         return StreamingResponse(_err_gen(), media_type="text/event-stream",
                                   headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    # ── If session is stuck in a HITL interrupt, auto-reject it first ─────────
-    # so the new message starts a fresh graph run on this thread.
+    # ── If session is stuck in a HITL interrupt, update state directly to clear 
+    # the interrupt without invoking responder_node on the stale query state.
     try:
         snapshot = await graph.aget_state(config)
         if snapshot.next:
@@ -679,7 +678,11 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                 "orchestrator.stream_clearing_stale_hitl_interrupt",
                 session_id=body.session_id,
             )
-            await graph.ainvoke(Command(resume={"decision": "reject"}), config)
+            await graph.aupdate_state(
+                config,
+                {"approval_status": "rejected"},
+                as_node="executor",
+            )
     except Exception as exc:
         log.warning("orchestrator.stream_stale_hitl_clear_failed", error=str(exc))
 

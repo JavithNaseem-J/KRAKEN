@@ -96,12 +96,11 @@ export function ChatMessage({
       {/* Bubble Container */}
       <div className={`group min-w-0 max-w-[80%] ${isUser ? 'text-right' : ''}`}>
         <div
-          className={`relative rounded-2xl px-4 py-3 text-xs md:text-sm leading-relaxed cursor-pointer ${
+          className={`relative rounded-2xl px-4 py-3 text-xs md:text-sm leading-relaxed ${
             isUser
               ? 'bg-neutral-800 text-white rounded-tr-none border border-white/10'
-              : 'bg-black/60 backdrop-blur-md text-neutral-200 rounded-tl-none border border-neutral-800 hover:border-purple-500/40 transition-colors'
+              : 'bg-black/60 backdrop-blur-md text-neutral-200 rounded-tl-none border border-neutral-800 transition-colors'
           }`}
-          onClick={() => !isUser && onInspectTelemetry && onInspectTelemetry(message)}
         >
           <div className="absolute top-2 right-2">
             <CopyButton text={message.content} />

@@ -127,8 +127,18 @@ async def decider_node(state: GraphState) -> dict:
             ActionDecision(selected_action=action_name, action_payload=payload)
         ]
 
-        verified_actions = []
-        highest_risk = "SAFE"
+        # Code-level deterministic safety guard for status queries:
+        # Queries asking for ticket status (e.g., "What is the status of ticket T-1001?") are READ-ONLY
+        # and MUST NOT trigger HITL escalation.
+        user_msg_lower = user_message.lower()
+        is_status_query = any(
+            phrase in user_msg_lower
+            for phrase in ("status of", "ticket status", "check status", "what is the status")
+        )
+        if is_status_query and action_name in ("escalate", "request_info", "close"):
+            log.info("decider.override_status_query_to_auto_respond", original_action=action_name)
+            action_name = "auto_respond"
+            actions_to_process = [ActionDecision(selected_action="auto_respond", action_payload={})]
 
         for act in actions_to_process:
             if isinstance(act, ActionDecision):
