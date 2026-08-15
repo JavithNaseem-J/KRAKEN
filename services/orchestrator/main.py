@@ -617,9 +617,20 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
         start = time.monotonic()
         last_ping = start
 
+        # Fetch session history so the graph has conversation context
+        http_client: httpx.AsyncClient | None = getattr(app.state, "http", None)
+        session_messages = await _fetch_session_messages(body.session_id, client=http_client)
+
+        initial_state = {
+            "session_id": body.session_id,
+            "user_id": body.user_id,
+            "user_message": body.message,   # ← must match GraphState key
+            "messages": session_messages,
+        }
+
         try:
             async for event in graph.astream_events(  # type: ignore[attr-defined]
-                {"message": body.message, "user_id": body.user_id, "session_id": body.session_id},
+                initial_state,
                 config=config,
                 version="v2",
             ):
