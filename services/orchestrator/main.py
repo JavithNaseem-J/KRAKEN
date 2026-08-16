@@ -727,18 +727,26 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                     yield f"data: {payload}\n\n"
                 elif kind == "on_chain_end":
                     output = event.get("data", {}).get("output") or {}
-                    # If final node, include full response
                     extra = {}
-                    if "final_answer" in output:
-                        snapshot = await graph.aget_state(config)
-                        response = _build_response(body.session_id, snapshot.values)
-                        extra = {"response": response.model_dump()}
+                    if (
+                        name == "responder_node"
+                        or "final_answer" in output
+                        or (isinstance(output, dict) and "final_answer" in output.get(name, {}))
+                    ):
+                        try:
+                            snapshot = await graph.aget_state(config)
+                            if snapshot.values and "final_answer" in snapshot.values:
+                                response = _build_response(body.session_id, snapshot.values)
+                                extra = {"response": response.model_dump()}
+                        except Exception as snapshot_exc:
+                            log.warning("orchestrator.stream_snapshot_failed", error=str(snapshot_exc))
                     payload = json.dumps(
                         {"node": name, "status": "end", "elapsed_ms": round((now - start) * 1000), **extra}
                     )
                     yield f"data: {payload}\n\n"
 
             snapshot = await graph.aget_state(config)
+            extra_done = {}
             if snapshot.next:
                 interrupt_val = _extract_interrupt(snapshot)
                 approval_id = interrupt_val.get("approval_id", str(uuid.uuid4()))
@@ -779,8 +787,16 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                     },
                 })
                 yield f"data: {hitl_payload}\n\n"
+            elif snapshot.values and "final_answer" in snapshot.values:
+                response = _build_response(body.session_id, snapshot.values)
+                extra_done = {"response": response.model_dump()}
 
-            done_payload = json.dumps({"node": "done", "status": "end", "elapsed_ms": round((time.monotonic() - start) * 1000)})
+            done_payload = json.dumps({
+                "node": "done",
+                "status": "end",
+                "elapsed_ms": round((time.monotonic() - start) * 1000),
+                **extra_done,
+            })
             yield f"data: {done_payload}\n\n"
 
         except Exception as exc:

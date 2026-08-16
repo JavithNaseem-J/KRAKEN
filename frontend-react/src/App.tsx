@@ -244,19 +244,24 @@ export default function App() {
         // SSE ended without a response payload — fall back to poll
         const res = await runAgentQuery('', sessionId, activeRole.api_key);
         if (isPendingApproval(res)) {
-          if (res.approval_id) {
-            appendMessage(sessionId, {
-              id: crypto.randomUUID(),
-              role: 'assistant',
-              content: res.message,
-              timestamp: new Date().toISOString(),
-              approval_id: res.approval_id,
-              approval_state: 'pending',
-            });
-            setPendingSessionId(sessionId);
-          }
+          appendMessage(sessionId, {
+            id: crypto.randomUUID(),
+            role: 'assistant',
+            content: res.message || 'A CRITICAL triage action requires human approval. Check the approval service.',
+            timestamp: new Date().toISOString(),
+            approval_id: res.approval_id || undefined,
+            approval_state: 'pending',
+          });
+          if (res.approval_id) setPendingSessionId(sessionId);
         } else if (res && res.answer) {
           appendMessage(sessionId, queryResponseToMessage(res));
+        } else {
+          appendMessage(sessionId, {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: 'The agent completed the analysis but produced no response. Please try your request again.',
+            timestamp: new Date().toISOString(),
+          });
         }
       }
     } catch (e: unknown) {
