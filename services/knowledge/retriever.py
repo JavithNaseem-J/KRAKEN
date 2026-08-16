@@ -177,7 +177,9 @@ def _heuristic_rerank(
             for t_match in ticket_matches:
                 t_lower = t_match.lower()
                 doc_t_id = str(payload.get("metadata", {}).get("ticket_id") or "").lower()
-                if t_lower in content_lower or t_lower == doc_t_id:
+                t_num = re.search(r"\d+", t_lower)
+                num_str = t_num.group(0) if t_num else ""
+                if t_lower in content_lower or t_lower == doc_t_id or (num_str and num_str in doc_t_id):
                     boost += 1.50
 
         if re.search(r"SLA|VPN|IT", query, re.IGNORECASE) and re.search(
@@ -277,15 +279,23 @@ class KnowledgeRetriever:
                 log.error("retriever.unfiltered_query_error", error=str(exc2))
                 hits = []
 
-        # If explicit ticket IDs (e.g. TCK-1001) are in query, scroll using payload filter to avoid unneeded points
+        # If explicit ticket IDs (e.g. TCK-1001 or T-1001) are in query, expand variants (e.g. TCK-1001, T-1001)
         ticket_ids_in_query = TICKET_ID_REGEX.findall(request.query)
         if ticket_ids_in_query:
             try:
+                expanded_ids = set(ticket_ids_in_query)
+                for tid in ticket_ids_in_query:
+                    m = re.search(r"(\d+)", tid)
+                    if m:
+                        num = m.group(1)
+                        expanded_ids.update([f"TCK-{num}", f"T-{num}", f"TK-{num}", f"TCK{num}", f"T{num}"])
+                query_ids = list(expanded_ids)
+
                 ticket_filter = Filter(
                     must=[
                         FieldCondition(
                             key="metadata.ticket_id",
-                            match=MatchAny(any=ticket_ids_in_query),
+                            match=MatchAny(any=query_ids),
                         )
                     ]
                 )
