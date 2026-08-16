@@ -144,22 +144,22 @@ export async function submitApprovalDecision(
 /** Shape of each SSE event streamed from /v1/run/stream */
 export interface AgentStreamEvent {
   node: string;
-  status: 'start' | 'end' | 'error';
+  status: 'start' | 'end' | 'error' | 'pending_approval';
   elapsed_ms?: number;
-  response?: QueryResponse;
+  response?: RunResponse;
   message?: string;
 }
 
 /**
  * Stream agent query via SSE. Calls onEvent for each node step.
- * Returns the final QueryResponse (from the done event payload, or undefined).
+ * Returns the final RunResponse (from the done or pending_approval event payload, or undefined).
  */
 export async function streamAgentQuery(
   message: string,
   sessionId: string,
   apiKey: string,
   onEvent: (event: AgentStreamEvent) => void,
-): Promise<QueryResponse | undefined> {
+): Promise<RunResponse | undefined> {
   const response = await fetch(`${GATEWAY_URL}/v1/run/stream`, {
     method: 'POST',
     headers: {
@@ -176,7 +176,7 @@ export async function streamAgentQuery(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  let finalResponse: QueryResponse | undefined;
+  let finalResponse: RunResponse | undefined;
 
   while (true) {
     const { done, value } = await reader.read();

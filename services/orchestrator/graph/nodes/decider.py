@@ -128,15 +128,20 @@ async def decider_node(state: GraphState) -> dict:
         ]
 
         # Code-level deterministic safety guard for ticket write actions:
-        # Actions like 'escalate', 'request_info', or 'close' REQUIRE an explicit ticket ID
-        # (e.g. T-1001, TCK-1001). Any prompt without a ticket ID (including general policy/SLA questions)
-        # MUST NOT trigger HITL escalation.
+        # 1. Status queries (e.g. "What is the status of ticket T-1001?") are READ-ONLY informational inquiries and MUST NOT trigger HITL escalation.
+        # 2. Write actions (escalate, request_info, close) REQUIRE an explicit ticket ID (e.g. T-1001, TCK-1001).
         import re
+        user_msg_lower = user_message.lower()
+        is_status_query = any(k in user_msg_lower for k in ("status of", "ticket status", "check status", "what is the status"))
         has_ticket_id = bool(re.search(r"\b(TCK|T|TK|INC|SR)[-_]?\d+\b", user_message, re.IGNORECASE))
-        if action_name in ("escalate", "request_info", "close") and not has_ticket_id:
-            log.info("decider.override_action_missing_ticket_id", original_action=action_name, query=user_message[:50])
+
+        if (is_status_query or not has_ticket_id) and action_name in ("escalate", "request_info", "close"):
+            log.info("decider.override_action_to_auto_respond", original_action=action_name, is_status_query=is_status_query, query=user_message[:50])
             action_name = "auto_respond"
             actions_to_process = [ActionDecision(selected_action="auto_respond", action_payload={})]
+
+        verified_actions: list[dict[str, Any]] = []
+        highest_risk: str = "SAFE"
 
         for act in actions_to_process:
             if isinstance(act, ActionDecision):
