@@ -197,6 +197,16 @@ export async function streamAgentQuery(
     }
   }
 
+  if (buffer.trim().startsWith('data: ')) {
+    try {
+      const event: AgentStreamEvent = JSON.parse(buffer.trim().slice(6));
+      onEvent(event);
+      if (event.response) finalResponse = event.response;
+    } catch {
+      // ignore malformed trailing line
+    }
+  }
+
   return finalResponse;
 }
 

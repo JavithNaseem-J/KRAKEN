@@ -553,6 +553,15 @@ async def run(body: QueryRequest) -> Any:
         "user_id": body.user_id,
         "user_message": body.message,
         "messages": session_messages,
+        "selected_action": None,
+        "selected_actions": None,
+        "action_payload": None,
+        "risk_level": None,
+        "approval_id": None,
+        "approval_status": None,
+        "action_result": None,
+        "evidence": None,
+        "error": None,
     }
 
     if getattr(app.state, "is_shutting_down", False):
@@ -701,6 +710,15 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
             "user_id": body.user_id,
             "user_message": body.message,   # ← must match GraphState key
             "messages": session_messages,
+            "selected_action": None,
+            "selected_actions": None,
+            "action_payload": None,
+            "risk_level": None,
+            "approval_id": None,
+            "approval_status": None,
+            "action_result": None,
+            "evidence": None,
+            "error": None,
         }
 
         try:
