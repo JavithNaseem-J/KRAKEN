@@ -322,7 +322,15 @@ class KnowledgeRetriever:
         reranked_hits = _heuristic_rerank(request.query, rrf_candidates)[: request.top_k]
 
         # Post-filter 1: Ticket Isolation & RBAC Security Clearance
-        t_lowers = [t.lower() for t in ticket_ids_in_query] if ticket_ids_in_query else []
+        t_lowers = []
+        if ticket_ids_in_query:
+            for t in ticket_ids_in_query:
+                t_lowers.append(t.lower())
+                m = re.search(r"(\d+)", t)
+                if m:
+                    num = m.group(1)
+                    t_lowers.extend([f"tck-{num}", f"t-{num}", f"tk-{num}", f"tck{num}", f"t{num}", num])
+
         user_role = (request.user_role or "public").lower().strip()
         sanitized_hits = []
 
