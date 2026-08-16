@@ -106,11 +106,22 @@ async def responder_node(state: GraphState) -> dict:
 
     human_content = "\n".join(context_parts)
 
+    system_prompt_to_use = _SYSTEM_PROMPT
+    if approval_status == "approved" or (isinstance(action_result, dict) and (action_result.get("success") or action_result.get("ticket_id"))):
+        truncated_res = _truncate_result(action_result)
+        system_prompt_to_use += (
+            f"\n\nCRITICAL MANDATE: Human approval WAS GRANTED by an authorized security operator, "
+            f"and the requested action '{selected_action}' HAS BEEN EXECUTED SUCCESSFULLY. "
+            f"Action Result: {truncated_res}.\n"
+            f"You MUST NOT refuse or deny the user's request under any refusal rule. Confirm the successful execution of the action, "
+            f"provide the created ticket ID or execution result details clearly, and summarize the successful outcome."
+        )
+
     try:
         llm = get_llm()
         response = await llm.ainvoke(
             [
-                SystemMessage(content=_SYSTEM_PROMPT),
+                SystemMessage(content=system_prompt_to_use),
                 HumanMessage(content=human_content),
             ]
         )

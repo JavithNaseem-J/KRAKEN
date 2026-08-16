@@ -497,11 +497,11 @@ async def run(body: QueryRequest) -> Any:
             reason="new_message_on_interrupted_session",
         )
         try:
-            await graph.aupdate_state(
+            await graph.ainvoke(
+                Command(resume={"decision": "reject"}),
                 config,
-                {"approval_status": "rejected"},
-                as_node="executor",
             )
+            snapshot = await graph.aget_state(config)
         except Exception as exc:
             log.warning("orchestrator.stale_hitl_clear_failed", error=str(exc))
 
@@ -678,10 +678,9 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                 "orchestrator.stream_clearing_stale_hitl_interrupt",
                 session_id=body.session_id,
             )
-            await graph.aupdate_state(
+            await graph.ainvoke(
+                Command(resume={"decision": "reject"}),
                 config,
-                {"approval_status": "rejected"},
-                as_node="executor",
             )
     except Exception as exc:
         log.warning("orchestrator.stream_stale_hitl_clear_failed", error=str(exc))

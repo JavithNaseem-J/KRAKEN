@@ -305,8 +305,8 @@ export default function App() {
             : m,
         ),
       }));
+      setPendingSessionId(null);
       if (decision === 'reject') {
-        setPendingSessionId(null);
         appendMessage(sessionId, {
           id: crypto.randomUUID(),
           role: 'system',
