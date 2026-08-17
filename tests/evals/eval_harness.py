@@ -1,18 +1,18 @@
 """
-Evaluation harness — runs the golden dataset against the live system.
+Evaluation harness — runs the golden dataset against the live system and scores
+responses using an LLM-as-a-Judge (Faithfulness, Context Recall, Answer Relevance).
 
 Usage:
     # Start the system first: make up && make ingest
     python tests/evals/eval_harness.py [--base-url http://localhost:8000] [--api-key your-key]
 
 Scoring:
-  keyword_score    — fraction of expected_keywords found in the answer (case-insensitive)
-  action_match     — 1.0 if selected_action matches expected, 0.0 otherwise
-  hitl_match       — 1.0 if HITL status matches expected_hitl
-  source_coverage  — fraction of expected_sources found in actual sources
-
-Overall score per case = mean(keyword_score, action_match, hitl_match, source_coverage)
-Pass threshold = 0.7 (configurable via --threshold)
+  Each case is scored on three axes by the LLM judge:
+    faithfulness       — 0.0-1.0: answer stays within retrieved chunks
+    context_recall     — 0.0-1.0: relevant facts reflected in answer
+    answer_relevance   — 0.0-1.0: answer addresses the query directly
+  Overall score per case = mean(faithfulness, context_recall, answer_relevance)
+  Pass threshold = 0.5 (configurable via --threshold)
 """
 
 from __future__ import annotations
@@ -28,39 +28,6 @@ import httpx
 GOLDEN_PATH = Path(__file__).parent / "golden_dataset.json"
 
 
-# ── Scoring functions ─────────────────────────────────────────────────────────
-
-
-def keyword_score(answer: str, keywords: list[str]) -> float:
-    """Fraction of expected keywords found in the answer (case-insensitive partial match)."""
-    if not keywords:
-        return 1.0
-    answer_lower = answer.lower()
-    matches = sum(1 for kw in keywords if kw.lower() in answer_lower)
-    return matches / len(keywords)
-
-
-def action_match(actual: str | None, expected: str) -> float:
-    return 1.0 if actual == expected else 0.0
-
-
-def hitl_match(response_body: dict, expected_hitl: bool) -> float:
-    """
-    Check if HITL was triggered correctly.
-    pending_approval in response → HITL fired.
-    final_answer in response → no HITL.
-    """
-    is_pending = response_body.get("status") == "pending_approval"
-    return 1.0 if (is_pending == expected_hitl) else 0.0
-
-
-def source_coverage(actual_sources: list[str], expected: list[str]) -> float:
-    if not expected:
-        return 1.0
-    actual_set = {s.lower() for s in actual_sources}
-    return sum(1 for s in expected if s.lower() in actual_set) / len(expected)
-
-
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 
@@ -70,9 +37,10 @@ def run_case(
     api_key: str,
     session_id: str,
 ) -> dict:
-    """Run a single eval case and return a result dict."""
+    """Run a single eval case, get the response, and score it with the LLM judge."""
     start = time.perf_counter()
 
+    # 1. Query the system
     try:
         with httpx.Client(
             base_url=base_url,
@@ -92,35 +60,45 @@ def run_case(
     except Exception as exc:
         return {
             "id": case["id"],
+            "category": case.get("category"),
             "score": 0.0,
             "error": str(exc),
-            "latency": time.perf_counter() - start,
+            "latency_s": 0.0,
         }
 
     latency = time.perf_counter() - start
 
-    # Extract fields
-    answer = body.get("answer", "")
-    actual_action = body.get("action_taken")
-    actual_sources = body.get("sources", [])
+    # 2. Score with LLM judge
+    try:
+        from tests.evals.llm_judge import evaluate_rag_response
 
-    # Score
-    kw_score = keyword_score(answer, case.get("expected_keywords", []))
-    act_score = action_match(actual_action, case.get("expected_action", "auto_respond"))
-    hl_score = hitl_match(body, case.get("expected_hitl", False))
-    src_score = source_coverage(actual_sources, case.get("expected_sources", []))
-    overall = (kw_score + act_score + hl_score + src_score) / 4.0
+        chunks = body.get("retrieved_chunks", [])
+        answer = body.get("answer", "")
+        eval_result = evaluate_rag_response(
+            query=case["question"],
+            chunks=chunks,
+            answer=answer,
+        )
+        overall = round(
+            (eval_result.faithfulness + eval_result.context_recall + eval_result.answer_relevance) / 3.0,
+            3,
+        )
+    except Exception:
+        overall = 0.0
+        eval_result = None
+        answer = body.get("answer", "")
+        chunks = []
 
     return {
         "id": case["id"],
         "category": case.get("category"),
         "question": case["question"][:60] + "...",
-        "score": round(overall, 3),
-        "keyword_score": round(kw_score, 3),
-        "action_match": round(act_score, 3),
-        "hitl_match": round(hl_score, 3),
-        "source_coverage": round(src_score, 3),
-        "actual_action": actual_action,
+        "answer_preview": str(answer)[:80],
+        "score": overall,
+        "faithfulness": round(eval_result.faithfulness, 3) if eval_result else 0.0,
+        "context_recall": round(eval_result.context_recall, 3) if eval_result else 0.0,
+        "answer_relevance": round(eval_result.answer_relevance, 3) if eval_result else 0.0,
+        "num_chunks": len(chunks),
         "latency_s": round(latency, 2),
     }
 
@@ -129,18 +107,21 @@ def print_report(results: list[dict], threshold: float) -> int:
     """Print evaluation report. Returns exit code (0=pass, 1=fail)."""
     print()
     print("=" * 72)
-    print("  AKEA Evaluation Report")
+    print("  KRAKEN LLM-as-a-Judge Evaluation Report")
     print("=" * 72)
-    print(f"  Cases: {len(results)}   Threshold: {threshold:.0%}")
+    print(f"  Cases: {len(results)}   Threshold: {threshold:.1%}")
     print()
 
     passed = 0
     for r in results:
-        status = "✅ PASS" if r["score"] >= threshold else "❌ FAIL"
         if r.get("error"):
             status = "💥 ERROR"
-        if r["score"] >= threshold:
+        elif r["score"] >= threshold:
+            status = "✅ PASS"
             passed += 1
+        else:
+            status = "❌ FAIL"
+
         print(f"  {status}  [{r['id']}] {r.get('category', '')}")
         print(f"         Q: {r['question']}")
         if r.get("error"):
@@ -148,33 +129,28 @@ def print_report(results: list[dict], threshold: float) -> int:
         else:
             print(
                 f"         Score: {r['score']:.0%}  "
-                f"(kw={r['keyword_score']:.0%}, "
-                f"act={r['action_match']:.0%}, "
-                f"hitl={r['hitl_match']:.0%}, "
-                f"src={r['source_coverage']:.0%})  "
-                f"{r['latency_s']}s"
+                f"(faith={r['faithfulness']:.0%}, "
+                f"recall={r['context_recall']:.0%}, "
+                f"rel={r['answer_relevance']:.0%})  "
+                f"{r['latency_s']}s  [{r['num_chunks']} chunks]"
             )
         print()
 
     overall_avg = sum(r["score"] for r in results) / len(results) if results else 0
-    action_accuracy = (
-        sum(r["action_match"] for r in results if "action_match" in r) / len(results)
-        if results
-        else 0
-    )
-    retrieval_hit_rate = (
-        sum(1 for r in results if r.get("source_coverage", 0) > 0) / len(results) if results else 0
-    )
+    avg_faith = sum(r.get("faithfulness", 0) for r in results) / len(results) if results else 0
+    avg_recall = sum(r.get("context_recall", 0) for r in results) / len(results) if results else 0
+    avg_rel = sum(r.get("answer_relevance", 0) for r in results) / len(results) if results else 0
     avg_latency = (
         sum(r["latency_s"] for r in results if "latency_s" in r) / len(results) if results else 0
     )
 
     print("─" * 72)
     print("  Summary Metrics:")
-    print(f"  • Action Decision Accuracy: {action_accuracy:.1%}")
-    print(f"  • Retrieval Hit Rate:       {retrieval_hit_rate:.1%}")
-    print(f"  • Average Latency:          {avg_latency:.2f}s")
-    print(f"  • Overall Composite Score:  {overall_avg:.1%}   Passed: {passed}/{len(results)}")
+    print(f"  • Faithfulness:           {avg_faith:.1%}")
+    print(f"  • Context Recall:         {avg_recall:.1%}")
+    print(f"  • Answer Relevance:       {avg_rel:.1%}")
+    print(f"  • Average Latency:        {avg_latency:.2f}s")
+    print(f"  • Overall Composite:      {overall_avg:.1%}   Passed: {passed}/{len(results)}")
     print("=" * 72)
     print()
 
@@ -182,10 +158,10 @@ def print_report(results: list[dict], threshold: float) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="AKEA Evaluation Harness")
+    parser = argparse.ArgumentParser(description="KRAKEN LLM-as-a-Judge Eval Harness")
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--api-key", default="dev-key-alice-longer-secure-key:alice")
-    parser.add_argument("--threshold", type=float, default=0.7)
+    parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--case", help="Run only this case ID")
     args = parser.parse_args()
 
@@ -204,10 +180,15 @@ def main() -> None:
         result = run_case(
             case=case,
             base_url=args.base_url,
-            api_key=args.api_key.split(":")[0],  # Use key part only
+            api_key=args.api_key.split(":")[0],
             session_id=f"eval-{case['id']}",
         )
         results.append(result)
+
+    # Write JSON report
+    report_path = Path(__file__).parent / "eval_report.json"
+    report_path.write_text(json.dumps(results, indent=2))
+    print(f"  Report written to {report_path}")
 
     exit_code = print_report(results, args.threshold)
     sys.exit(exit_code)

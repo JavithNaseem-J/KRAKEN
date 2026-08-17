@@ -1,1 +1,1 @@
--e .[dev,eval]
+-e .[dev]

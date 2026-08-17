@@ -665,15 +665,15 @@ async def export_report(request: Request) -> Response:
             content={"error": "Session has no messages to export"},
         )
 
-    from .report import generate_incident_pdf
+    from .report import generate_incident_html
 
-    pdf_bytes = generate_incident_pdf(payload)
+    html = generate_incident_html(payload)
     session_id = payload.get("session_id", "incident")[:8]
-    filename = f"kraken-incident-{session_id}.pdf"
+    filename = f"kraken-incident-{session_id}.html"
 
     return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
+        content=html.encode("utf-8"),
+        media_type="text/html",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Accel-Buffering": "no",

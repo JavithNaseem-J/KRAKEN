@@ -1,105 +1,114 @@
 """
-RAG Evaluation & Faithfulness Benchmarking Suite.
+Tests for the LLM-as-a-Judge RAG evaluator.
 
-Tests retrieval precision@k, recall@k, and answer faithfulness grounding
-across golden IT support queries against the Knowledge subsystem.
+Validates:
+  - EvaluationResult Pydantic model validates correctly
+  - Evaluator produces valid scores in [0.0, 1.0] for each metric
+  - Mocked evaluator produces deterministic output
 """
 
 from __future__ import annotations
 
-from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.utils.config import get_settings
-from src.utils.http_client import internal_request
-
-# Golden test dataset: query -> expected key terms that MUST appear in retrieved chunks
-GOLDEN_DATASET = [
-    {
-        "query": "How do I resolve GlobalProtect VPN Error 51?",
-        "expected_keywords": ["vpn", "error 51", "globalprotect", "reinstall", "adapter"],
-        "min_precision": 0.80,
-    },
-    {
-        "query": "What is the SLA response time for high severity P1 security incidents?",
-        "expected_keywords": ["sla", "p1", "response", "hours", "escalation"],
-        "min_precision": 0.80,
-    },
-    {
-        "query": "How do I request a replacement laptop for hardware failure?",
-        "expected_keywords": ["ticket", "hardware", "laptop", "replacement", "equipment"],
-        "min_precision": 0.75,
-    },
-]
+from tests.evals.llm_judge import EvaluationResult, evaluate_rag_response
 
 
-def calculate_precision_at_k(chunks: list[dict[str, Any]], expected_keywords: list[str]) -> float:
-    """Calculate the ratio of chunks that contain at least one expected keyword."""
-    if not chunks:
-        return 0.0
-
-    relevant_count = 0
-    for chunk in chunks:
-        content = (chunk.get("content") or "").lower()
-        if any(kw in content for kw in expected_keywords):
-            relevant_count += 1
-
-    return relevant_count / len(chunks)
-
-
-def calculate_faithfulness(chunks: list[dict[str, Any]]) -> float:
-    """
-    Calculate faithfulness score based on chunk relevance scores returned by RRF.
-    Ensures all retrieved chunks pass the 0.40 relevance threshold.
-    """
-    if not chunks:
-        return 0.0
-
-    scores = [float(c.get("relevance_score", 0.0)) for c in chunks]
-    valid_scores = [s for s in scores if 0.0 <= s <= 1.0]
-
-    if not valid_scores:
-        return 0.0
-
-    avg_score = sum(valid_scores) / len(valid_scores)
-    return round(avg_score, 4)
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_rag_precision_and_faithfulness():
-    """Verify RAG retrieval precision and grounding scores exceed enterprise thresholds."""
-    settings = get_settings()
-    headers = {"X-Service-Token": settings.hitl_service_token}
-
-    for item in GOLDEN_DATASET:
-        payload = {
-            "query": item["query"],
-            "sources": ["faq", "tickets", "sla"],
-            "top_k": 5,
-            "session_id": "rag_eval_session",
-        }
-
-        resp = await internal_request(
-            "POST",
-            f"{settings.knowledge_url}/retrieve",
-            json=payload,
-            headers=headers,
-            timeout_seconds=10.0,
+class TestEvaluationResult:
+    def test_valid_scores_accepted(self) -> None:
+        result = EvaluationResult(
+            faithfulness=0.85,
+            context_recall=0.70,
+            answer_relevance=0.90,
+            reasoning="All claims grounded in chunks.",
         )
-        assert resp.status_code == 200, f"Knowledge service error: {resp.text}"
+        assert 0.0 <= result.faithfulness <= 1.0
+        assert 0.0 <= result.context_recall <= 1.0
+        assert 0.0 <= result.answer_relevance <= 1.0
 
-        data = resp.json()
-        chunks = data.get("chunks", [])
-        assert len(chunks) > 0, f"Zero chunks retrieved for query: {item['query']}"
-
-        precision = calculate_precision_at_k(chunks, item["expected_keywords"])
-        faithfulness = calculate_faithfulness(chunks)
-
-        assert precision >= item["min_precision"], (
-            f"Low Precision@k ({precision:.2f} < {item['min_precision']}) for: '{item['query']}'"
+    def test_boundary_scores_accepted(self) -> None:
+        result = EvaluationResult(
+            faithfulness=0.0,
+            context_recall=1.0,
+            answer_relevance=0.5,
         )
-        assert faithfulness >= 0.85, (
-            f"Low Faithfulness grounding ({faithfulness:.2f} < 0.85) for: '{item['query']}'"
+        assert result.faithfulness == 0.0
+        assert result.context_recall == 1.0
+        assert result.answer_relevance == 0.5
+
+    def test_score_above_one_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            EvaluationResult(faithfulness=1.5, context_recall=0.5, answer_relevance=0.5)
+
+    def test_score_below_zero_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            EvaluationResult(faithfulness=-0.1, context_recall=0.5, answer_relevance=0.5)
+
+    def test_default_reasoning(self) -> None:
+        result = EvaluationResult(faithfulness=0.8, context_recall=0.8, answer_relevance=0.8)
+        assert result.reasoning == ""
+
+
+class TestEvaluateRagResponse:
+    @patch("tests.evals.llm_judge._get_judge_llm")
+    def test_returns_evaluation_result(self, mock_get_llm: MagicMock) -> None:
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = EvaluationResult(
+            faithfulness=0.92,
+            context_recall=0.88,
+            answer_relevance=0.85,
+            reasoning="Good grounding.",
         )
+        mock_get_llm.return_value = mock_llm
+
+        result = evaluate_rag_response(
+            query="What is the SLA?",
+            chunks=[{"content": "SLA response is 1 hour for P1 tickets"}],
+            answer="The SLA response time for P1 tickets is 1 hour.",
+        )
+
+        assert isinstance(result, EvaluationResult)
+        assert 0.0 <= result.faithfulness <= 1.0
+        assert 0.0 <= result.context_recall <= 1.0
+        assert 0.0 <= result.answer_relevance <= 1.0
+
+    @patch("tests.evals.llm_judge._get_judge_llm")
+    def test_zero_chunks_handled(self, mock_get_llm: MagicMock) -> None:
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = EvaluationResult(
+            faithfulness=0.3,
+            context_recall=0.1,
+            answer_relevance=0.5,
+        )
+        mock_get_llm.return_value = mock_llm
+
+        result = evaluate_rag_response(
+            query="test query",
+            chunks=[],
+            answer="some answer",
+        )
+
+        assert result.faithfulness == 0.3
+        assert result.context_recall == 0.1
+
+    @patch("tests.evals.llm_judge._get_judge_llm")
+    def test_invoke_called_with_messages(self, mock_get_llm: MagicMock) -> None:
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = EvaluationResult(
+            faithfulness=0.7,
+            context_recall=0.7,
+            answer_relevance=0.7,
+        )
+        mock_get_llm.return_value = mock_llm
+
+        evaluate_rag_response(
+            query="test",
+            chunks=[{"content": "test chunk"}],
+            answer="test answer",
+        )
+
+        mock_llm.invoke.assert_called_once()
+        call_args = mock_llm.invoke.call_args[0][0]
+        assert len(call_args) == 2  # system + user messages

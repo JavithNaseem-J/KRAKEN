@@ -38,6 +38,9 @@ jobs:
       - name: Run integration tests
         run: uv run pytest tests/integration -v -m integration
 
+      - name: Run eval tests
+        run: uv run pytest tests/evals -v
+
   frontend-build:
     runs-on: ubuntu-latest
     steps:

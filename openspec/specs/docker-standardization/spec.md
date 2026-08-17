@@ -4,12 +4,17 @@
 Standardized container builds, compose configuration, and cloud-only environment guardrails.
 
 ## Requirements
+
 ### Requirement: Service Dockerfiles Standardized
-All 6 microservice Dockerfiles MUST use UTF-8 encoding and follow a consistent multi-stage build pattern using `python:3.11-slim`.
+The repository SHALL ship a single application Dockerfile (renamed from `Dockerfile.standalone` to `Dockerfile`) that builds the consolidated KRAKEN app: it MUST use UTF-8 encoding, base on `python:3.12-slim`, install runtime dependencies from the exported `requirements.txt`, copy `src/`, `main.py`, and `data/`, run as a non-root user, define a `HEALTHCHECK` against `/health`, and start the app with `uvicorn src.api.routes:app` honoring the `PORT` environment variable. No Dockerfile SHALL reference the removed `services/` or `shared/` directories.
 
 #### Scenario: Dockerfile build execution
-- **WHEN** any service container is built with `docker build`
-- **THEN** the build succeeds without character encoding warnings or missing dependencies.
+- **WHEN** the application container is built with `docker build`
+- **THEN** the build succeeds without character encoding warnings or missing dependencies, and the resulting image serves `/health` with HTTP 200
+
+#### Scenario: Image contains no legacy service tree
+- **WHEN** the built image filesystem is inspected
+- **THEN** no `services/` or `shared/` directory is present and the entrypoint boots `src.api.routes:app`
 
 ### Requirement: Render deployment specifications include health check probes and appropriate service tiers
 In `render.yaml`, every web service entry SHALL declare a `healthCheckPath: /health` property. Critical services (including `akea-orchestrator` and `akea-approval`) SHALL specify `plan: starter` to prevent cold-start delays during Human-in-the-Loop workflows.
@@ -45,15 +50,15 @@ When `environment` is not `"dev"`, service startup SHALL fail fast with a clear 
 - **THEN** settings validation passes (local endpoints are permitted only in dev)
 
 ### Requirement: Production compose override requires external configuration
-A `docker-compose.prod.yml` override SHALL exist that: provisions no local `postgres` or `redis` containers; requires all database, cache, and service URLs to be supplied via environment variables with no hardcoded defaults (using `${VAR:?message}` semantics so `docker compose up` fails fast when they are absent); and exposes host ports only for the gateway (8000) and approval (8004) services, leaving all other services reachable only via the internal Docker network.
+A `docker-compose.prod.yml` override SHALL exist that: provisions no local `postgres` or `redis` containers; requires all database, cache, and vector-store URLs to be supplied via environment variables with no hardcoded defaults (using `${VAR:?message}` semantics so `docker compose up` fails fast when they are absent); and exposes the host port only for the consolidated application service (8000), with the HITL approval endpoints served through the gateway on that same port.
 
 #### Scenario: Prod stack started without required env vars
 - **WHEN** an operator runs `docker compose -f docker-compose.yml -f docker-compose.prod.yml up` without setting `POSTGRES_URL` (or another required URL)
 - **THEN** compose fails at startup with an error identifying the missing variable, rather than starting with a silent default
 
-#### Scenario: Internal services not host-exposed in prod
+#### Scenario: Only the application port is host-exposed in prod
 - **WHEN** the prod override is applied
-- **THEN** only ports 8000 (gateway) and 8004 (approval) are published to the host; knowledge, memory, action, audit, and orchestrator services have no host port bindings
+- **THEN** only port 8000 (consolidated app) is published to the host, and approval details/decision endpoints are reachable via gateway routes on that port
 
 ### Requirement: Docker Compose services depend on application health checks
 In `docker-compose.yml`, application service dependencies SHALL specify `{ condition: service_healthy }` for upstream application services that define `HEALTHCHECK`.

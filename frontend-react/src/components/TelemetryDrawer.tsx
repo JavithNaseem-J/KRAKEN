@@ -41,7 +41,7 @@ export function TelemetryDrawer({ message, activeRole, onClose }: TelemetryDrawe
             <h3 className="text-sm font-black tracking-wide uppercase text-purple-400 font-mono flex items-center gap-2">
               🛡️ Security & Telemetry
             </h3>
-            <p className="text-[10px] text-neutral-400">RBAC Clearance, Vector Scores & OpenTelemetry Tracing</p>
+            <p className="text-[10px] text-neutral-400">RBAC Clearance, Vector Scores & Execution Tracing</p>
           </div>
           <button
             onClick={onClose}
@@ -105,10 +105,10 @@ export function TelemetryDrawer({ message, activeRole, onClose }: TelemetryDrawe
             )}
           </section>
 
-          {/* OpenTelemetry Trace ID */}
+          {/* Execution Trace ID */}
           <section className="rounded-2xl border border-neutral-800 bg-black/60 p-4">
             <div className="text-[10px] font-black uppercase tracking-wider text-neutral-400 font-mono mb-1">
-              OpenTelemetry Trace ID
+              Execution Trace ID
             </div>
             <p className="break-all font-mono text-[11px] text-purple-300 bg-neutral-900/80 rounded-lg p-2 border border-neutral-800">
               {traceId}

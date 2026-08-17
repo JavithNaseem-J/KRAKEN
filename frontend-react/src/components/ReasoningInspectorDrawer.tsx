@@ -63,7 +63,7 @@ export function ReasoningInspectorDrawer({ message, onClose }: ReasoningInspecto
             <section className="rounded-2xl border border-neutral-800 bg-black/50 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-[10px] font-black uppercase tracking-wider text-purple-400 font-mono">
-                  OpenTelemetry Trace ID
+                  Execution Trace ID
                 </span>
                 <a
                   href={`http://localhost:8006/audit/events/${meta.trace_id}`}
@@ -71,7 +71,7 @@ export function ReasoningInspectorDrawer({ message, onClose }: ReasoningInspecto
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-[10px] font-mono font-medium text-purple-300 hover:bg-purple-500/20 hover:text-white transition-colors"
                 >
-                  <span>Audit Microservice</span>
+                  <span>Audit Service</span>
                 </a>
               </div>
               <p className="break-all font-mono text-xs text-neutral-300">{meta.trace_id}</p>
