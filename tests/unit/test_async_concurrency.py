@@ -23,7 +23,7 @@ class TestNoBlockingSleep:
         """'import time' must not appear in retriever.py."""
         import inspect
 
-        import services.orchestrator.graph.nodes.retriever as mod
+        import src.agent.nodes.retriever as mod
 
         source = inspect.getsource(mod)
         # Check there's no `import time` statement or `time.sleep(` call
@@ -34,7 +34,7 @@ class TestNoBlockingSleep:
         """Shared tenacity-wrapped post_with_retry must be used in retriever.py."""
         import inspect
 
-        import services.orchestrator.graph.nodes.retriever as mod
+        import src.agent.nodes.retriever as mod
 
         source = inspect.getsource(mod)
         assert "post_with_retry" in source or "from tenacity" in source
@@ -43,7 +43,7 @@ class TestNoBlockingSleep:
         """'import time' must not appear in executor.py."""
         import inspect
 
-        import services.orchestrator.graph.nodes.executor as mod
+        import src.agent.nodes.executor as mod
 
         source = inspect.getsource(mod)
         assert "import time" not in source
@@ -53,7 +53,7 @@ class TestNoBlockingSleep:
         """Shared tenacity-wrapped post_with_retry must be used in executor.py."""
         import inspect
 
-        import services.orchestrator.graph.nodes.executor as mod
+        import src.agent.nodes.executor as mod
 
         source = inspect.getsource(mod)
         assert "post_with_retry" in source or "from tenacity" in source
@@ -63,10 +63,10 @@ class TestNoBlockingSleep:
 
 
 class TestRetrieverRetryBehaviour:
-    @patch("services.orchestrator.graph.nodes.retriever.httpx.AsyncClient")
+    @patch("src.agent.nodes.retriever.httpx.AsyncClient")
     async def test_success_after_transient_failure(self, mock_client_cls: MagicMock) -> None:
         """Node returns chunks after a transient failure on attempt 1."""
-        from services.orchestrator.graph.nodes.retriever import retriever_node
+        from src.agent.nodes.retriever import retriever_node
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
@@ -85,10 +85,10 @@ class TestRetrieverRetryBehaviour:
         assert "retrieved_chunks" in result
         assert len(result["retrieved_chunks"]) >= 1
 
-    @patch("services.orchestrator.graph.nodes.retriever.httpx.AsyncClient")
+    @patch("src.agent.nodes.retriever.httpx.AsyncClient")
     async def test_graceful_error_after_exhaustion(self, mock_client_cls: MagicMock) -> None:
         """Node returns graceful error dict (empty chunks + error key) after all retries fail."""
-        from services.orchestrator.graph.nodes.retriever import retriever_node
+        from src.agent.nodes.retriever import retriever_node
 
         mock_instance = AsyncMock()
         mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -158,7 +158,7 @@ class TestOrchestratorSourceInspection:
         """The /run endpoint must call graph.ainvoke, not graph.invoke via run_in_executor."""
         import inspect
 
-        import services.orchestrator.main as mod
+        import src.api.orchestrator as mod
 
         source = inspect.getsource(mod.run)
         assert "ainvoke" in source
@@ -168,7 +168,7 @@ class TestOrchestratorSourceInspection:
         """approval_callback must call graph.ainvoke, not graph.invoke via run_in_executor."""
         import inspect
 
-        import services.orchestrator.main as mod
+        import src.api.orchestrator as mod
 
         source = inspect.getsource(mod.approval_callback)
         assert "ainvoke" in source
@@ -178,7 +178,7 @@ class TestOrchestratorSourceInspection:
         """The /run endpoint must use semaphore.locked() not asyncio.wait_for."""
         import inspect
 
-        import services.orchestrator.main as mod
+        import src.api.orchestrator as mod
 
         source = inspect.getsource(mod.run)
         assert "semaphore.locked()" in source
@@ -187,7 +187,7 @@ class TestOrchestratorSourceInspection:
         """approval_callback must use semaphore.locked() not asyncio.wait_for."""
         import inspect
 
-        import services.orchestrator.main as mod
+        import src.api.orchestrator as mod
 
         source = inspect.getsource(mod.approval_callback)
         assert "semaphore.locked()" in source
@@ -197,9 +197,9 @@ class TestOrchestratorSourceInspection:
 
 
 class TestParallelActionExecutor:
-    @patch("services.orchestrator.graph.nodes.executor._call_action_service")
+    @patch("src.agent.nodes.executor._call_action_service")
     def test_parallel_safe_actions(self, mock_call_action: AsyncMock) -> None:
-        from services.orchestrator.graph.nodes.executor import executor_node
+        from src.agent.nodes.executor import executor_node
 
         mock_call_action.side_effect = [
             {"success": True, "action": "auto_respond"},

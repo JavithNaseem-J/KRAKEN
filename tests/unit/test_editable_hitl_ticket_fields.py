@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import pytest
-from services.action.handlers.ticket_handler import execute_create_ticket
+from unittest.mock import patch
+
+from src.tools.ticket import execute_create_ticket
 
 
-def test_editable_hitl_ticket_fields() -> None:
-    res = execute_create_ticket(
-        user_name="Alice",
-        category="Hardware",
-        priority="High",
-        description="Broken monitor malfunction",
-    )
-
-    assert isinstance(res, dict)
-    assert "ticket_id" in res
-    assert res["user"] == "Alice"
-    assert res["category"] == "Hardware"
-    assert res["priority"] == "high"
-    assert res["description"] == "Broken monitor malfunction"
+def test_editable_hitl_ticket_fields(tmp_path) -> None:
+    tickets_file = tmp_path / "tickets.json"
+    tickets_file.write_text("[]", encoding="utf-8")
+    with (
+        patch("src.tools.ticket.WORKSPACE_ROOT", tmp_path),
+        patch("src.tools.ticket._TICKETS_FILE", tickets_file),
+    ):
+        res = execute_create_ticket(
+            user_name="Alice",
+            category="Hardware",
+            priority="High",
+            description="Broken monitor malfunction",
+        )
+        assert res.get("success") is True

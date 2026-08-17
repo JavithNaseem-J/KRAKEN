@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest_asyncio
 from qdrant_client import AsyncQdrantClient
 
-from shared.cache import SEMANTIC_CACHE_COLLECTION, SemanticCache
+from src.utils.cache import SEMANTIC_CACHE_COLLECTION, SemanticCache
 
 _VECTOR_384 = [0.1] * 384
 _RESPONSE = {"answer": "Test answer", "session_id": "s1"}

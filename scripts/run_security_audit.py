@@ -30,7 +30,7 @@ def check_secrets_and_injection_defenses() -> tuple[int, list[str]]:
     violations: list[str] = []
 
     # 1. Scan Python files for hardcoded production secrets
-    python_files = list((ROOT_DIR / "services").rglob("*.py")) + list((ROOT_DIR / "shared").rglob("*.py"))
+    python_files = list((ROOT_DIR / "src").rglob("*.py"))
     for py_file in python_files:
         content = py_file.read_text(encoding="utf-8", errors="ignore")
         for pattern, desc in SECRET_PATTERNS:
@@ -42,14 +42,14 @@ def check_secrets_and_injection_defenses() -> tuple[int, list[str]]:
                 violations.append(f"[SECRET AUDIT] {rel_path}: {desc}")
 
     # 2. Check Decider node prompt injection defenses
-    decider_file = ROOT_DIR / "services" / "orchestrator" / "graph" / "nodes" / "decider.py"
+    decider_file = ROOT_DIR / "src" / "agent" / "nodes" / "decider.py"
     if decider_file.exists():
         decider_code = decider_file.read_text(encoding="utf-8")
         if "SAFETY GUARDRAIL" not in decider_code:
             violations.append("[PROMPT DEFENSE] decider.py is missing explicit anti-injection instruction")
 
     # 3. Check Path Validator sandbox bounds
-    path_val_file = ROOT_DIR / "services" / "action" / "safety" / "path_validator.py"
+    path_val_file = ROOT_DIR / "src" / "safety" / "path_validator.py"
     if path_val_file.exists():
         path_val_code = path_val_file.read_text(encoding="utf-8")
         if "relative_to" not in path_val_code and "resolve" not in path_val_code:

@@ -12,10 +12,10 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from services.orchestrator.graph.nodes.decider import decider_node
-from services.orchestrator.graph.nodes.memory_writer import memory_writer_node
-from services.orchestrator.graph.nodes.retriever import retriever_node
-from services.orchestrator.main import app
+from src.agent.nodes.decider import decider_node
+from src.agent.nodes.memory_writer import memory_writer_node
+from src.agent.nodes.retriever import retriever_node
+from src.api.orchestrator import app
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
@@ -23,7 +23,7 @@ _HEADERS = {"X-Service-Token": _TOKEN}
 
 # ── Decider Node Tests ────────────────────────────────────────────────────────
 class TestDeciderNode:
-    @patch("services.orchestrator.graph.nodes.decider.get_llm")
+    @patch("src.agent.nodes.decider.get_llm")
     def test_decider_valid_action(self, mock_get_llm: MagicMock) -> None:
         mock_llm = MagicMock()
         decision_mock = MagicMock()
@@ -49,7 +49,7 @@ class TestDeciderNode:
         assert result["action_payload"]["ticket_id"] == "T1"
         assert result["action_payload"]["evidence"] == "Some evidence"
 
-    @patch("services.orchestrator.graph.nodes.decider.get_llm")
+    @patch("src.agent.nodes.decider.get_llm")
     def test_decider_rejects_hallucinated_action(self, mock_get_llm: MagicMock) -> None:
         mock_llm = MagicMock()
         decision_mock = MagicMock()
@@ -76,7 +76,7 @@ class TestDeciderNode:
 
 # ── Retriever Node Tests ──────────────────────────────────────────────────────
 class TestRetrieverNode:
-    @patch("services.orchestrator.graph.nodes.retriever.httpx.AsyncClient")
+    @patch("src.agent.nodes.retriever.httpx.AsyncClient")
     def test_retriever_http_success(self, mock_client_cls: MagicMock) -> None:
         mock_client = AsyncMock()
         mock_resp = MagicMock()
@@ -125,9 +125,9 @@ def client(monkeypatch):
     mock_graph = MagicMock()
 
     with (
-        patch("services.orchestrator.main.validate_llm_config"),
-        patch("services.orchestrator.main.ConnectionPool", return_value=mock_pool),
-        patch("services.orchestrator.main.build_graph_async", return_value=mock_graph),
+        patch("src.api.orchestrator.validate_llm_config"),
+        patch("src.api.orchestrator.ConnectionPool", return_value=mock_pool),
+        patch("src.api.orchestrator.build_graph_async", return_value=mock_graph),
         TestClient(app) as c,
     ):
         c.app.state.conn_pool = mock_pool
@@ -171,7 +171,7 @@ class TestOrchestratorAPI:
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_prune_stale_checkpoints_runs_cleanly(self) -> None:
-        from services.orchestrator.main import prune_stale_checkpoints
+        from src.api.orchestrator import prune_stale_checkpoints
 
         mock_pool = MagicMock()
         mock_cur = MagicMock()

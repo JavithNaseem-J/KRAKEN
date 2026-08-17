@@ -10,13 +10,13 @@ from unittest.mock import patch
 
 import pytest
 
-from services.action.handlers.ticket_handler import (
+from src.tools.ticket import (
     execute_auto_respond,
     execute_close,
     execute_escalate,
     execute_request_info,
 )
-from shared.exceptions import ActionExecutionError
+from src.utils.exceptions import ActionExecutionError
 
 _SAMPLE_TICKETS = [
     {
@@ -45,8 +45,8 @@ def patch_workspace(tmp_path: Path):
     tickets_file = fake_workspace / "tickets.json"
     tickets_file.write_text(json.dumps(_SAMPLE_TICKETS))
     with (
-        patch("services.action.handlers.ticket_handler.WORKSPACE_ROOT", fake_workspace),
-        patch("services.action.handlers.ticket_handler._TICKETS_FILE", tickets_file),
+        patch("src.tools.ticket.WORKSPACE_ROOT", fake_workspace),
+        patch("src.tools.ticket._TICKETS_FILE", tickets_file),
     ):
         yield fake_workspace
 
@@ -105,11 +105,11 @@ class TestTicketHandlers:
             execute_escalate("TK-999", "reason", "evidence")
 
     def test_postgres_fallback_when_unconfigured(self) -> None:
-        from services.action.handlers.ticket_handler import get_pg_pool
+        from src.tools.ticket import get_pg_pool
 
         with (
             patch.dict("os.environ", {}, clear=True),
-            patch("services.action.handlers.ticket_handler._pg_pool", None),
+            patch("src.tools.ticket._pg_pool", None),
         ):
             pool = get_pg_pool()
             assert pool is None

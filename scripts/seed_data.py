@@ -25,7 +25,7 @@ def seed_postgres() -> None:
     try:
         from psycopg_pool import ConnectionPool
 
-        from shared.db.tickets import seed_tickets
+        from src.utils.db.tickets import seed_tickets
 
         with ConnectionPool(conninfo=pg_url, timeout=5) as pool, pool.connection() as conn:
             if SAMPLE_TICKETS_FILE.exists():

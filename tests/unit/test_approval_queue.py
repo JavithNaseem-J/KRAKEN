@@ -18,7 +18,7 @@ try:
 except ImportError:
     HAS_FAKEREDIS = False
 
-from services.approval.queue import ApprovalQueue
+from src.utils.approval.queue import ApprovalQueue
 
 pytestmark = pytest.mark.skipif(
     not HAS_FAKEREDIS,

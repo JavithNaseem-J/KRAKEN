@@ -12,7 +12,7 @@ services:
     name: kraken-backend
     env: docker
     plan: free
-    dockerfilePath: Dockerfile.standalone
+    dockerfilePath: Dockerfile
     dockerContext: .
     healthCheckPath: /health
     envVars:
@@ -43,9 +43,10 @@ services:
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
     routes:
+      # Note: Update destination URL below if your Render backend service receives a different subdomain
       - type: rewrite
         source: /api/*
-        destination: https://kraken-backend-7op1.onrender.com/*
+        destination: https://kraken-backend.onrender.com/*
       - type: rewrite
         source: /*
         destination: /index.html

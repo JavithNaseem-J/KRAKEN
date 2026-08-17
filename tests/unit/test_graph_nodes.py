@@ -8,13 +8,13 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from services.orchestrator.graph.nodes.reasoner import reasoner_node
-from shared.registry import get_action
+from src.agent.nodes.reasoner import reasoner_node
+from src.utils.registry import get_action
 
 
 # ── Reasoner ───────────────────────────────────────────────────────────────────
 class TestReasonerNode:
-    @patch("services.orchestrator.graph.nodes.reasoner.get_llm")
+    @patch("src.agent.nodes.reasoner.get_llm")
     def test_produces_reasoning(self, mock_get_llm: MagicMock) -> None:
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(
@@ -34,7 +34,7 @@ class TestReasonerNode:
         assert "reasoning" in result
         assert len(result["reasoning"]) > 0
 
-    @patch("services.orchestrator.graph.nodes.reasoner.get_llm")
+    @patch("src.agent.nodes.reasoner.get_llm")
     def test_fallback_on_empty_chunks(self, mock_get_llm: MagicMock) -> None:
         mock_llm = MagicMock()
         mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content="No info found."))
@@ -44,7 +44,7 @@ class TestReasonerNode:
         result = asyncio.run(reasoner_node(state))
         assert "reasoning" in result
 
-    @patch("services.orchestrator.graph.nodes.reasoner.get_llm")
+    @patch("src.agent.nodes.reasoner.get_llm")
     def test_low_relevance_chunks_trigger_refusal_state(self, mock_get_llm: MagicMock) -> None:
         state = {
             "session_id": "s1",

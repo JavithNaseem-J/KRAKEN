@@ -6,8 +6,8 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from services.knowledge.main import app
-from shared.models.knowledge import KnowledgeChunk, KnowledgeSource, RetrievalResult
+from src.api.knowledge import app
+from src.utils.models.knowledge import KnowledgeChunk, KnowledgeSource, RetrievalResult
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
@@ -22,10 +22,10 @@ def client(monkeypatch):
     mock_retriever = AsyncMock()
 
     with (
-        patch("shared.embedder.get_embedder", return_value=mock_embedder),
-        patch("shared.cache.create_async_qdrant_client", return_value=mock_qdrant),
-        patch("services.knowledge.main.KnowledgeRetriever", return_value=mock_retriever),
-        patch("services.knowledge.ingest.ensure_collection", new_callable=AsyncMock),
+        patch("src.utils.embedder.get_embedder", return_value=mock_embedder),
+        patch("src.utils.cache.create_async_qdrant_client", return_value=mock_qdrant),
+        patch("src.api.knowledge.KnowledgeRetriever", return_value=mock_retriever),
+        patch("src.utils.knowledge.ingest.ensure_collection", new_callable=AsyncMock),
         TestClient(app) as c,
     ):
         c.app.state.retriever = mock_retriever
@@ -85,7 +85,7 @@ class TestKnowledgeAPI:
         response = client.post("/ingest")
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
-    @patch("services.knowledge.ingest.run_ingest_async", new_callable=AsyncMock)
+    @patch("src.utils.knowledge.ingest.run_ingest_async", new_callable=AsyncMock)
     def test_ingest_success(self, mock_run: AsyncMock, client) -> None:
         mock_run.return_value = {"faq": 10, "tickets": 5, "sla": 2}
 

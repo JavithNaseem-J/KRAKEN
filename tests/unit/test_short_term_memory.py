@@ -15,7 +15,7 @@ try:
 except ImportError:
     HAS_FAKEREDIS = False
 
-from services.memory.short_term import _SESSION_TTL_SEC, ShortTermMemory
+from src.utils.memory.short_term import _SESSION_TTL_SEC, ShortTermMemory
 
 pytestmark = pytest.mark.skipif(
     not HAS_FAKEREDIS,

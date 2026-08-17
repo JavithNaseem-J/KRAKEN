@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from services.gateway.middleware.prompt_guard import check_prompt_injection
+from src.api.middleware.prompt_guard import check_prompt_injection
 
 
 def test_prompt_injection_guard() -> None:

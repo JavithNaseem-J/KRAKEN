@@ -11,7 +11,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from services.audit.main import app
+from src.api.audit import app
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
@@ -25,10 +25,10 @@ def client(monkeypatch):
     mock_pool.close = AsyncMock()  # Must be awaitable since lifespan calls await db_pool.close()
 
     # create_pool is an async function, so it must return an awaitable (AsyncMock)
-    with patch("services.audit.main.create_pool", new_callable=AsyncMock) as mock_create:
+    with patch("src.api.audit.create_pool", new_callable=AsyncMock) as mock_create:
         mock_create.return_value = mock_pool
         # Patch configure_logging to prevent global logging side effects in pytest
-        with patch("services.audit.main.configure_logging"), TestClient(app) as c:
+        with patch("src.api.audit.configure_logging"), TestClient(app) as c:
             c.app.state.store = mock_store
             c.app.state.db_pool = mock_pool
             yield c

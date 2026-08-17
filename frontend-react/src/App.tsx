@@ -1,12 +1,13 @@
 import axios from 'axios';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ReasoningInspectorDrawer } from './components/ReasoningInspectorDrawer';
 import { SessionSidebar } from './components/SessionSidebar';
 import { TelemetryDrawer } from './components/TelemetryDrawer';
 import RuixenMoonChat from './components/ui/ruixen-moon-chat';
 import { useApprovalPoller } from './hooks/useApprovalPoller';
-import { exportSessionPDF, runAgentQuery, streamAgentQuery, type AgentStreamEvent } from './services/api';
+import { runAgentQuery, streamAgentQuery, type AgentStreamEvent } from './services/api';
 import {
   isPendingApproval,
   type ChatMessage as ChatMessageType,
@@ -357,27 +358,6 @@ export default function App() {
     if (sessionId === pendingSessionId) setPendingSessionId(null);
   };
 
-  const handleExportPDF = async (session: ChatSession) => {
-    try {
-      const blob = await exportSessionPDF(
-        session.session_id,
-        session.messages,
-        { label: activeRole.label, title: activeRole.title },
-        activeRole.api_key,
-      );
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `kraken-incident-${session.session_id.slice(0, 8)}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err: unknown) {
-      console.error('PDF export failed:', err);
-    }
-  };
-
   const messages = useMemo(() => activeSession?.messages ?? [], [activeSession]);
 
   return (
@@ -394,7 +374,6 @@ export default function App() {
         onNewSession={createSession}
         onDeleteSession={deleteSession}
         onSelectRole={setActiveRole}
-        onExportPDF={handleExportPDF}
       />
 
       {/* Main Ruixen Moon Chat Component */}
@@ -418,17 +397,21 @@ export default function App() {
       </main>
 
       {/* Slide-Over Reasoning Inspector */}
-      <ReasoningInspectorDrawer
-        message={inspectedMessage}
-        onClose={() => setInspectedMessage(null)}
-      />
+      <ErrorBoundary>
+        <ReasoningInspectorDrawer
+          message={inspectedMessage}
+          onClose={() => setInspectedMessage(null)}
+        />
+      </ErrorBoundary>
 
       {/* Slide-Over Telemetry Inspector */}
-      <TelemetryDrawer
-        message={telemetryMessage}
-        activeRole={activeRole}
-        onClose={() => setTelemetryMessage(null)}
-      />
+      <ErrorBoundary>
+        <TelemetryDrawer
+          message={telemetryMessage}
+          activeRole={activeRole}
+          onClose={() => setTelemetryMessage(null)}
+        />
+      </ErrorBoundary>
     </div>
   );
 }

@@ -176,38 +176,6 @@ export default function RuixenMoonChat({
             </span>
           </div>
         </div>
-
-        {/* Header Right Actions */}
-        <div className="flex items-center gap-2">
-          {uploadNotice && (
-            <span className="text-[11px] text-purple-300 bg-purple-950/40 border border-purple-800/50 rounded-full px-2.5 py-0.5 max-w-[200px] truncate">
-              {uploadNotice}
-            </span>
-          )}
-
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".pdf,.docx,.txt,.md"
-            className="hidden"
-          />
-
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isUploading || disabled}
-            onClick={() => fileInputRef.current?.click()}
-            className="h-8 rounded-lg border-purple-500/30 bg-purple-500/10 text-purple-300 hover:bg-purple-500/20 hover:text-white text-xs gap-1.5 font-medium transition-all"
-          >
-            {isUploading ? (
-              <Loader2 size={13} className="animate-spin text-purple-400" />
-            ) : (
-              <FileText size={13} />
-            )}
-            <span>{isUploading ? "Ingesting..." : "Ingest Document"}</span>
-          </Button>
-        </div>
       </header>
 
       {/* Main Content Area */}
@@ -249,7 +217,7 @@ export default function RuixenMoonChat({
                   </div>
                   <div className="group min-w-0 max-w-[80%] flex flex-col gap-1.5">
                     <div className="relative rounded-2xl px-4 py-3 text-xs md:text-sm bg-black/60 backdrop-blur-md text-neutral-200 rounded-tl-none border border-neutral-800 flex items-center gap-2.5">
-                      <span className="font-medium text-neutral-300">KRAKEN is thinking</span>
+                      <span className="font-medium text-neutral-300">Agent Processing</span>
                       <span className="flex items-end gap-0.5 pb-0.5">
                         <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-bounce [animation-delay:0ms]" />
                         <span className="h-1.5 w-1.5 rounded-full bg-purple-400 animate-bounce [animation-delay:150ms]" />
@@ -260,15 +228,26 @@ export default function RuixenMoonChat({
                       <div className="flex flex-wrap gap-1.5 pl-1">
                         {streamingSteps
                           .filter((s) => s.status === 'start')
+                          .filter((s) => {
+                            const name = s.node.toLowerCase();
+                            return !name.includes('runnable') && !name.includes('__') && name !== 'start' && name !== 'end';
+                          })
                           .map((s, i) => {
                             const nodeLabels: Record<string, { icon: string; label: string }> = {
                               retriever: { icon: '🔍', label: 'Retrieving knowledge' },
+                              reasoner: { icon: '🧠', label: 'Analyzing context' },
                               decider: { icon: '🛡️', label: 'Evaluating intent' },
                               executor: { icon: '⚙️', label: 'Executing action' },
                               memory_writer: { icon: '📝', label: 'Updating memory' },
                               responder: { icon: '💬', label: 'Generating response' },
+                              route_after_decision: { icon: '🔀', label: 'Routing decision' },
+                              _route_after_decision: { icon: '🔀', label: 'Routing decision' },
                             };
-                            const meta = nodeLabels[s.node.toLowerCase()] ?? { icon: '●', label: s.node };
+                            const rawNode = s.node.toLowerCase();
+                            const meta = nodeLabels[rawNode] ?? {
+                              icon: '●',
+                              label: s.node.replace(/^_+/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+                            };
                             return (
                               <span
                                 key={i}
@@ -303,7 +282,7 @@ export default function RuixenMoonChat({
               }}
               onKeyDown={onKeyDown}
               disabled={disabled}
-              placeholder={disabled ? "Agent is thinking…" : "Type your security or helpdesk query..."}
+              placeholder={disabled ? "Agent processing…" : "Type your security or helpdesk query..."}
               className={cn(
                 "w-full px-4 py-3.5 resize-none border-none",
                 "bg-transparent text-white text-sm",
@@ -331,12 +310,12 @@ export default function RuixenMoonChat({
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled || isUploading}
                   className="text-neutral-400 hover:text-white hover:bg-neutral-800/80 rounded-xl"
-                  title="Upload Document (.pdf, .docx, .md, .txt) to Knowledge Base"
+                  title="Attach document (.pdf, .docx, .md, .txt) for Knowledge Base ingestion"
                 >
                   {isUploading ? <Loader2 className="w-4 h-4 animate-spin text-purple-400" /> : <Paperclip className="w-4 h-4" />}
                 </Button>
                 {uploadNotice && (
-                  <span className="text-[11px] font-mono text-neutral-300 bg-white/10 px-2.5 py-1 rounded-md">
+                  <span className="text-[11px] font-mono text-purple-300 bg-purple-950/40 border border-purple-800/50 px-2.5 py-1 rounded-md">
                     {uploadNotice}
                   </span>
                 )}

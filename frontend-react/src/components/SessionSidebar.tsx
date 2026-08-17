@@ -15,7 +15,6 @@ function formatRelative(dateStr: string): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 import {
-  Download,
   MessageSquare,
   PanelLeftClose,
   Plus,
@@ -36,7 +35,6 @@ interface SessionSidebarProps {
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
   onSelectRole: (role: UserRole) => void;
-  onExportPDF?: (session: ChatSession) => void;
 }
 
 interface GroupedSessions {
@@ -86,7 +84,6 @@ export function SessionSidebar({
   onNewSession,
   onDeleteSession,
   onSelectRole,
-  onExportPDF,
 }: SessionSidebarProps) {
   const grouped = useMemo(() => groupSessionsByDate(sessions), [sessions]);
 
@@ -113,19 +110,6 @@ export function SessionSidebar({
         </div>
 
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          {onExportPDF && (
-            <button
-              aria-label="Export PDF"
-              title="Export Incident PDF"
-              onClick={(e) => {
-                e.stopPropagation();
-                onExportPDF(s);
-              }}
-              className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-purple-400"
-            >
-              <Download size={13} />
-            </button>
-          )}
           <button
             aria-label="Delete session"
             onClick={(e) => {

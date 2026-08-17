@@ -1,5 +1,4 @@
-import pytest
-from services.knowledge.ingest import extract_text_from_file_bytes
+from src.utils.knowledge.ingest import extract_text_from_file_bytes
 
 
 def test_extract_text_from_txt_and_md():

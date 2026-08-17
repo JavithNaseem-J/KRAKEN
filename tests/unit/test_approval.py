@@ -4,7 +4,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from services.approval.main import app
+from src.api.approval import app
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
@@ -35,7 +35,7 @@ def client(monkeypatch):
     mock_queue.close = AsyncMock()
 
     with (
-        patch("services.approval.main.ApprovalQueue", return_value=mock_queue),
+        patch("src.api.approval.ApprovalQueue", return_value=mock_queue),
         TestClient(app) as c,
     ):
             c.app.state.queue = mock_queue

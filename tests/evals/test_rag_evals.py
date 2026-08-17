@@ -2,17 +2,17 @@
 RAG Evaluation & Faithfulness Benchmarking Suite.
 
 Tests retrieval precision@k, recall@k, and answer faithfulness grounding
-across golden IT support queries against the Knowledge microservice.
+across golden IT support queries against the Knowledge subsystem.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import httpx
 import pytest
 
-KNOWLEDGE_URL = "http://localhost:8002/retrieve"
+from src.utils.config import get_settings
+from src.utils.http_client import internal_request
 
 # Golden test dataset: query -> expected key terms that MUST appear in retrieved chunks
 GOLDEN_DATASET = [
@@ -70,33 +70,36 @@ def calculate_faithfulness(chunks: list[dict[str, Any]]) -> float:
 @pytest.mark.asyncio
 async def test_rag_precision_and_faithfulness():
     """Verify RAG retrieval precision and grounding scores exceed enterprise thresholds."""
-    from shared.config import get_settings
-
     settings = get_settings()
     headers = {"X-Service-Token": settings.hitl_service_token}
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        for item in GOLDEN_DATASET:
-            payload = {
-                "query": item["query"],
-                "sources": ["faq", "tickets", "sla"],
-                "top_k": 5,
-                "session_id": "rag_eval_session",
-            }
+    for item in GOLDEN_DATASET:
+        payload = {
+            "query": item["query"],
+            "sources": ["faq", "tickets", "sla"],
+            "top_k": 5,
+            "session_id": "rag_eval_session",
+        }
 
-            resp = await client.post(KNOWLEDGE_URL, json=payload, headers=headers)
-            assert resp.status_code == 200, f"Knowledge service error: {resp.text}"
+        resp = await internal_request(
+            "POST",
+            f"{settings.knowledge_url}/retrieve",
+            json=payload,
+            headers=headers,
+            timeout_seconds=10.0,
+        )
+        assert resp.status_code == 200, f"Knowledge service error: {resp.text}"
 
-            data = resp.json()
-            chunks = data.get("chunks", [])
-            assert len(chunks) > 0, f"Zero chunks retrieved for query: {item['query']}"
+        data = resp.json()
+        chunks = data.get("chunks", [])
+        assert len(chunks) > 0, f"Zero chunks retrieved for query: {item['query']}"
 
-            precision = calculate_precision_at_k(chunks, item["expected_keywords"])
-            faithfulness = calculate_faithfulness(chunks)
+        precision = calculate_precision_at_k(chunks, item["expected_keywords"])
+        faithfulness = calculate_faithfulness(chunks)
 
-            assert precision >= item["min_precision"], (
-                f"Low Precision@k ({precision:.2f} < {item['min_precision']}) for: '{item['query']}'"
-            )
-            assert faithfulness >= 0.85, (
-                f"Low Faithfulness grounding ({faithfulness:.2f} < 0.85) for: '{item['query']}'"
-            )
+        assert precision >= item["min_precision"], (
+            f"Low Precision@k ({precision:.2f} < {item['min_precision']}) for: '{item['query']}'"
+        )
+        assert faithfulness >= 0.85, (
+            f"Low Faithfulness grounding ({faithfulness:.2f} < 0.85) for: '{item['query']}'"
+        )

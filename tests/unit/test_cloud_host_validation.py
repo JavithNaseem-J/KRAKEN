@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from shared.config import Settings
+from src.utils.config import Settings
 
 # A strong token that passes the HITL validator
 _TOKEN = "a" * 32

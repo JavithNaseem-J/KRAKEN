@@ -4,17 +4,15 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up
 #
 # This overlay:
-#   1. Removes local postgres and redis infrastructure (cloud-managed in prod).
+#   1. Removes local postgres, redis, and frontend infrastructure (cloud-managed / CDN in prod).
 #   2. Requires all credentials and URLs to be supplied via environment variables
 #      — the ${VAR:?error} syntax causes `docker compose config` to fail immediately
 #      if a required variable is unset.
-#   3. Exposes only the public-facing services (gateway:8000, approval:8004).
+#   3. Exposes only the single consolidated application service on port 8000.
 #   4. Injects ENVIRONMENT=prod so the Settings validator enforces cloud-only URLs.
 
 services:
   # ── Remove local infrastructure in prod ───────────────────────────────────
-  # Cloud Postgres and Redis are provided externally; their compose services
-  # are removed by setting scale: 0 in this override.
   postgres:
     deploy:
       replicas: 0
@@ -23,106 +21,28 @@ services:
     deploy:
       replicas: 0
 
-  # ── Gateway — only public port exposed ─────────────────────────────────────
-  gateway:
+  frontend:
+    deploy:
+      replicas: 0
+
+  # ── Consolidated App — only port 8000 published ───────────────────────────
+  app:
     restart: unless-stopped
     ports:
       - "8000:8000"
     env_file: []          # No .env in prod — all secrets via platform env vars
     environment:
       ENVIRONMENT: prod
-      ORCHESTRATOR_URL: "${ORCHESTRATOR_URL:?ORCHESTRATOR_URL is required in prod}"
+      POSTGRES_URL: "${POSTGRES_URL:?POSTGRES_URL is required in prod}"
+      POSTGRES_SYNC_URL: "${POSTGRES_SYNC_URL:?POSTGRES_SYNC_URL is required in prod}"
+      REDIS_URL: "${REDIS_URL:?REDIS_URL is required in prod}"
       GATEWAY_API_KEYS: "${GATEWAY_API_KEYS:?GATEWAY_API_KEYS is required in prod}"
       HITL_SERVICE_TOKEN: "${HITL_SERVICE_TOKEN:?HITL_SERVICE_TOKEN is required in prod}"
+      LLM_API_KEY: "${LLM_API_KEY:?LLM_API_KEY is required in prod}"
+      QDRANT_URL: "${QDRANT_URL:?QDRANT_URL is required in prod}"
+      QDRANT_API_KEY: "${QDRANT_API_KEY:?QDRANT_API_KEY is required in prod}"
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      test: ["CMD", "python", "-c", "import os, httpx; port = os.getenv('PORT', '8000'); httpx.get(f'http://localhost:{port}/health').raise_for_status()"]
       interval: 15s
       timeout: 5s
       retries: 3
-
-  # ── Orchestrator ───────────────────────────────────────────────────────────
-  orchestrator:
-    restart: unless-stopped
-    ports: []             # Not public-facing in prod
-    env_file: []
-    environment:
-      ENVIRONMENT: prod
-      POSTGRES_URL: "${POSTGRES_URL:?POSTGRES_URL is required in prod}"
-      POSTGRES_SYNC_URL: "${POSTGRES_SYNC_URL:?POSTGRES_SYNC_URL is required in prod}"
-      REDIS_URL: "${REDIS_URL:?REDIS_URL is required in prod}"
-      KNOWLEDGE_URL: "${KNOWLEDGE_URL:?KNOWLEDGE_URL is required in prod}"
-      ACTION_URL: "${ACTION_URL:?ACTION_URL is required in prod}"
-      APPROVAL_URL: "${APPROVAL_URL:?APPROVAL_URL is required in prod}"
-      MEMORY_URL: "${MEMORY_URL:?MEMORY_URL is required in prod}"
-      AUDIT_URL: "${AUDIT_URL:?AUDIT_URL is required in prod}"
-      HITL_SERVICE_TOKEN: "${HITL_SERVICE_TOKEN:?HITL_SERVICE_TOKEN is required in prod}"
-      LLM_API_KEY: "${LLM_API_KEY:?LLM_API_KEY is required in prod}"
-      QDRANT_URL: "${QDRANT_URL:?QDRANT_URL is required in prod}"
-      QDRANT_API_KEY: "${QDRANT_API_KEY:?QDRANT_API_KEY is required in prod}"
-
-  # ── Knowledge ─────────────────────────────────────────────────────────────
-  knowledge:
-    restart: unless-stopped
-    ports: []
-    env_file: []
-    environment:
-      ENVIRONMENT: prod
-      POSTGRES_URL: "${POSTGRES_URL:?POSTGRES_URL is required in prod}"
-      POSTGRES_SYNC_URL: "${POSTGRES_SYNC_URL:?POSTGRES_SYNC_URL is required in prod}"
-      QDRANT_URL: "${QDRANT_URL:?QDRANT_URL is required in prod}"
-      QDRANT_API_KEY: "${QDRANT_API_KEY:?QDRANT_API_KEY is required in prod}"
-      LLM_API_KEY: "${LLM_API_KEY:?LLM_API_KEY is required in prod}"
-      HITL_SERVICE_TOKEN: "${HITL_SERVICE_TOKEN:?HITL_SERVICE_TOKEN is required in prod}"
-
-  # ── Action ────────────────────────────────────────────────────────────────
-  action:
-    restart: unless-stopped
-    ports: []
-    env_file: []
-    environment:
-      ENVIRONMENT: prod
-      APPROVAL_URL: "${APPROVAL_URL:?APPROVAL_URL is required in prod}"
-      AUDIT_URL: "${AUDIT_URL:?AUDIT_URL is required in prod}"
-      POSTGRES_URL: "${POSTGRES_URL:?POSTGRES_URL is required in prod}"
-      POSTGRES_SYNC_URL: "${POSTGRES_SYNC_URL:?POSTGRES_SYNC_URL is required in prod}"
-      HITL_SERVICE_TOKEN: "${HITL_SERVICE_TOKEN:?HITL_SERVICE_TOKEN is required in prod}"
-
-  # ── Approval — public port for human decision UI ───────────────────────────
-  approval:
-    restart: unless-stopped
-    ports:
-      - "8004:8004"
-    env_file: []
-    environment:
-      ENVIRONMENT: prod
-      REDIS_URL: "${REDIS_URL:?REDIS_URL is required in prod}"
-      ORCHESTRATOR_URL: "${ORCHESTRATOR_URL:?ORCHESTRATOR_URL is required in prod}"
-      HITL_SERVICE_TOKEN: "${HITL_SERVICE_TOKEN:?HITL_SERVICE_TOKEN is required in prod}"
-
-  # ── Memory ────────────────────────────────────────────────────────────────
-  memory:
-    restart: unless-stopped
-    ports: []
-    env_file: []
-    environment:
-      ENVIRONMENT: prod
-      POSTGRES_URL: "${POSTGRES_URL:?POSTGRES_URL is required in prod}"
-      POSTGRES_SYNC_URL: "${POSTGRES_SYNC_URL:?POSTGRES_SYNC_URL is required in prod}"
-      REDIS_URL: "${REDIS_URL:?REDIS_URL is required in prod}"
-      HITL_SERVICE_TOKEN: "${HITL_SERVICE_TOKEN:?HITL_SERVICE_TOKEN is required in prod}"
-
-  # ── Audit ─────────────────────────────────────────────────────────────────
-  audit:
-    restart: unless-stopped
-    ports: []
-    env_file: []
-    environment:
-      ENVIRONMENT: prod
-      POSTGRES_URL: "${POSTGRES_URL:?POSTGRES_URL is required in prod}"
-      POSTGRES_SYNC_URL: "${POSTGRES_SYNC_URL:?POSTGRES_SYNC_URL is required in prod}"
-      HITL_SERVICE_TOKEN: "${HITL_SERVICE_TOKEN:?HITL_SERVICE_TOKEN is required in prod}"
-
-  # ── Frontend — disabled in prod (API-only deployment) ─────────────────────
-  frontend:
-    deploy:
-      replicas: 0

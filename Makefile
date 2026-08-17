@@ -10,25 +10,23 @@ help:
 	@echo "  install-dev Install dev/test dependencies"
 	@echo "  up          Start all services (detached)"
 	@echo "  down        Stop all services"
-	@echo "  build       Rebuild all Docker images"
+	@echo "  build       Rebuild Docker images"
 	@echo "  logs        Tail logs for all services"
 	@echo "  restart     Restart all services"
-	@echo "  status      Run health check across all microservices"
+	@echo "  status      Run health check against consolidated app"
 	@echo "  ingest      Run the knowledge ingestion pipeline"
 	@echo "  seed        Seed sample ticket data"
 	@echo "  test        Run the full test suite"
 	@echo "  eval        Run eval harness against live system"
 	@echo "  lint        Lint with ruff"
 	@echo "  format      Format with ruff"
-	@echo "  type-check  Run mypy"
+	@echo "  type-check  Run mypy on src/"
 	@echo "  clean       Stop containers and delete volumes"
 	@echo ""
 
 
 install-dev:
-	pip install -r requirements.txt
-	pip install -r requirements-dev.txt
-	pip install -e .
+	uv sync --all-extras
 
 up:
 	$(COMPOSE) up -d
@@ -67,7 +65,7 @@ format:
 	ruff format .
 
 type-check:
-	mypy shared/ services/ --ignore-missing-imports
+	mypy src/
 
 clean:
 	$(COMPOSE) down -v --remove-orphans

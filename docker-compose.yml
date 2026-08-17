@@ -32,7 +32,29 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ── Application Services ───────────────────────────────────────────────────
+  # ── Application Service ───────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      ENVIRONMENT: dev
+      POSTGRES_URL: postgresql+asyncpg://agent:agent@postgres:5432/kraken
+      POSTGRES_SYNC_URL: postgresql+psycopg://agent:agent@postgres:5432/kraken
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data/knowledge:/app/data/knowledge:ro
+      - ./data/workspace:/app/data/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend-react
@@ -41,124 +63,11 @@ services:
       - "5173:80"
     environment:
       ENVIRONMENT: dev
-      VITE_GATEWAY_URL: http://gateway:8000
+      VITE_GATEWAY_URL: http://localhost:8000
     depends_on:
-      - gateway
-    restart: unless-stopped
-
-  gateway:
-    build:
-      context: .
-      dockerfile: services/gateway/Dockerfile
-    ports:
-      - "8000:8000"
-    env_file: .env
-    environment:
-      ENVIRONMENT: dev
-      ORCHESTRATOR_URL: http://orchestrator:8001
-    depends_on:
-      redis: { condition: service_healthy }
-    restart: unless-stopped
-
-  orchestrator:
-    build:
-      context: .
-      dockerfile: services/orchestrator/Dockerfile
-    ports:
-      - "8001:8001"
-    env_file: .env
-    environment:
-      ENVIRONMENT: dev
-      KNOWLEDGE_URL:    http://knowledge:8002
-      ACTION_URL:       http://action:8003
-      APPROVAL_URL:     http://approval:8004
-      MEMORY_URL:       http://memory:8005
-      AUDIT_URL:        http://audit:8006
-      REDIS_URL:        redis://redis:6379/0
-    depends_on:
-      redis:    { condition: service_healthy }
-      postgres: { condition: service_healthy }
-    restart: unless-stopped
-
-  knowledge:
-    build:
-      context: .
-      dockerfile: services/knowledge/Dockerfile
-    ports:
-      - "8002:8002"
-    env_file: .env
-    environment:
-      ENVIRONMENT: dev
-      POSTGRES_URL: postgresql+asyncpg://agent:agent@postgres:5432/kraken
-    volumes:
-      - ./data/knowledge:/app/data/knowledge:ro
-    depends_on:
-      postgres: { condition: service_healthy }
-    restart: unless-stopped
-
-  action:
-    build:
-      context: .
-      dockerfile: services/action/Dockerfile
-    ports:
-      - "8003:8003"
-    env_file: .env
-    environment:
-      ENVIRONMENT: dev
-      APPROVAL_URL: http://approval:8004
-      AUDIT_URL:    http://audit:8006
-    volumes:
-      - ./data/workspace:/app/data/workspace
-    depends_on:
-      postgres: { condition: service_healthy }
-    restart: unless-stopped
-
-  approval:
-    build:
-      context: .
-      dockerfile: services/approval/Dockerfile
-    ports:
-      - "8004:8004"
-    env_file: .env
-    environment:
-      ENVIRONMENT: dev
-      REDIS_URL:        redis://redis:6379/0
-      ORCHESTRATOR_URL: http://orchestrator:8001
-    depends_on:
-      redis: { condition: service_healthy }
-    restart: unless-stopped
-
-  memory:
-    build:
-      context: .
-      dockerfile: services/memory/Dockerfile
-    ports:
-      - "8005:8005"
-    env_file: .env
-    environment:
-      ENVIRONMENT: dev
-      POSTGRES_URL: postgresql+asyncpg://agent:agent@postgres:5432/kraken
-      REDIS_URL:    redis://redis:6379/0
-    depends_on:
-      postgres: { condition: service_healthy }
-      redis:    { condition: service_healthy }
-    restart: unless-stopped
-
-  audit:
-    build:
-      context: .
-      dockerfile: services/audit/Dockerfile
-    ports:
-      - "8006:8006"
-    env_file: .env
-    environment:
-      ENVIRONMENT: dev
-      POSTGRES_URL: postgresql+asyncpg://agent:agent@postgres:5432/kraken
-    depends_on:
-      postgres: { condition: service_healthy }
+      - app
     restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
-

@@ -11,7 +11,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from services.memory.main import app
+from src.api.memory import app
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
@@ -40,8 +40,8 @@ def client(monkeypatch):
     mock_stm.close = AsyncMock()
 
     with (
-        patch("services.memory.main.ShortTermMemory", return_value=mock_stm),
-        patch("services.memory.main.create_pool", side_effect=Exception("no postgres in tests")),
+        patch("src.api.memory.ShortTermMemory", return_value=mock_stm),
+        patch("src.api.memory.create_pool", side_effect=Exception("no postgres in tests")),
         TestClient(app) as c,
     ):
         c.app.state.short_term = mock_stm

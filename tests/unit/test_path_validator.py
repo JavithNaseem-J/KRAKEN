@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-from services.action.safety.path_validator import (
+from src.safety.path_validator import (
     ALLOWED_EXTENSIONS,
     WORKSPACE_ROOT,
     validate_write_target,
 )
-from shared.exceptions import InvalidExtensionError, PathTraversalError
+from src.utils.exceptions import InvalidExtensionError, PathTraversalError
 
 
 class TestWorkspaceConstants:

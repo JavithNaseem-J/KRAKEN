@@ -4,7 +4,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from services.action.main import app
+from src.api.action import app
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
@@ -13,13 +13,13 @@ _HEADERS = {"X-Service-Token": _TOKEN}
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("HITL_SERVICE_TOKEN", _TOKEN)
-    # Patch WORKSPACE_ROOT in write_handler and path_validator
+    # Patch WORKSPACE_ROOT in write_tool and path_validator
     # to use a safe temp directory for test writes
     with (
-        patch("services.action.handlers.write_handler.WORKSPACE_ROOT", tmp_path),
-        patch("services.action.safety.path_validator.WORKSPACE_ROOT", tmp_path),
-        patch("services.action.handlers.ticket_handler.WORKSPACE_ROOT", tmp_path),
-        patch("services.action.handlers.ticket_handler._TICKETS_FILE", tmp_path / "tickets.json"),
+        patch("src.tools.write_tool.WORKSPACE_ROOT", tmp_path),
+        patch("src.safety.path_validator.WORKSPACE_ROOT", tmp_path),
+        patch("src.tools.ticket.WORKSPACE_ROOT", tmp_path),
+        patch("src.tools.ticket._TICKETS_FILE", tmp_path / "tickets.json"),
     ):
         # Create a dummy tickets.json for ticket handlers
         (tmp_path / "tickets.json").write_text("[]")
@@ -94,7 +94,7 @@ def test_execute_missing_evidence(client):
     assert "evidence" in res["error"]
 
 
-@patch("services.action.main.execute_auto_respond")
+@patch("src.api.action.execute_auto_respond")
 def test_execute_auto_respond_success(mock_handler, client):
     mock_handler.return_value = {"success": True, "details": "done"}
     response = client.post(
@@ -170,7 +170,7 @@ def test_execute_write_json_invalid_extension(client):
     assert "extension '.sh' is not allowed" in res["error"]
 
 
-@patch("services.action.main.execute_escalate")
+@patch("src.api.action.execute_escalate")
 def test_execute_escalate_success(mock_handler, client):
     mock_handler.return_value = {"success": True}
     response = client.post(
@@ -190,7 +190,7 @@ def test_execute_escalate_success(mock_handler, client):
     mock_handler.assert_called_once_with("TK-100", "SLA breach", "sla evidence")
 
 
-@patch("services.action.main.execute_request_info")
+@patch("src.api.action.execute_request_info")
 def test_execute_request_info_success(mock_handler, client):
     mock_handler.return_value = {"success": True}
     response = client.post(
@@ -214,7 +214,7 @@ def test_execute_request_info_success(mock_handler, client):
     mock_handler.assert_called_once_with("TK-100", "logs", "missing details")
 
 
-@patch("services.action.main.execute_close")
+@patch("src.api.action.execute_close")
 def test_execute_close_success(mock_handler, client):
     mock_handler.return_value = {"success": True}
     response = client.post(

@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from shared.config import Settings
+from src.utils.config import Settings
 
 # A valid token that satisfies all requirements
 _STRONG_TOKEN = "a" * 32
@@ -100,3 +100,11 @@ class TestStrongTokenAccepted:
         token = "764956947b16ff326b581b0ff99ab445be6b5b4b0baef608a65c27c175ba6d85"
         settings = _make_settings(hitl_service_token=token, environment="dev")
         assert settings.hitl_service_token == token
+
+    def test_default_secret_rejected_in_prod_environment(self):
+        with pytest.raises(ValidationError, match="cannot use default development tokens"):
+            _make_settings(
+                gateway_api_keys="dev-secret-key",
+                environment="prod"
+            )
+

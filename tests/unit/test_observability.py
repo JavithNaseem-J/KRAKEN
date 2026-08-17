@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from services.orchestrator.observability import get_langfuse_callback_handler
+from src.utils.observability import get_langfuse_callback_handler
 
 
 class TestObservability:
     def test_fallback_when_keys_missing(self) -> None:
-        with patch("services.orchestrator.observability.settings") as mock_settings:
+        with patch("src.utils.observability.settings") as mock_settings:
             mock_settings.langfuse_public_key = ""
             mock_settings.langfuse_secret_key = ""
 
@@ -22,7 +22,7 @@ class TestObservability:
         mock_client = MagicMock()
 
         with (
-            patch("services.orchestrator.observability.settings") as mock_settings,
+            patch("src.utils.observability.settings") as mock_settings,
             patch("langfuse.langchain.CallbackHandler", return_value=mock_client),
         ):
             mock_settings.langfuse_public_key = "pk-test"

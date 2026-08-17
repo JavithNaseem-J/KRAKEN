@@ -46,8 +46,8 @@ def main() -> int:
     print("=" * 64)
 
     steps = [
-        ("1. Multi-Service Operational Health Check", [PYTHON_EXE, "scripts/check_health.py"]),
-        ("2. System Unit Test Suite (173 Tests)", [PYTHON_EXE, "-m", "pytest", "tests/unit"]),
+        ("1. Operational Health Check", [PYTHON_EXE, "scripts/check_health.py"]),
+        ("2. System Unit Test Suite", [PYTHON_EXE, "-m", "pytest", "tests/unit"]),
         ("3. RAG Precision & Faithfulness Eval Suite", [PYTHON_EXE, "-m", "pytest", "tests/evals/test_rag_evals.py"]),
         ("4. SAST & Security Audit", [PYTHON_EXE, "scripts/run_security_audit.py"]),
         ("5. Concurrency Load Benchmark", [PYTHON_EXE, "scripts/benchmark.py"]),

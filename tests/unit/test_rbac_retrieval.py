@@ -1,7 +1,6 @@
-import pytest
 from unittest.mock import MagicMock
-from shared.models.knowledge import KnowledgeChunk, KnowledgeSource, RetrievalRequest
-from services.knowledge.retriever import KnowledgeRetriever, _heuristic_rerank
+
+from src.utils.knowledge.retriever import _heuristic_rerank
 
 
 def test_rbac_filtering_tier1_denied_security_lead_doc():

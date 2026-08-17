@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 
 # We mock settings or environment variables where needed.
 # Since app imports settings, we can patch settings or use them as configured.
-from services.gateway.main import MAX_BODY_SIZE, app
-from services.gateway.middleware.rate_limiter import RateLimiterDatabaseError
+from src.api.routes import MAX_BODY_SIZE, app
+from src.utils.middleware.rate_limit import RateLimiterDatabaseError
 
 
 @pytest.fixture
@@ -135,6 +135,16 @@ def test_pii_redacted(client):
         headers={"X-API-Key": "dev-key-alice-longer-secure-key"},
     )
     assert response.status_code == status.HTTP_200_OK
-    # Check that body passed to upstream http.post had SSN redacted
     called_body = app.state.http.post.call_args.kwargs["json"]
     assert "[REDACTED_PII]" in called_body["message"]
+
+
+def test_invalid_payload_schema_validation(client):
+    response = client.post(
+        "/v1/run",
+        json={"message": 12345},  # Invalid type for string message field
+        headers={"X-API-Key": "dev-key-alice-longer-secure-key"},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert "Invalid request payload" in response.json()["error"]
+

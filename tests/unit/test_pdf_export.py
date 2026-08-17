@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from services.gateway.report import generate_incident_pdf
+from src.api.report import generate_incident_pdf
 
 
 def test_pdf_generation() -> None:

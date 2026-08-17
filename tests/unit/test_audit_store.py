@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
-from services.audit.audit_store import AuditStore
-from shared.models.audit import AuditLogRequest
+from src.utils.audit.audit_store import AuditStore
+from src.utils.models.audit import AuditLogRequest
 
 
 def _make_store() -> tuple[AuditStore, MagicMock]:
