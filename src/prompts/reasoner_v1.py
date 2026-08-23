@@ -22,7 +22,10 @@ Structure your response as follows:
 - Note missing context or write "None" on its own line
 
 ### **CONCLUSION**
-Clear conclusion summarizing facts and appropriate action. If the user requests creating a new ticket, quarantining an IP, or unlocking an account, conclude that staging the respective action ('create_ticket', 'quarantine_ip', 'unlock_account') is the appropriate next step.
+Clear conclusion summarizing facts and appropriate action:
+- If the user requests blocking, banning, isolating, or quarantining an IP address (e.g. perimeter firewall, brute force, malicious traffic), ALWAYS conclude that staging 'quarantine_ip' is the immediate containment action. Do NOT substitute with 'create_ticket' or policy advice.
+- If the user requests creating/opening a new support ticket (e.g. broken monitor, laptop replacement), conclude that staging 'create_ticket' is the appropriate step.
+- If the user requests unlocking an account, conclude that staging 'unlock_account' is the appropriate step.
 
 Be factual. Do not invent information.
 """

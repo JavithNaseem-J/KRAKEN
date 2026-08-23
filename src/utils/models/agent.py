@@ -43,4 +43,3 @@ class QueryResponse(BaseModel):
     trace_id: str | None = Field(
         default=None, description="Unique request trace ID for distributed tracing"
     )
-

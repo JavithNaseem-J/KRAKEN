@@ -15,7 +15,6 @@ Endpoints:
 
 from __future__ import annotations
 
-import asyncio
 import os
 import secrets
 from collections.abc import AsyncGenerator
@@ -51,7 +50,9 @@ log = structlog.get_logger(__name__)
 settings = get_settings()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "..", "utils", "approval", "templates"))
+templates = Jinja2Templates(
+    directory=os.path.join(BASE_DIR, "..", "utils", "approval", "templates")
+)
 
 
 # ── Request Models ────────────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ async def _notify_orchestrator_callback(
     session_id: str = "",
     approver_role: str | None = None,
     approver_id: str | None = None,
-) -> bool:
+) -> tuple[bool, dict[str, Any] | None]:
     """
     Send approval decision (approve or reject) to orchestrator.
     Routed through the shared internal helper, which short-circuits in-process
@@ -88,20 +89,21 @@ async def _notify_orchestrator_callback(
     headers = service_headers()
 
     try:
-        await internal_request(
+        resp = await internal_request(
             "POST",
             url,
             json_payload=payload,
             headers=headers,
-            timeout_seconds=10.0,
+            timeout_seconds=60.0,
             client=client,
         )
+        data = resp.json() if resp.status_code == 200 else None
         log.info(
             "approval.callback_success",
             approval_id=approval_id,
             decision=decision,
         )
-        return True
+        return True, data
     except Exception as exc:
         log.error(
             "approval.callback_exhausted",
@@ -109,7 +111,7 @@ async def _notify_orchestrator_callback(
             decision=decision,
             error=str(exc),
         )
-        return False
+        return False, None
 
 
 @asynccontextmanager
@@ -282,7 +284,12 @@ async def approval_page(request: Request, approval_id: str) -> HTMLResponse:
     )
 
 
-@app.post("/approve/{approval_id}/decision", response_class=HTMLResponse, response_model=None, tags=["hitl"])
+@app.post(
+    "/approve/{approval_id}/decision",
+    response_class=HTMLResponse,
+    response_model=None,
+    tags=["hitl"],
+)
 async def submit_decision(
     request: Request,
     approval_id: str,
@@ -349,33 +356,24 @@ async def submit_decision(
 
     # Notify orchestrator using the persistent HTTP client and retry logic
     client = get_app_http_client(app)
-    task = asyncio.create_task(
-        _notify_orchestrator_callback(
-            client,
-            approval_id,
-            decision,
-            session_id=session_id,
-            approver_role=approver_role,
-            approver_id=approver_id,
-        )
-    )
-    task.add_done_callback(
-        lambda t: log.error(
-            "approval.callback_task_exception",
-            approval_id=approval_id,
-            error=str(t.exception()),
-        )
-        if not t.cancelled() and t.exception()
-        else None
+    success, agent_response = await _notify_orchestrator_callback(
+        client,
+        approval_id,
+        decision,
+        session_id=session_id,
+        approver_role=approver_role,
+        approver_id=approver_id,
     )
 
-    if request.headers.get("accept") == "application/json":
+    accept_header = request.headers.get("accept", "")
+    if "json" in accept_header or accept_header == "application/json":
         return JSONResponse(
             content={
-                "status": "ok",
+                "status": "ok" if success else "error",
                 "approval_id": approval_id,
                 "decision": decision,
                 "session_id": session_id,
+                "agent_response": agent_response,
             }
         )
 

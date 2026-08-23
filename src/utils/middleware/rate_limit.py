@@ -173,4 +173,3 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self.requests[client_ip].append(now)
 
         return await call_next(request)
-

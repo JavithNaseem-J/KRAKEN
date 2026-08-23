@@ -31,6 +31,7 @@ def service_headers(
     if not trace_id:
         try:
             import structlog
+
             ctx = structlog.contextvars.get_contextvars()
             trace_id = ctx.get("trace_id")
         except Exception:
@@ -170,9 +171,7 @@ async def internal_request(
             )
     elif client is not None:
         request_fn = getattr(client, resolved_method.lower())
-        resp = await request_fn(
-            url, json=json_payload, data=data, content=content, headers=headers
-        )
+        resp = await request_fn(url, json=json_payload, data=data, content=content, headers=headers)
     else:
         async with create_async_http_client(timeout_seconds=timeout_seconds) as fallback_client:
             resp = await fallback_client.request(
@@ -223,4 +222,3 @@ def metrics_text(service_name: str) -> str:
 def simple_health_response(service_name: str) -> dict[str, str]:
     """Standard health endpoint response for simple microservices."""
     return {"status": "ok", "service": service_name}
-

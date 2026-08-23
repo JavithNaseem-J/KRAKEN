@@ -63,20 +63,20 @@ class AuditStore:
             self._pool.acquire() as conn,
             conn.transaction(isolation="serializable"),
         ):
-                # 1. Fetch previous entry_hash to form hash chain
-                prev_row = await conn.fetchrow(
-                    "SELECT entry_hash FROM audit_log WHERE entry_hash IS NOT NULL ORDER BY timestamp DESC, id DESC LIMIT 1"
-                )
-                previous_hash = (
-                    prev_row["entry_hash"] if prev_row and prev_row["entry_hash"] else _GENESIS_HASH
-                )
+            # 1. Fetch previous entry_hash to form hash chain
+            prev_row = await conn.fetchrow(
+                "SELECT entry_hash FROM audit_log WHERE entry_hash IS NOT NULL ORDER BY timestamp DESC, id DESC LIMIT 1"
+            )
+            previous_hash = (
+                prev_row["entry_hash"] if prev_row and prev_row["entry_hash"] else _GENESIS_HASH
+            )
 
-                # 2. Compute current entry_hash
-                raw_chain_string = f"{previous_hash}:{entry.session_id}:{entry.user_id}:{entry.action_name}:{entry.status}:{payload_str}"
-                entry_hash = hashlib.sha256(raw_chain_string.encode("utf-8")).hexdigest()
+            # 2. Compute current entry_hash
+            raw_chain_string = f"{previous_hash}:{entry.session_id}:{entry.user_id}:{entry.action_name}:{entry.status}:{payload_str}"
+            entry_hash = hashlib.sha256(raw_chain_string.encode("utf-8")).hexdigest()
 
-                row = await conn.fetchrow(
-                    """
+            row = await conn.fetchrow(
+                """
                     INSERT INTO audit_log (
                         session_id, user_id, action_type, action_name,
                         risk_level, hitl_required, hitl_decision, status,
@@ -89,20 +89,20 @@ class AuditStore:
                     )
                     RETURNING id
                     """,
-                    entry.session_id,
-                    entry.user_id,
-                    entry.action_type,
-                    entry.action_name,
-                    entry.risk_level,
-                    entry.hitl_required,
-                    entry.hitl_decision,
-                    entry.status,
-                    entry.reasoning,
-                    payload_str,
-                    result_str,
-                    previous_hash,
-                    entry_hash,
-                )
+                entry.session_id,
+                entry.user_id,
+                entry.action_type,
+                entry.action_name,
+                entry.risk_level,
+                entry.hitl_required,
+                entry.hitl_decision,
+                entry.status,
+                entry.reasoning,
+                payload_str,
+                result_str,
+                previous_hash,
+                entry_hash,
+            )
 
         row_id = row["id"]
         log.info(

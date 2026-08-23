@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Markdown from 'react-markdown';
 
 import { fetchApprovalDetails, submitApprovalDecision } from '../services/api';
-import type { ApprovalDetails, ApprovalState } from '../types/agent';
+import type { ApprovalDetails, ApprovalState, QueryResponse } from '../types/agent';
 import { usePersona } from '../context/PersonaContext';
 
 interface InlineApprovalCardProps {
@@ -12,7 +12,7 @@ interface InlineApprovalCardProps {
   state: ApprovalState;
   createdAt?: string;
   isExecuting?: boolean;
-  onResolved: (approvalId: string, decision: 'approve' | 'reject') => void;
+  onResolved: (approvalId: string, decision: 'approve' | 'reject', response?: QueryResponse) => void;
   onExpired?: (approvalId: string) => void;
 }
 
@@ -123,14 +123,14 @@ export function InlineApprovalCard({
     setSubmitting(decision);
     setError(null);
     try {
-      await submitApprovalDecision(
+      const res = await submitApprovalDecision(
         approvalId,
         decision,
         details.csrf_token,
         activePersona.role,
         activePersona.id,
       );
-      onResolved(approvalId, decision);
+      onResolved(approvalId, decision, res.agent_response);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to submit decision.');
       setSubmitting(null);

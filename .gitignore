@@ -259,8 +259,10 @@ playwright/.cache/
 playwright/.auth/
 .playwright/
 
-# Local frontend environment overrides
-frontend-react/.env
-frontend-react/.env.local
-frontend-react/.env.*.local
-frontend-react/dist/
+# Local directories excluded from git repository
+e2e/
+docs/
+.agent/
+.opencode/
+openspec/
+

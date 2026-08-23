@@ -105,11 +105,13 @@ async def memory_writer_node(state: GraphState) -> dict:
         loop = asyncio.get_running_loop()
         task = loop.create_task(_write())
         task.add_done_callback(
-            lambda t: log.error(
-                "memory_writer.task_exception", session_id=session_id, error=str(t.exception())
+            lambda t: (
+                log.error(
+                    "memory_writer.task_exception", session_id=session_id, error=str(t.exception())
+                )
+                if not t.cancelled() and t.exception()
+                else None
             )
-            if not t.cancelled() and t.exception()
-            else None
         )
     except Exception as exc:
         log.warning("memory_writer.task_scheduling_failed", error=str(exc))

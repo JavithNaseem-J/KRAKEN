@@ -49,10 +49,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ── 2. Open Qdrant client & ensure collection ──────────────────────────────
     try:
         from src.utils.cache import create_async_qdrant_client
+
         client = create_async_qdrant_client()
 
         from src.utils.knowledge.ingest import ensure_collection
-        await ensure_collection(client, settings.qdrant_collection_name, vector_size=settings.embedding_dim)
+
+        await ensure_collection(
+            client, settings.qdrant_collection_name, vector_size=settings.embedding_dim
+        )
 
         app.state.client = client
         app.state.embedder = embedder
@@ -64,6 +68,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if (info.points_count or 0) == 0:
             log.info("knowledge.startup.auto_ingest_starting")
             from src.utils.knowledge.ingest import run_ingest_async
+
             counts = await run_ingest_async(client, embedder)
             log.info("knowledge.startup.auto_ingest_complete", counts=counts)
     except Exception as exc:
@@ -115,9 +120,12 @@ async def retrieve(
         if not retriever:
             from src.utils.cache import create_async_qdrant_client
             from src.utils.embedder import get_embedder
+
             embedder = get_embedder()
             client = getattr(app.state, "client", None) or create_async_qdrant_client()
-            retriever = KnowledgeRetriever(client=client, embedder=embedder, collection_name=settings.qdrant_collection_name)
+            retriever = KnowledgeRetriever(
+                client=client, embedder=embedder, collection_name=settings.qdrant_collection_name
+            )
             app.state.retriever = retriever
         return await retriever.retrieve(body)
     except Exception as exc:
@@ -164,7 +172,9 @@ async def upload_document(
         from src.utils.knowledge.ingest import ingest_uploaded_file_async
 
         content_bytes = await file.read()
-        roles_list = [r.strip().lower() for r in allowed_roles.split(",") if r.strip()] or ["public"]
+        roles_list = [r.strip().lower() for r in allowed_roles.split(",") if r.strip()] or [
+            "public"
+        ]
         count = await ingest_uploaded_file_async(
             client=app.state.client,
             embedder=app.state.embedder,

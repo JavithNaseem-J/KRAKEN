@@ -100,6 +100,7 @@ def extract_text_from_file_bytes(filename: str, file_bytes: bytes) -> str:
             import io
 
             import pypdf
+
             reader = pypdf.PdfReader(io.BytesIO(file_bytes))
             text = "\n".join([page.extract_text() or "" for page in reader.pages])
             if text.strip():
@@ -113,6 +114,7 @@ def extract_text_from_file_bytes(filename: str, file_bytes: bytes) -> str:
             import io
 
             import docx
+
             doc = docx.Document(io.BytesIO(file_bytes))
             return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
         except Exception as exc:
@@ -234,7 +236,9 @@ async def run_ingest_async(client: AsyncQdrantClient, embedder: BGEEmbedder) -> 
     from .loaders.sla_loader import load_sla_chunks
     from .loaders.ticket_loader import load_ticket_chunks
 
-    await ensure_collection(client, settings.qdrant_collection_name, vector_size=settings.embedding_dim)
+    await ensure_collection(
+        client, settings.qdrant_collection_name, vector_size=settings.embedding_dim
+    )
 
     counts: dict[str, int] = {}
 

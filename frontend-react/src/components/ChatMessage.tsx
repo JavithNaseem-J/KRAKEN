@@ -4,13 +4,13 @@ import Markdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-import type { ChatMessage as ChatMessageType } from '../types/agent';
+import type { ChatMessage as ChatMessageType, QueryResponse } from '../types/agent';
 import { InlineApprovalCard } from './InlineApprovalCard';
 
 interface ChatMessageProps {
   message: ChatMessageType;
   isExecuting?: boolean;
-  onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject') => void;
+  onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject', response?: QueryResponse) => void;
   onApprovalExpired?: (approvalId: string) => void;
   onInspectReasoning: (message: ChatMessageType) => void;
 }

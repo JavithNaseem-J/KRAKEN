@@ -131,7 +131,7 @@ export async function fetchApprovalDetails(approvalId: string): Promise<Approval
 
 /**
  * Submit an approve/reject decision for a pending approval.
- * Returns the session_id associated with the resolved approval.
+ * Returns the session_id and resumed agent response associated with the resolved approval.
  */
 export async function submitApprovalDecision(
   approvalId: string,
@@ -139,20 +139,33 @@ export async function submitApprovalDecision(
   csrfToken: string,
   approverRole?: string,
   approverId?: string,
-): Promise<{ session_id: string }> {
+): Promise<{ session_id: string; agent_response?: QueryResponse }> {
   const params: Record<string, string> = { decision, csrf_token: csrfToken };
   if (approverRole) params['approver_role'] = approverRole;
   if (approverId) params['approver_id'] = approverId;
 
   const body = new URLSearchParams(params);
-  const { data: html } = await approvalClient.post<string>(
+  const { data } = await approvalClient.post<{
+    status: string;
+    approval_id: string;
+    decision: string;
+    session_id: string;
+    agent_response?: QueryResponse;
+  }>(
     `/approve/${approvalId}/decision`,
     body,
-    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, responseType: 'text' },
+    {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
+    },
   );
 
-  const sessionMatch = html.match(/session[_-]id["'\s:>=]+([0-9a-fA-F-]{36})/);
-  return { session_id: sessionMatch ? sessionMatch[1] : '' };
+  return {
+    session_id: data.session_id || '',
+    agent_response: data.agent_response,
+  };
 }
 
 /** Shape of each SSE event streamed from /v1/run/stream */

@@ -72,4 +72,3 @@ def generate_incident_html(session_data: dict[str, Any]) -> str:
         messages=messages,
         export_time=export_time,
     )
-

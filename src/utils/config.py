@@ -76,7 +76,9 @@ class Settings(BaseSettings):
 
             pg_url = values.get("postgres_url") or os.getenv("POSTGRES_URL") or ""
             if pg_url and not values.get("postgres_sync_url"):
-                values["postgres_sync_url"] = pg_url.replace("postgresql+asyncpg://", "postgresql://")
+                values["postgres_sync_url"] = pg_url.replace(
+                    "postgresql+asyncpg://", "postgresql://"
+                )
             if not values.get("embedding_api_key"):
                 values["embedding_api_key"] = (
                     os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY") or llm_key.strip()
@@ -113,10 +115,10 @@ class Settings(BaseSettings):
     memory_url: str = "http://localhost:8005"
     audit_url: str = "http://localhost:8006"
 
-    gateway_api_keys: str = (
-        "dev-key-analyst-default:tier1_analyst,dev-key-admin-default:admin"
+    gateway_api_keys: str = "dev-key-analyst-default:tier1_analyst,dev-key-admin-default:admin"
+    cors_allowed_origins: str = (
+        "http://localhost:5173,http://localhost:3000,https://*.onrender.com,*"
     )
-    cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,https://*.onrender.com,*"
     gateway_rate_limit_requests: int = 60
     gateway_rate_limit_window_seconds: int = 60
 

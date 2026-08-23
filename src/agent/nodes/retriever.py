@@ -112,4 +112,3 @@ async def retriever_node(state: GraphState) -> dict:
 
     log.info("retriever.done", session_id=session_id, chunks=len(chunks))
     return {"retrieved_chunks": chunks}
-

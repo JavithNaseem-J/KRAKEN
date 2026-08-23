@@ -124,7 +124,9 @@ class ApprovalQueue:
         try:
             await self._redis.set(f"kraken:csrf:{approval_id}", token, ex=self._timeout)
         except Exception as exc:
-            log.warning("queue.csrf_set_failed_using_in_memory", approval_id=approval_id, error=str(exc))
+            log.warning(
+                "queue.csrf_set_failed_using_in_memory", approval_id=approval_id, error=str(exc)
+            )
             self._in_memory_csrf[approval_id] = token
 
     async def verify_csrf_token(self, approval_id: str, token: str) -> bool:
@@ -134,7 +136,9 @@ class ApprovalQueue:
             if expected is not None:
                 return secrets.compare_digest(str(expected), token)
         except Exception as exc:
-            log.warning("queue.csrf_verify_failed_using_in_memory", approval_id=approval_id, error=str(exc))
+            log.warning(
+                "queue.csrf_verify_failed_using_in_memory", approval_id=approval_id, error=str(exc)
+            )
 
         expected_local = self._in_memory_csrf.pop(approval_id, None)
         if expected_local is not None:

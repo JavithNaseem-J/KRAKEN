@@ -17,4 +17,6 @@ class ErrorResponse(BaseModel):
     details: dict[str, Any] | list[Any] | None = Field(
         default=None, description="Detailed context, validation errors, or exception traces."
     )
-    trace_id: str | None = Field(default=None, description="Request trace ID for distributed debugging.")
+    trace_id: str | None = Field(
+        default=None, description="Request trace ID for distributed debugging."
+    )

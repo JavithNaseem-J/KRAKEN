@@ -143,8 +143,7 @@ def _heuristic_rerank(
     reranked: list[tuple[Any, float]] = []
 
     query_tokens = [
-        t.lower() for t in re.findall(r"\w+", query)
-        if len(t) > 2 and t.lower() not in _STOP_WORDS
+        t.lower() for t in re.findall(r"\w+", query) if len(t) > 2 and t.lower() not in _STOP_WORDS
     ]
 
     # Max possible RRF score for top-ranked item is 2 * (1 / (60 + 1)) = ~0.03278688
@@ -180,7 +179,11 @@ def _heuristic_rerank(
                 doc_t_id = str(payload.get("metadata", {}).get("ticket_id") or "").lower()
                 t_num = re.search(r"\d+", t_lower)
                 num_str = t_num.group(0) if t_num else ""
-                if t_lower in content_lower or t_lower == doc_t_id or (num_str and num_str in doc_t_id):
+                if (
+                    t_lower in content_lower
+                    or t_lower == doc_t_id
+                    or (num_str and num_str in doc_t_id)
+                ):
                     boost += 1.50
 
         if re.search(r"SLA|VPN|IT", query, re.IGNORECASE) and re.search(
@@ -290,7 +293,9 @@ class KnowledgeRetriever:
                     m = re.search(r"(\d+)", tid)
                     if m:
                         num = m.group(1)
-                        expanded_ids.update([f"TCK-{num}", f"T-{num}", f"TK-{num}", f"TCK{num}", f"T{num}"])
+                        expanded_ids.update(
+                            [f"TCK-{num}", f"T-{num}", f"TK-{num}", f"TCK{num}", f"T{num}"]
+                        )
                 query_ids = list(expanded_ids)
 
                 ticket_filter = Filter(
@@ -307,7 +312,11 @@ class KnowledgeRetriever:
                     limit=50,
                     with_payload=True,
                 )
-                scrolled_points = scroll_res[0] if isinstance(scroll_res, tuple) else getattr(scroll_res, "points", [])
+                scrolled_points = (
+                    scroll_res[0]
+                    if isinstance(scroll_res, tuple)
+                    else getattr(scroll_res, "points", [])
+                )
                 existing_ids = {h.id for h in hits}
 
                 for p in scrolled_points:
@@ -331,15 +340,32 @@ class KnowledgeRetriever:
                 m = re.search(r"(\d+)", t)
                 if m:
                     num = m.group(1)
-                    t_lowers.extend([f"tck-{num}", f"t-{num}", f"tk-{num}", f"tck{num}", f"t{num}", num])
+                    t_lowers.extend(
+                        [f"tck-{num}", f"t-{num}", f"tk-{num}", f"tck{num}", f"t{num}", num]
+                    )
 
         q_lower = request.query.lower()
         is_ticket_discovery_query = any(
             kw in q_lower
             for kw in (
-                "ticket", "tickets", "issue", "issues", "incident", "incidents",
-                "outage", "outages", "problem", "problems", "vpn", "access",
-                "open", "closed", "status", "support", "helpdesk", "request"
+                "ticket",
+                "tickets",
+                "issue",
+                "issues",
+                "incident",
+                "incidents",
+                "outage",
+                "outages",
+                "problem",
+                "problems",
+                "vpn",
+                "access",
+                "open",
+                "closed",
+                "status",
+                "support",
+                "helpdesk",
+                "request",
             )
         )
 
@@ -358,15 +384,27 @@ class KnowledgeRetriever:
                 p_t_id = str((payload.get("metadata") or {}).get("ticket_id") or "").lower()
                 if t_lowers:
                     if not any(t in p_content or t == p_t_id for t in t_lowers):
-                        log.warning("retriever.cross_ticket_leak_blocked", doc_id=payload.get("document_id"))
+                        log.warning(
+                            "retriever.cross_ticket_leak_blocked", doc_id=payload.get("document_id")
+                        )
                         continue
                 elif not is_ticket_discovery_query:
-                    log.warning("retriever.unrelated_ticket_leak_blocked", doc_id=payload.get("document_id"))
+                    log.warning(
+                        "retriever.unrelated_ticket_leak_blocked", doc_id=payload.get("document_id")
+                    )
                     continue
 
             # Enterprise RBAC Security Clearance Filter
-            raw_roles = payload.get("allowed_roles") or (payload.get("metadata") or {}).get("allowed_roles") or ["public"]
-            allowed_roles = [str(r).lower().strip() for r in raw_roles] if isinstance(raw_roles, list) else ["public"]
+            raw_roles = (
+                payload.get("allowed_roles")
+                or (payload.get("metadata") or {}).get("allowed_roles")
+                or ["public"]
+            )
+            allowed_roles = (
+                [str(r).lower().strip() for r in raw_roles]
+                if isinstance(raw_roles, list)
+                else ["public"]
+            )
 
             # Admin / SecOps roles override generic RBAC checks; public documents are open to everyone
             if (
@@ -387,14 +425,23 @@ class KnowledgeRetriever:
             is_internal_sop = any(
                 term in p_text
                 for term in (
-                    "SOP-02", "SOP-03", "Network Containment API",
-                    "volatility script", "RAM dump", "memory snapshot",
-                    "Revoke-AzureADUserAllRefreshToken"
+                    "SOP-02",
+                    "SOP-03",
+                    "Network Containment API",
+                    "volatility script",
+                    "RAM dump",
+                    "memory snapshot",
+                    "Revoke-AzureADUserAllRefreshToken",
                 )
             )
             privileged_roles = {
-                "admin", "security_lead", "approver", "operator",
-                "soc_tier2", "soc_tier3", "incident_commander"
+                "admin",
+                "security_lead",
+                "approver",
+                "operator",
+                "soc_tier2",
+                "soc_tier3",
+                "incident_commander",
             }
             if is_internal_sop and user_role not in privileged_roles:
                 log.warning(
@@ -412,12 +459,15 @@ class KnowledgeRetriever:
                 if "[🔒 RESTRICTED" not in masked_payload["content"]:
                     masked_payload["content"] = (
                         "[🔒 RESTRICTED: Classified Forensic Runbook — Requires Incident Commander Clearance]\n"
-                        + p_text[:120] + "..."
+                        + p_text[:120]
+                        + "..."
                     )
                 hit.payload = masked_payload
 
             # Declarative Policy-as-Code data leakage prevention
-            policy_redacted = get_policy_engine().redact_knowledge_content(user_role, hit.payload.get("content", ""))
+            policy_redacted = get_policy_engine().redact_knowledge_content(
+                user_role, hit.payload.get("content", "")
+            )
             if policy_redacted != hit.payload.get("content", ""):
                 masked_payload = dict(hit.payload)
                 masked_payload["content"] = policy_redacted

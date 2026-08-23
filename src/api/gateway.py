@@ -219,11 +219,17 @@ async def _proxy(
     body["user_id"] = user_id
 
     try:
-        is_mock_http = type(getattr(request.app.state, "http", None)).__name__ in ("MagicMock", "AsyncMock", "Mock")
+        is_mock_http = type(getattr(request.app.state, "http", None)).__name__ in (
+            "MagicMock",
+            "AsyncMock",
+            "Mock",
+        )
         target_app = None if is_mock_http else get_in_process_app_for_url(upstream_url)
         if target_app is not None:
             async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=target_app), base_url="http://internal", timeout=120.0
+                transport=httpx.ASGITransport(app=target_app),
+                base_url="http://internal",
+                timeout=120.0,
             ) as client:
                 resp = await client.post(upstream_url, json=body, headers=forward_headers)
         else:
@@ -342,7 +348,15 @@ _HIGH_PRIVILEGE_PATTERNS = re.compile(
 )
 
 _ALLOWED_OPERATOR_ROLES: frozenset[str] = frozenset(
-    {"operator", "tier1_analyst", "incident_commander", "security_lead", "admin", "soc_tier1", "soc_tier2"}
+    {
+        "operator",
+        "tier1_analyst",
+        "incident_commander",
+        "security_lead",
+        "admin",
+        "soc_tier1",
+        "soc_tier2",
+    }
 )
 
 
@@ -378,7 +392,9 @@ async def run(request: Request) -> JSONResponse:
 
     message = body.get("message", "") if isinstance(body, dict) else ""
     if isinstance(message, str) and message:
-        is_operator = request.headers.get("X-Operator-Role", "").strip().lower() in _ALLOWED_OPERATOR_ROLES
+        is_operator = (
+            request.headers.get("X-Operator-Role", "").strip().lower() in _ALLOWED_OPERATOR_ROLES
+        )
         if check_prompt_injection(message) and not is_operator:
             log.warning("gateway.prompt_injection_blocked", path=request.url.path)
             return JSONResponse(
@@ -465,7 +481,9 @@ async def run_stream(request: Request) -> Any:
 
     message = body.get("message", "") if isinstance(body, dict) else ""
     if isinstance(message, str) and message:
-        is_operator = request.headers.get("X-Operator-Role", "").strip().lower() in _ALLOWED_OPERATOR_ROLES
+        is_operator = (
+            request.headers.get("X-Operator-Role", "").strip().lower() in _ALLOWED_OPERATOR_ROLES
+        )
         if check_prompt_injection(message) and not is_operator:
             log.warning("gateway.prompt_injection_blocked", path=request.url.path)
             return JSONResponse(
@@ -507,18 +525,26 @@ async def run_stream(request: Request) -> Any:
 
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
     forward_headers = service_headers(trace_id=request_id)
-    forward_headers.update({
-        "X-Request-Id": request_id,
-        "Content-Type": "application/json",
-    })
+    forward_headers.update(
+        {
+            "X-Request-Id": request_id,
+            "Content-Type": "application/json",
+        }
+    )
 
     async def stream_generator():
-        is_mock_http = type(getattr(request.app.state, "http", None)).__name__ in ("MagicMock", "AsyncMock", "Mock")
+        is_mock_http = type(getattr(request.app.state, "http", None)).__name__ in (
+            "MagicMock",
+            "AsyncMock",
+            "Mock",
+        )
         target_app = None if is_mock_http else get_in_process_app_for_url(settings.orchestrator_url)
         if target_app is not None:
             async with (
                 httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=target_app), base_url="http://internal", timeout=120.0
+                    transport=httpx.ASGITransport(app=target_app),
+                    base_url="http://internal",
+                    timeout=120.0,
                 ) as client,
                 client.stream(
                     "POST",
@@ -727,5 +753,3 @@ async def audit_history_proxy(request: Request, trace_id: str) -> JSONResponse:
             content={"error": "Audit service unavailable."},
             headers={"X-Request-Id": request_id},
         )
-
-

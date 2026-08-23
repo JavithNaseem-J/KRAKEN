@@ -48,7 +48,9 @@ def load_sla_chunks() -> list[dict[str, Any]]:
                 res_hours = p_info.get("resolution_time_hours")
                 app_level = p_info.get("approval_level", "")
                 escalation = p_info.get("escalation_chain", [])
-                esc_str = " → ".join(escalation) if isinstance(escalation, list) else str(escalation)
+                esc_str = (
+                    " → ".join(escalation) if isinstance(escalation, list) else str(escalation)
+                )
 
                 content_parts = [
                     f"SLA Severity Level: {p_level} ({name})",
@@ -60,33 +62,37 @@ def load_sla_chunks() -> list[dict[str, Any]]:
                 ]
                 content = "\n".join(p for p in content_parts if p)
 
-                chunks.append({
-                    "id": f"sla_{p_level.lower()}",
-                    "chunk_id": f"sla_{p_level.lower()}",
-                    "document": content,
-                    "content": content,
-                    "metadata": {
-                        "severity": p_level,
-                        "name": name,
-                        "response_time_minutes": resp_mins,
-                        "resolution_time_hours": res_hours,
-                        "file_name": json_path.name,
-                    },
-                })
+                chunks.append(
+                    {
+                        "id": f"sla_{p_level.lower()}",
+                        "chunk_id": f"sla_{p_level.lower()}",
+                        "document": content,
+                        "content": content,
+                        "metadata": {
+                            "severity": p_level,
+                            "name": name,
+                            "response_time_minutes": resp_mins,
+                            "resolution_time_hours": res_hours,
+                            "file_name": json_path.name,
+                        },
+                    }
+                )
 
         risk_mapping = data.get("action_risk_mapping", {})
         if isinstance(risk_mapping, dict) and risk_mapping:
             mapping_lines = [f"- {action}: {risk}" for action, risk in risk_mapping.items()]
             content = "SLA Action Risk Level Mapping:\n" + "\n".join(mapping_lines)
-            chunks.append({
-                "id": "sla_action_risk_mapping",
-                "chunk_id": "sla_action_risk_mapping",
-                "document": content,
-                "content": content,
-                "metadata": {
-                    "type": "action_risk_mapping",
-                    "file_name": json_path.name,
-                },
-            })
+            chunks.append(
+                {
+                    "id": "sla_action_risk_mapping",
+                    "chunk_id": "sla_action_risk_mapping",
+                    "document": content,
+                    "content": content,
+                    "metadata": {
+                        "type": "action_risk_mapping",
+                        "file_name": json_path.name,
+                    },
+                }
+            )
 
     return chunks

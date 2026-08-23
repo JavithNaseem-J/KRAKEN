@@ -122,4 +122,3 @@ def backup_if_exists(target: Path) -> Path | None:
 
     shutil.copy2(target, backup_path)
     return backup_path
-

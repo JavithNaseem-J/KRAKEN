@@ -183,9 +183,7 @@ HANDLER_MAP: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
         description=p.get("description", p.get("reason", "")),
         evidence=p.get("evidence", ""),
     ),
-    "write_json_file": lambda p: write_json_file(
-        p.get("target_path", ""), p.get("content", {})
-    ),
+    "write_json_file": lambda p: write_json_file(p.get("target_path", ""), p.get("content", {})),
     "quarantine_ip": lambda p: quarantine_ip_handler(
         ip=p.get("ip", ""), reason=p.get("reason"), evidence=p.get("evidence")
     ),

@@ -13,7 +13,7 @@ import {
   Key,
   PanelLeftOpen,
 } from "lucide-react";
-import type { ChatMessage as ChatMessageType, UserRole } from "@/types/agent";
+import type { ChatMessage as ChatMessageType, QueryResponse, UserRole } from "@/types/agent";
 import type { AgentStreamEvent } from "@/services/api";
 import { ChatMessage } from "@/components/ChatMessage";
 
@@ -62,7 +62,7 @@ interface RuixenMoonChatProps {
   sessionTitle?: string;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
-  onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject') => void;
+  onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject', response?: QueryResponse) => void;
   onApprovalExpired?: (approvalId: string) => void;
   onInspectReasoning: (message: ChatMessageType) => void;
   streamingSteps?: AgentStreamEvent[];
@@ -366,8 +366,8 @@ export default function RuixenMoonChat({
 
           {/* Caution / Disclaimer Footer */}
           <div className="mt-3.5 text-center px-4">
-            <p className="text-[11px] font-mono tracking-tight text-neutral-400/90 leading-relaxed">
-              KRAKEN can make mistakes. Verify important security information.
+            <p className="text-[11px] font-mono tracking-tight text-neutral-400/90 leading-relaxed uppercase">
+              KRAKEN CAN MAKE MISTAKES. VERIFY IMPORTANT SECURITY INFORMATION.
             </p>
           </div>
         </div>

@@ -92,4 +92,3 @@ class RetrievalResult(BaseModel):
     query: str
     total_retrieved: int
     sources_queried: list[KnowledgeSource]
-

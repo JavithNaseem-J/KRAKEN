@@ -85,9 +85,7 @@ async def responder_node(state: GraphState) -> dict:
         and (action_result.get("success") or action_result.get("ticket_id"))
     ):
         truncated_res = _truncate_result(action_result)
-        system_prompt_to_use += get_prompt(
-            "responder", "APPROVAL_MANDATE_TEMPLATE"
-        ).format(
+        system_prompt_to_use += get_prompt("responder", "APPROVAL_MANDATE_TEMPLATE").format(
             selected_action=selected_action,
             truncated_res=truncated_res,
         )
@@ -104,7 +102,11 @@ async def responder_node(state: GraphState) -> dict:
     except Exception as exc:
         log.error("responder.llm_error", error=str(exc))
         err_msg = str(exc)
-        if "llm_api_key must be configured" in err_msg or "API key" in err_msg or "api_key" in err_msg:
+        if (
+            "llm_api_key must be configured" in err_msg
+            or "API key" in err_msg
+            or "api_key" in err_msg
+        ):
             final_answer = (
                 "⚠️ **LLM Service Unconfigured**: `LLM_API_KEY` is missing in backend environment variables. "
                 "Please add `LLM_API_KEY` (or `GROQ_API_KEY` / `OPENAI_API_KEY`) in your Render Dashboard environment variables."
@@ -132,4 +134,3 @@ async def responder_node(state: GraphState) -> dict:
         "action_explanation": explanation,
         "messages": [{"role": "assistant", "content": final_answer}],
     }
-

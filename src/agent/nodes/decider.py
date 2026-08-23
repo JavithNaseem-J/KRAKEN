@@ -42,7 +42,6 @@ class DecisionOutput(BaseModel):
     explanation: str = ""
 
 
-
 async def decider_node(state: GraphState) -> dict:
     """
     Select action + validate risk level against registry.

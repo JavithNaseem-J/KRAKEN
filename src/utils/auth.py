@@ -61,6 +61,7 @@ def verify_service_token(
 def parse_api_keys(raw_keys: str) -> dict[str, dict[str, str]]:
     """Parse JSON mapping or comma-separated API key config string into key map."""
     import json
+
     if not raw_keys:
         return {}
     try:
@@ -85,7 +86,12 @@ def parse_api_keys(raw_keys: str) -> dict[str, dict[str, str]]:
 class APIKeyMiddleware(BaseHTTPMiddleware):
     """FastAPI/Starlette middleware to validate API key headers on incoming gateway requests."""
 
-    def __init__(self, app, api_keys: dict[str, dict[str, str]] | None = None, api_keys_map: dict[str, dict[str, str]] | None = None) -> None:
+    def __init__(
+        self,
+        app,
+        api_keys: dict[str, dict[str, str]] | None = None,
+        api_keys_map: dict[str, dict[str, str]] | None = None,
+    ) -> None:
         super().__init__(app)
         self.api_keys_map = api_keys or api_keys_map or {}
 
@@ -115,7 +121,9 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         current_keys = parse_api_keys(settings.gateway_api_keys)
         valid_keys = {**self.api_keys_map, **current_keys} if self.api_keys_map else current_keys
 
-        if api_key and (api_key in valid_keys or safe_compare_tokens(api_key, settings.gateway_api_keys)):
+        if api_key and (
+            api_key in valid_keys or safe_compare_tokens(api_key, settings.gateway_api_keys)
+        ):
             return await call_next(request)
 
         return JSONResponse(

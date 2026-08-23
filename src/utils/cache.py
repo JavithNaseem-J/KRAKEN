@@ -60,9 +60,15 @@ class SemanticCache:
             if not await self._client.collection_exists(SEMANTIC_CACHE_COLLECTION):
                 await self._client.create_collection(
                     collection_name=SEMANTIC_CACHE_COLLECTION,
-                    vectors_config=VectorParams(size=settings.embedding_dim, distance=Distance.COSINE),
+                    vectors_config=VectorParams(
+                        size=settings.embedding_dim, distance=Distance.COSINE
+                    ),
                 )
-                log.info("semantic_cache.collection_created", collection=SEMANTIC_CACHE_COLLECTION, size=settings.embedding_dim)
+                log.info(
+                    "semantic_cache.collection_created",
+                    collection=SEMANTIC_CACHE_COLLECTION,
+                    size=settings.embedding_dim,
+                )
             else:
                 info = await self._client.get_collection(collection_name=SEMANTIC_CACHE_COLLECTION)
                 vectors = info.config.params.vectors

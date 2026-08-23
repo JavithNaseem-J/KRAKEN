@@ -173,8 +173,7 @@ def load_faq_chunks() -> list[dict[str, Any]]:
                 log.warning("faq_loader.empty_file", file=file_path.name)
                 continue
             section_chunks = [
-                (c, file_path.stem.replace("_", " ").title())
-                for c in _chunk_text(raw)
+                (c, file_path.stem.replace("_", " ").title()) for c in _chunk_text(raw)
             ]
 
         doc_id = hashlib.blake2b(file_path.name.encode(), digest_size=6).hexdigest()

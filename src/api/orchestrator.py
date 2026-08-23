@@ -42,7 +42,7 @@ from src.utils.llm import validate_llm_config
 from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.agent import QueryRequest, QueryResponse
-from src.utils.observability import get_langfuse_callback_handler
+from src.utils.observability import flush_langfuse, get_langfuse_callback_handler
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -249,6 +249,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if getattr(app.state, "conn_pool", None):
         with contextlib.suppress(Exception):
             app.state.conn_pool.close()
+
+    flush_langfuse()
     log.info("orchestrator.shutdown")
 
 
@@ -269,9 +271,30 @@ async def metrics() -> PlainTextResponse:
     return PlainTextResponse(content=metrics_text("orchestrator"))
 
 
-def _graph_config(session_id: str) -> dict:
+def _graph_config(
+    session_id: str,
+    user_id: str | None = None,
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict:
     """LangGraph thread config — all checkpointed state lives under this key."""
-    cfg: dict[str, Any] = {"configurable": {"thread_id": session_id}}
+    trace_tags = list(tags) if tags else ["kraken-agent"]
+    if settings.environment and settings.environment not in trace_tags:
+        trace_tags.append(settings.environment)
+
+    trace_meta = {
+        "langfuse_session_id": session_id,
+        "langfuse_user_id": user_id or "anonymous",
+        "langfuse_trace_name": "kraken-agent-run",
+        "langfuse_tags": trace_tags,
+        **(metadata or {}),
+    }
+
+    cfg: dict[str, Any] = {
+        "configurable": {"thread_id": session_id},
+        "tags": trace_tags,
+        "metadata": trace_meta,
+    }
     callbacks = get_langfuse_callback_handler()
     if callbacks:
         cfg["callbacks"] = callbacks
@@ -316,7 +339,6 @@ async def _fetch_session_messages(
     return []
 
 
-
 def _initial_state(body: QueryRequest, session_messages: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the initial graph state shared by /run and /run/stream."""
     return {
@@ -355,7 +377,12 @@ async def _clear_stale_interrupt(graph: Any, config: dict, session_id: str) -> N
         log.warning("orchestrator.stale_hitl_clear_failed", session_id=session_id, error=str(exc))
 
 
-async def _get_graph(session_id: str) -> tuple[Any, dict]:
+async def _get_graph(
+    session_id: str,
+    user_id: str | None = None,
+    tags: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> tuple[Any, dict]:
     """
     Return the compiled graph and its LangGraph config for a given session_id.
 
@@ -369,7 +396,12 @@ async def _get_graph(session_id: str) -> tuple[Any, dict]:
         app.state.agent_graph = await build_graph_async(None)
         graph = app.state.agent_graph
 
-    config = _graph_config(session_id)
+    config = _graph_config(
+        session_id=session_id,
+        user_id=user_id,
+        tags=tags,
+        metadata=metadata,
+    )
 
     # Quick liveness probe: try aget_state and catch a dead connection.
     try:
@@ -419,7 +451,12 @@ async def _get_graph(session_id: str) -> tuple[Any, dict]:
         app.state.agent_graph = await build_graph_async(None)
 
     graph = app.state.agent_graph
-    config = _graph_config(session_id)
+    config = _graph_config(
+        session_id=session_id,
+        user_id=user_id,
+        tags=tags,
+        metadata=metadata,
+    )
     return graph, config
 
 
@@ -435,7 +472,12 @@ async def run(body: QueryRequest) -> Any:
     # _get_graph() returns a healthy (graph, config) pair — auto-reconnects if
     # the Postgres async connection was dropped by Supabase's idle timeout.
     try:
-        graph, config = await _get_graph(body.session_id)
+        graph, config = await _get_graph(
+            session_id=body.session_id,
+            user_id=body.user_id,
+            tags=["kraken-agent", "sync-run"],
+            metadata={"endpoint": "/run", "user_id": body.user_id},
+        )
     except Exception as exc:
         log.error("orchestrator.graph_init_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -471,12 +513,14 @@ async def run(body: QueryRequest) -> Any:
     if cache and body.message and http_client:
         try:
             from src.utils.embedder import get_embedder
+
             embedder = get_embedder()
             query_vector = await asyncio.to_thread(embedder.embed_query, body.message)
             cached = await cache.get(query_vector)
             if cached:
                 log.info("orchestrator.semantic_cache_hit", session_id=body.session_id)
                 from src.utils.audit.client import fire_audit_log
+
                 asyncio.create_task(
                     fire_audit_log(
                         client=http_client,
@@ -507,6 +551,15 @@ async def run(body: QueryRequest) -> Any:
     session_messages = await _fetch_session_messages(body.session_id, client=http_client)
 
     initial_state = _initial_state(body, session_messages)
+
+    # ── If session is stuck in a HITL interrupt, clear it when a new message arrives
+    if body.message:
+        try:
+            snapshot = await graph.aget_state(config)
+            if snapshot.next:
+                await _clear_stale_interrupt(graph, config, body.session_id)
+        except Exception as exc:
+            log.warning("orchestrator.run_stale_hitl_clear_failed", error=str(exc))
 
     if getattr(app.state, "is_shutting_down", False):
         raise HTTPException(
@@ -588,7 +641,12 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
     # _get_graph() returns a healthy (graph, config) pair — auto-reconnects if
     # the Postgres async connection was dropped by Supabase's idle timeout.
     try:
-        graph, config = await _get_graph(body.session_id)
+        graph, config = await _get_graph(
+            session_id=body.session_id,
+            user_id=body.user_id,
+            tags=["kraken-agent", "stream-run"],
+            metadata={"endpoint": "/run/stream", "user_id": body.user_id},
+        )
     except Exception as exc:
         log.error("orchestrator.stream_graph_init_failed", error=str(exc))
         error_message = str(exc)
@@ -596,9 +654,14 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
         # Return an SSE error event rather than a hard 500
         async def _err_gen() -> AsyncGenerator[str, None]:
             import json
+
             yield f"data: {json.dumps({'node': 'error', 'status': 'error', 'message': error_message})}\n\n"
-        return StreamingResponse(_err_gen(), media_type="text/event-stream",
-                                   headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+        return StreamingResponse(
+            _err_gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     # ── If session is stuck in a HITL interrupt, clear it without invoking
     # responder_node on the stale query state.
@@ -657,9 +720,16 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                                 response = _build_response(body.session_id, snapshot.values)
                                 extra = {"response": response.model_dump(mode="json")}
                         except Exception as snapshot_exc:
-                            log.warning("orchestrator.stream_snapshot_failed", error=str(snapshot_exc))
+                            log.warning(
+                                "orchestrator.stream_snapshot_failed", error=str(snapshot_exc)
+                            )
                     payload = json.dumps(
-                        {"node": name, "status": "end", "elapsed_ms": round((now - start) * 1000), **extra}
+                        {
+                            "node": name,
+                            "status": "end",
+                            "elapsed_ms": round((now - start) * 1000),
+                            **extra,
+                        }
                     )
                     yield f"data: {payload}\n\n"
 
@@ -677,28 +747,32 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                     action=action_name,
                 )
 
-                hitl_payload = json.dumps({
-                    "node": "interrupt",
-                    "status": "pending_approval",
-                    "elapsed_ms": round((time.monotonic() - start) * 1000),
-                    "response": {
+                hitl_payload = json.dumps(
+                    {
+                        "node": "interrupt",
                         "status": "pending_approval",
-                        "approval_id": approval_id,
-                        "session_id": body.session_id,
-                        "message": "A CRITICAL triage action requires human approval. Check the approval service.",
-                    },
-                })
+                        "elapsed_ms": round((time.monotonic() - start) * 1000),
+                        "response": {
+                            "status": "pending_approval",
+                            "approval_id": approval_id,
+                            "session_id": body.session_id,
+                            "message": "A CRITICAL triage action requires human approval. Check the approval service.",
+                        },
+                    }
+                )
                 yield f"data: {hitl_payload}\n\n"
             elif snapshot.values and "final_answer" in snapshot.values:
                 response = _build_response(body.session_id, snapshot.values)
                 extra_done = {"response": response.model_dump(mode="json")}
 
-            done_payload = json.dumps({
-                "node": "done",
-                "status": "end",
-                "elapsed_ms": round((time.monotonic() - start) * 1000),
-                **extra_done,
-            })
+            done_payload = json.dumps(
+                {
+                    "node": "done",
+                    "status": "end",
+                    "elapsed_ms": round((time.monotonic() - start) * 1000),
+                    **extra_done,
+                }
+            )
             yield f"data: {done_payload}\n\n"
 
         except Exception as exc:
@@ -760,7 +834,16 @@ async def approval_callback(
         await semaphore.acquire()
 
     graph = app.state.agent_graph
-    config = _graph_config(session_id)
+    config = _graph_config(
+        session_id=session_id,
+        user_id=body.approver_id,
+        tags=["kraken-agent", "hitl-resume", body.decision],
+        metadata={
+            "approval_id": body.approval_id,
+            "decision": body.decision,
+            "approver_role": body.approver_role,
+        },
+    )
 
     try:
         log.info(
@@ -810,7 +893,10 @@ def _extract_interrupt(snapshot: Any) -> dict[str, Any]:
                 return val
     return {}
 
-def _build_response(session_id: str, state: dict[str, Any], trace_id: str | None = None) -> QueryResponse:
+
+def _build_response(
+    session_id: str, state: dict[str, Any], trace_id: str | None = None
+) -> QueryResponse:
     """Convert final graph state into a QueryResponse with a unique execution trace ID."""
     selected_action = state.get("selected_action")
     is_auto_respond = not selected_action or selected_action == "auto_respond"
@@ -829,16 +915,31 @@ def _build_response(session_id: str, state: dict[str, Any], trace_id: str | None
             else:
                 source_str = str(source_val or meta.get("source", "unknown"))
 
-            formatted_chunks.append({
-                "chunk_id": str(c.get("chunk_id") or c.get("id") or ""),
-                "source": source_str,
-                "document_id": str(c.get("document_id") or meta.get("document_id") or meta.get("file_name") or "doc"),
-                "content": str(c.get("content", "")),
-                "relevance_score": score,
-                "metadata": meta if isinstance(meta, dict) else {},
-            })
+            formatted_chunks.append(
+                {
+                    "chunk_id": str(c.get("chunk_id") or c.get("id") or ""),
+                    "source": source_str,
+                    "document_id": str(
+                        c.get("document_id")
+                        or meta.get("document_id")
+                        or meta.get("file_name")
+                        or "doc"
+                    ),
+                    "content": str(c.get("content", "")),
+                    "relevance_score": score,
+                    "metadata": meta if isinstance(meta, dict) else {},
+                }
+            )
 
-    chunk_scores = [c["relevance_score"] for c in formatted_chunks] if formatted_chunks else [float(c.get("relevance_score", 0.0)) for c in state.get("retrieved_chunks", []) if isinstance(c, dict)]
+    chunk_scores = (
+        [c["relevance_score"] for c in formatted_chunks]
+        if formatted_chunks
+        else [
+            float(c.get("relevance_score", 0.0))
+            for c in state.get("retrieved_chunks", [])
+            if isinstance(c, dict)
+        ]
+    )
 
     resolved_trace_id = trace_id or state.get("trace_id") or str(uuid.uuid4())
 

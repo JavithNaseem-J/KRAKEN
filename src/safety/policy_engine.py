@@ -45,7 +45,6 @@ def should_override_to_auto_respond(user_message: str, proposed_action: str) -> 
     return should_override, is_status_query
 
 
-
 class ClearanceLevel(StrEnum):
     PUBLIC = "PUBLIC"
     TIER_1 = "TIER_1"
@@ -186,7 +185,9 @@ SENSITIVE_KNOWLEDGE_PATTERNS: list[tuple[re.Pattern, str, ClearanceLevel]] = [
         ClearanceLevel.TIER_2,
     ),
     (
-        re.compile(r"(?:api_key|token|secret)\s*[:=]\s*['\"][a-zA-Z0-9_\-]{8,}['\"]", re.IGNORECASE),
+        re.compile(
+            r"(?:api_key|token|secret)\s*[:=]\s*['\"][a-zA-Z0-9_\-]{8,}['\"]", re.IGNORECASE
+        ),
         "[🔒 REDACTED: API credential masked by Least-Privilege Policy]",
         ClearanceLevel.ADMIN,
     ),

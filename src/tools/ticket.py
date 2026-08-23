@@ -370,7 +370,9 @@ def execute_create_ticket(
     if pool is not None:
         try:
             with pool.connection() as conn, conn.cursor() as cur:
-                cur.execute("SELECT MAX(CAST(SUBSTRING(id FROM 4) AS INTEGER)) FROM tickets WHERE id LIKE 'TK-%';")
+                cur.execute(
+                    "SELECT MAX(CAST(SUBSTRING(id FROM 4) AS INTEGER)) FROM tickets WHERE id LIKE 'TK-%';"
+                )
                 row = cur.fetchone()
                 max_num = row[0] if (row and row[0] is not None) else 13
                 new_id = f"TK-{max_num + 1:03d}"
@@ -419,7 +421,9 @@ def execute_create_ticket(
     }
 
 
-def quarantine_ip_handler(ip: str, reason: str | None = None, evidence: str | None = None) -> dict[str, Any]:
+def quarantine_ip_handler(
+    ip: str, reason: str | None = None, evidence: str | None = None
+) -> dict[str, Any]:
     """Execute firewall quarantine action with verifiable downstream transaction attestation."""
     import random
     import uuid
@@ -456,7 +460,9 @@ def quarantine_ip_handler(ip: str, reason: str | None = None, evidence: str | No
     }
 
 
-def unlock_account_handler(user_email: str, reason: str | None = None, evidence: str | None = None) -> dict[str, Any]:
+def unlock_account_handler(
+    user_email: str, reason: str | None = None, evidence: str | None = None
+) -> dict[str, Any]:
     """Execute Active Directory account unlock with verified downstream transaction receipt."""
     import uuid
     from datetime import UTC, datetime
@@ -466,7 +472,9 @@ def unlock_account_handler(user_email: str, reason: str | None = None, evidence:
     tx_id = f"AZURE-GRAPH-TX-{uuid.uuid4().hex[:12].upper()}"
     timestamp = datetime.now(UTC).isoformat()
 
-    log.info("action.unlock_account_executed", user_email=clean_email, reason=clean_reason, tx_id=tx_id)
+    log.info(
+        "action.unlock_account_executed", user_email=clean_email, reason=clean_reason, tx_id=tx_id
+    )
     return {
         "success": True,
         "action": "unlock_account",
@@ -498,15 +506,17 @@ def get_ticket_by_id(ticket_id: str) -> dict[str, Any] | None:
     # Generate candidate ID variants (e.g. TCK-1001, T-1001, TK-1001, 1001)
     variants = [clean_id.lower()]
     if target_num:
-        variants.extend([
-            f"tck-{target_num}",
-            f"t-{target_num}",
-            f"tk-{target_num}",
-            f"inc-{target_num}",
-            f"tck{target_num}",
-            f"t{target_num}",
-            target_num,
-        ])
+        variants.extend(
+            [
+                f"tck-{target_num}",
+                f"t-{target_num}",
+                f"tk-{target_num}",
+                f"inc-{target_num}",
+                f"tck{target_num}",
+                f"t{target_num}",
+                target_num,
+            ]
+        )
 
     pool = get_pg_pool()
     if pool is not None:
@@ -536,4 +546,3 @@ def get_ticket_by_id(ticket_id: str) -> dict[str, Any] | None:
         if t_id in variants or (target_num and t_num_str == target_num):
             return t
     return None
-

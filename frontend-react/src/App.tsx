@@ -98,7 +98,11 @@ function queryResponseToMessage(res: QueryResponse): ChatMessageType {
 export default function App() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     const loaded = loadSessions();
-    return loaded.length > 0 ? loaded : [newSession()];
+    if (loaded.length > 0 && loaded[0].messages.length === 0) {
+      return loaded;
+    }
+    const fresh = newSession();
+    return [fresh, ...loaded];
   });
   const [activeSessionId, setActiveSessionId] = useState<string>(
     () => sessions[0]?.session_id ?? '',
@@ -294,27 +298,41 @@ export default function App() {
   };
 
   const handleApprovalResolved = useCallback(
-    (approvalId: string, decision: 'approve' | 'reject') => {
+    (approvalId: string, decision: 'approve' | 'reject', agentResponse?: QueryResponse) => {
       const sessionId = pendingSessionId ?? activeSessionId;
-      updateSession(sessionId, (s) => ({
-        ...s,
-        messages: s.messages.map((m) =>
+      updateSession(sessionId, (s) => {
+        const updatedMessages = s.messages.map((m) =>
           m.approval_id === approvalId
-            ? { ...m, approval_state: decision === 'approve' ? 'approved' : 'rejected' }
+            ? { ...m, approval_state: decision === 'approve' ? ('approved' as const) : ('rejected' as const) }
             : m,
-        ),
-      }));
+        );
+        if (decision === 'reject') {
+          return {
+            ...s,
+            messages: [
+              ...updatedMessages,
+              {
+                id: crypto.randomUUID(),
+                role: 'system' as const,
+                content: 'Action rejected. The agent will not execute the requested operation.',
+                timestamp: new Date().toISOString(),
+              },
+            ],
+          };
+        } else if (agentResponse) {
+          return {
+            ...s,
+            messages: [...updatedMessages, queryResponseToMessage(agentResponse)],
+          };
+        }
+        return {
+          ...s,
+          messages: updatedMessages,
+        };
+      });
       setPendingSessionId(null);
-      if (decision === 'reject') {
-        appendMessage(sessionId, {
-          id: crypto.randomUUID(),
-          role: 'system',
-          content: 'Action rejected. The agent will not execute the requested operation.',
-          timestamp: new Date().toISOString(),
-        });
-      }
     },
-    [pendingSessionId, activeSessionId, updateSession, appendMessage],
+    [pendingSessionId, activeSessionId, updateSession],
   );
 
   const handleApprovalExpired = useCallback(
