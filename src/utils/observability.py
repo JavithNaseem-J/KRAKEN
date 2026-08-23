@@ -16,9 +16,6 @@ _langfuse_client: Any = None
 def get_langfuse_client() -> Any:
     """Return the singleton Langfuse client instance if credentials are valid."""
     global _langfuse_client
-    if _langfuse_client is not None:
-        return _langfuse_client
-
     if not (settings.langfuse_public_key and settings.langfuse_secret_key):
         return None
     if (
@@ -26,6 +23,9 @@ def get_langfuse_client() -> Any:
         or "your-secret-key" in settings.langfuse_secret_key
     ):
         return None
+
+    if _langfuse_client is not None:
+        return _langfuse_client
 
     try:
         from langfuse import Langfuse

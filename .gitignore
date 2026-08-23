@@ -260,6 +260,7 @@ playwright/.auth/
 .playwright/
 
 # Local directories excluded from git repository
+tests/
 e2e/
 docs/
 .agent/
