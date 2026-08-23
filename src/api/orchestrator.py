@@ -712,7 +712,13 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                     if (
                         name in ("responder", "responder_node")
                         or "final_answer" in output
-                        or (isinstance(output, dict) and ("final_answer" in output.get(name, {}) or "action_result" in output.get(name, {})))
+                        or (
+                            isinstance(output, dict)
+                            and (
+                                "final_answer" in output.get(name, {})
+                                or "action_result" in output.get(name, {})
+                            )
+                        )
                     ):
                         try:
                             snapshot = await graph.aget_state(config)
