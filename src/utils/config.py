@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     )
 
     # ── Environment ───────────────────────────────────────────────────────────
-    environment: Literal["dev", "staging", "prod"] = "dev"
+    environment: Literal["dev", "staging", "prod", "test"] = "dev"
 
     # ── LLM ───────────────────────────────────────────────────────────────────
     llm_base_url: str = "https://api.groq.com/openai/v1"
