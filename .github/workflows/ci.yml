@@ -20,7 +20,7 @@ jobs:
   # 1. Backend Linting, Static Analysis & Security Audit
   # ============================================================================
   backend-lint-and-audit:
-    name: 🔍 Backend Lint & Static Analysis
+    name: Backend Lint and Static Analysis
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Source Code
@@ -50,7 +50,7 @@ jobs:
   # 2. Backend Automated Test Suite
   # ============================================================================
   backend-test-suite:
-    name: 🧪 Backend Automated Tests
+    name: Backend Automated Tests
     runs-on: ubuntu-latest
     needs: [backend-lint-and-audit]
     steps:
@@ -97,7 +97,7 @@ jobs:
   # 3. Frontend Lint, Type Check & Production Bundle Build
   # ============================================================================
   frontend-build:
-    name: ⚛️ Frontend Build & Typecheck
+    name: Frontend Build and Typecheck
     runs-on: ubuntu-latest
     needs: [backend-test-suite]
     defaults:
@@ -117,7 +117,7 @@ jobs:
       - name: Install NPM Dependencies
         run: npm ci
 
-      - name: Run ESLint & Typecheck
+      - name: Run ESLint and Typecheck
         run: npm run lint
 
       - name: Build Production Vite Bundle
@@ -127,14 +127,14 @@ jobs:
   # 4. Container Vulnerability & Security Scan
   # ============================================================================
   security-scan:
-    name: 🛡️ Security & Vulnerability Scan
+    name: Security and Vulnerability Scan
     runs-on: ubuntu-latest
     needs: [frontend-build]
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Run Trivy Vulnerability Scanner (Repo & Configs)
+      - name: Run Trivy Vulnerability Scanner (Repo and Configs)
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: "fs"
@@ -147,7 +147,7 @@ jobs:
   # 5. Production Docker Container Build & Health Smoke Test
   # ============================================================================
   docker-smoke-test:
-    name: 🐳 Docker Build & Health Smoke Test
+    name: Docker Build and Health Smoke Test
     runs-on: ubuntu-latest
     needs: [security-scan]
     steps:
@@ -171,13 +171,13 @@ jobs:
           echo "Probing container health endpoint..."
           for i in {1..30}; do
             if curl -s http://localhost:8000/health | grep -q "ok"; then
-              echo "✅ KRAKEN Container is HEALTHY & READY!"
+              echo "KRAKEN Container is HEALTHY and READY!"
               exit 0
             fi
             echo "Waiting for container startup... ($i/30)"
             sleep 2
           done
-          echo "❌ Container health check timed out!"
+          echo "Container health check timed out!"
           docker logs kraken-smoke
           exit 1
 
