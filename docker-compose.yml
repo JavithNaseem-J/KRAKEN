@@ -1,7 +1,7 @@
 services:
   # ── Infrastructure ─────────────────────────────────────────────────────────
   postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:16-alpine
     environment:
       POSTGRES_USER: agent
       POSTGRES_PASSWORD: agent

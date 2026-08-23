@@ -14,3 +14,15 @@ from pathlib import Path
 
 # Project root on sys.path so tests can import shared.* and services.*
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+import pytest
+
+from src.utils.config import get_settings
+
+
+@pytest.fixture(autouse=True)
+def reset_settings_cache():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+

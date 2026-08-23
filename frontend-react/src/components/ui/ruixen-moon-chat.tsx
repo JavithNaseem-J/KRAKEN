@@ -65,7 +65,6 @@ interface RuixenMoonChatProps {
   onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject') => void;
   onApprovalExpired?: (approvalId: string) => void;
   onInspectReasoning: (message: ChatMessageType) => void;
-  onInspectTelemetry?: (message: ChatMessageType) => void;
   streamingSteps?: AgentStreamEvent[];
 }
 
@@ -82,7 +81,6 @@ export default function RuixenMoonChat({
   onApprovalResolved,
   onApprovalExpired,
   onInspectReasoning,
-  onInspectTelemetry,
   streamingSteps = [],
 }: RuixenMoonChatProps) {
   const [message, setMessage] = useState("");
@@ -207,7 +205,6 @@ export default function RuixenMoonChat({
                   onApprovalResolved={onApprovalResolved}
                   onApprovalExpired={onApprovalExpired}
                   onInspectReasoning={onInspectReasoning}
-                  onInspectTelemetry={onInspectTelemetry}
                 />
               ))}
               {disabled && (
@@ -246,7 +243,7 @@ export default function RuixenMoonChat({
                             const rawNode = s.node.toLowerCase();
                             const meta = nodeLabels[rawNode] ?? {
                               icon: '●',
-                              label: s.node.replace(/^_+/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+                              label: s.node.replace(/^_+/, '').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase()),
                             };
                             return (
                               <span

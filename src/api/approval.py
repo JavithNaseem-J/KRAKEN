@@ -26,16 +26,23 @@ import httpx
 import structlog
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from src.safety.policy_engine import get_policy_engine
 from src.utils.approval.notifier import print_approval_notice
 from src.utils.approval.queue import ApprovalQueue
 from src.utils.auth import verify_service_token
 from src.utils.config import get_settings
 from src.utils.cors import cors_middleware_kwargs
-from src.utils.http_client import create_async_http_client, internal_request, service_headers
+from src.utils.http_client import (
+    create_async_http_client,
+    get_app_http_client,
+    internal_request,
+    service_headers,
+    simple_health_response,
+)
 from src.utils.logging import configure_logging
 from src.utils.middleware.rate_limit import RateLimitMiddleware
 from src.utils.middleware.trace_id import TraceIdMiddleware
@@ -60,6 +67,9 @@ async def _notify_orchestrator_callback(
     client: httpx.AsyncClient,
     approval_id: str,
     decision: str,
+    session_id: str = "",
+    approver_role: str | None = None,
+    approver_id: str | None = None,
 ) -> bool:
     """
     Send approval decision (approve or reject) to orchestrator.
@@ -68,7 +78,13 @@ async def _notify_orchestrator_callback(
     conflicts are never retried).
     """
     url = f"{settings.orchestrator_url}/approval-callback"
-    payload = {"approval_id": approval_id, "decision": decision}
+    payload = {
+        "approval_id": approval_id,
+        "decision": decision,
+        "session_id": session_id,
+        "approver_role": approver_role,
+        "approver_id": approver_id,
+    }
     headers = service_headers()
 
     try:
@@ -143,6 +159,18 @@ app.add_middleware(
 )
 
 
+def _get_queue() -> ApprovalQueue:
+    """Return initialized approval queue with lazy fallback."""
+    queue = getattr(app.state, "queue", None)
+    if queue is None:
+        queue = ApprovalQueue(
+            redis_url=settings.redis_url,
+            timeout_seconds=settings.approval_timeout_seconds,
+        )
+        app.state.queue = queue
+    return queue
+
+
 @app.get("/", tags=["ops"])
 async def root() -> dict[str, Any]:
     return {
@@ -157,7 +185,7 @@ async def root() -> dict[str, Any]:
 
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "approval"}
+    return simple_health_response("approval")
 
 
 @app.get("/queue/stats", tags=["ops"])
@@ -165,7 +193,7 @@ async def queue_stats(
     _token: str = Depends(verify_service_token),
 ) -> dict[str, Any]:
     """Return pending approval count from Redis index."""
-    queue: ApprovalQueue = app.state.queue
+    queue = _get_queue()
     try:
         count = await queue.stats()
         return {"pending_approvals": count, "timeout_seconds": settings.approval_timeout_seconds}
@@ -182,7 +210,7 @@ async def create_pending(
     Enqueue a new approval request. Called by the executor node.
     Requires service token verification.
     """
-    queue: ApprovalQueue = app.state.queue
+    queue = _get_queue()
 
     approval_id = await queue.enqueue(
         action_name=req.action_name,
@@ -204,7 +232,7 @@ async def create_pending(
 @app.get("/approve/{approval_id}/details", tags=["hitl"])
 async def approval_details(approval_id: str) -> dict[str, Any]:
     """Return JSON details and CSRF token for a pending approval request."""
-    queue: ApprovalQueue = app.state.queue
+    queue = _get_queue()
     entry = await queue.get(approval_id)
 
     if entry is None:
@@ -231,7 +259,7 @@ async def approval_details(approval_id: str) -> dict[str, Any]:
 @app.get("/approve/{approval_id}", response_class=HTMLResponse, tags=["hitl"])
 async def approval_page(request: Request, approval_id: str) -> HTMLResponse:
     """Render the human-facing approval UI."""
-    queue: ApprovalQueue = app.state.queue
+    queue = _get_queue()
     entry = await queue.get(approval_id)
 
     if entry is None:
@@ -254,16 +282,18 @@ async def approval_page(request: Request, approval_id: str) -> HTMLResponse:
     )
 
 
-@app.post("/approve/{approval_id}/decision", response_class=HTMLResponse, tags=["hitl"])
+@app.post("/approve/{approval_id}/decision", response_class=HTMLResponse, response_model=None, tags=["hitl"])
 async def submit_decision(
     request: Request,
     approval_id: str,
     decision: str = Form(...),
     csrf_token: str = Form(...),
-) -> HTMLResponse:
+    approver_role: str | None = Form(None),
+    approver_id: str | None = Form(None),
+) -> HTMLResponse | JSONResponse:
     """
     Process the approve/reject form. Resolves the queue entry,
-    then POSTs the decision to the orchestrator callback.
+    then POSTs the decision to the orchestrator callback with approver attribution.
     """
     if decision not in {"approve", "reject"}:
         raise HTTPException(status_code=400, detail="decision must be 'approve' or 'reject'.")
@@ -271,11 +301,34 @@ async def submit_decision(
     if not csrf_token or not csrf_token.strip():
         raise HTTPException(status_code=403, detail="Invalid or missing CSRF token.")
 
-    queue: ApprovalQueue = app.state.queue
+    queue = _get_queue()
 
     valid_csrf = await queue.verify_csrf_token(approval_id, csrf_token)
     if not valid_csrf:
         raise HTTPException(status_code=403, detail="Invalid CSRF token.")
+
+    # Retrieve entry to validate action clearance before resolving
+    entry_peek = await queue.get(approval_id)
+    action_name = entry_peek.get("action_name", "") if entry_peek else ""
+
+    # Declarative Policy-as-Code Four-Eyes clearance evaluation
+    policy_eval = get_policy_engine().evaluate_approval_decision(
+        action_name=action_name,
+        approver_role=approver_role,
+        decision=decision,
+    )
+    if not policy_eval.allowed:
+        log.warning(
+            "approval.policy_denied",
+            approval_id=approval_id,
+            approver_role=approver_role,
+            reason=policy_eval.reason,
+        )
+        raise HTTPException(
+            status_code=policy_eval.status_code,
+            detail=policy_eval.reason,
+        )
+
     entry = await queue.resolve(approval_id)
 
     if entry is None:
@@ -290,12 +343,22 @@ async def submit_decision(
         approval_id=approval_id,
         decision=decision,
         session_id=session_id,
+        approver_role=approver_role,
+        approver_id=approver_id,
     )
 
     # Notify orchestrator using the persistent HTTP client and retry logic
-    # Runs in the background so we return the HTML form result immediately without waiting
-    client: httpx.AsyncClient = app.state.http
-    task = asyncio.create_task(_notify_orchestrator_callback(client, approval_id, decision))
+    client = get_app_http_client(app)
+    task = asyncio.create_task(
+        _notify_orchestrator_callback(
+            client,
+            approval_id,
+            decision,
+            session_id=session_id,
+            approver_role=approver_role,
+            approver_id=approver_id,
+        )
+    )
     task.add_done_callback(
         lambda t: log.error(
             "approval.callback_task_exception",
@@ -305,6 +368,16 @@ async def submit_decision(
         if not t.cancelled() and t.exception()
         else None
     )
+
+    if request.headers.get("accept") == "application/json":
+        return JSONResponse(
+            content={
+                "status": "ok",
+                "approval_id": approval_id,
+                "decision": decision,
+                "session_id": session_id,
+            }
+        )
 
     return templates.TemplateResponse(
         request=request,

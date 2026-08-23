@@ -160,7 +160,7 @@ def print_report(results: list[dict], threshold: float) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="KRAKEN LLM-as-a-Judge Eval Harness")
     parser.add_argument("--base-url", default="http://localhost:8000")
-    parser.add_argument("--api-key", default="dev-key-alice-longer-secure-key:alice")
+    parser.add_argument("--api-key", default="dev-key-analyst-default:tier1_analyst")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--case", help="Run only this case ID")
     args = parser.parse_args()

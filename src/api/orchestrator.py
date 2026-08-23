@@ -6,7 +6,6 @@ import sys
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 if sys.platform == "win32":
@@ -30,11 +29,16 @@ except ImportError:
 from pydantic import BaseModel, Field
 
 from src.agent.agent import build_graph_async
-from src.models.llm_client import validate_llm_config
 from src.utils.auth import verify_service_token
 from src.utils.cache import SemanticCache
 from src.utils.config import get_settings
-from src.utils.http_client import create_async_http_client, internal_request, service_headers
+from src.utils.http_client import (
+    create_async_http_client,
+    internal_request,
+    metrics_text,
+    service_headers,
+)
+from src.utils.llm import validate_llm_config
 from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.agent import QueryRequest, QueryResponse
@@ -50,76 +54,31 @@ class ApprovalCallbackRequest(BaseModel):
     decision: Literal["approve", "reject"] = Field(
         ..., description="Human decision. Only 'approve' or 'reject' are valid."
     )
-
-
-# ── Approval table DDL (idempotent) ───────────────────────────────────────────
-_APPROVAL_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS approval_map (
-    approval_id   TEXT        PRIMARY KEY,
-    session_id    TEXT        NOT NULL,
-    action_name   TEXT        NOT NULL,
-    status        TEXT        NOT NULL DEFAULT 'pending',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at    TIMESTAMPTZ NOT NULL,
-    resolved_at   TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS approval_map_status_expires
-    ON approval_map (status, expires_at)
-    WHERE status = 'pending';
-"""
-
-# In-memory fallback for approval mappings when running without Postgres
-_IN_MEMORY_APPROVAL_MAP: dict[str, dict[str, Any]] = {}
+    session_id: str | None = Field(
+        default=None, description="Target session_id associated with the approval request."
+    )
+    approver_role: str | None = Field(
+        default=None, description="Role of the human operator authorizing the execution."
+    )
+    approver_id: str | None = Field(
+        default=None, description="User identifier of the human operator authorizing the execution."
+    )
 
 
 # ── Reaper background task ────────────────────────────────────────────────────
 async def _reaper_loop(app: FastAPI) -> None:
     """
-    Every 30 seconds, find pending approvals past their expiry, mark them as
-    'timeout', and resume the graph with decision='timeout' so the thread
-    cleans up and produces a final_answer.
-    Also periodically prunes stale LangGraph checkpoints to prevent DB bloat.
+    Periodically prunes stale LangGraph checkpoints to prevent DB bloat.
+    Approval timeouts are managed centrally by Redis TTL in ApprovalQueue.
     """
     loop_count = 0
     while True:
-        await asyncio.sleep(30)
+        await asyncio.sleep(60)
         loop_count += 1
         try:
             pool = getattr(app.state, "conn_pool", None)
-            if pool is None:
-                continue
-            with pool.connection() as conn, conn.cursor() as cur:
-                now = datetime.now(UTC)
-                cur.execute(
-                    """
-                        UPDATE approval_map
-                        SET    status = 'timeout', resolved_at = %s
-                        WHERE  status = 'pending' AND expires_at < %s
-                        RETURNING approval_id, session_id
-                        """,
-                    (now, now),
-                )
-                expired = cur.fetchall()
-
-            for approval_id, session_id in expired:
-                log.warning(
-                    "reaper.timeout",
-                    approval_id=approval_id,
-                    session_id=session_id,
-                )
-                try:
-                    config = _graph_config(session_id)
-                    await app.state.agent_graph.ainvoke(
-                        Command(resume={"decision": "timeout"}),
-                        config,
-                    )
-                except Exception as exc:
-                    log.error("reaper.resume_failed", session_id=session_id, error=str(exc))
-
-            # ── Prune Stale Checkpoints (every ~30 minutes) ────────────────────
-            if loop_count % 60 == 0:
+            if pool is not None and loop_count % 30 == 0:
                 prune_stale_checkpoints(pool)
-
         except Exception as exc:
             log.error("reaper.loop_error", error=str(exc))
 
@@ -228,8 +187,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     "keepalives_count": settings.postgres_keepalives_count,
                 },
             )
-            with conn_pool.connection() as conn:
-                conn.execute(_APPROVAL_TABLE_DDL)
         except Exception as exc:
             log.warning("orchestrator.postgres_pool_failed", error=str(exc))
             conn_pool = None
@@ -309,15 +266,7 @@ app.add_middleware(TraceIdMiddleware)
 @app.get("/metrics", tags=["ops"])
 async def metrics() -> PlainTextResponse:
     """Prometheus metrics endpoint for scraped orchestrator metrics."""
-    content = (
-        "# HELP kraken_service_up Liveness indicator (1 = healthy)\n"
-        "# TYPE kraken_service_up gauge\n"
-        'kraken_service_up{service="orchestrator"} 1\n'
-        "# HELP kraken_requests_total Total HTTP requests processed\n"
-        "# TYPE kraken_requests_total counter\n"
-        'kraken_requests_total{service="orchestrator"} 1\n'
-    )
-    return PlainTextResponse(content=content)
+    return PlainTextResponse(content=metrics_text("orchestrator"))
 
 
 def _graph_config(session_id: str) -> dict:
@@ -387,36 +336,6 @@ def _initial_state(body: QueryRequest, session_messages: list[dict[str, Any]]) -
     }
 
 
-def _persist_pending_approval(
-    approval_id: str,
-    session_id: str,
-    action_name: str,
-    expires_at: datetime,
-) -> None:
-    """Persist a pending approval record to Postgres or the in-memory fallback."""
-    pool: ConnectionPool | None = getattr(app.state, "conn_pool", None)
-    if pool is not None:
-        try:
-            with pool.connection() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO approval_map (approval_id, session_id, action_name, status, expires_at)
-                    VALUES (%s, %s, %s, 'pending', %s)
-                    ON CONFLICT (approval_id) DO NOTHING
-                    """,
-                    (approval_id, session_id, action_name, expires_at),
-                )
-        except Exception as exc:
-            log.warning("orchestrator.approval_db_save_failed", error=str(exc))
-    else:
-        _IN_MEMORY_APPROVAL_MAP[approval_id] = {
-            "session_id": session_id,
-            "action_name": action_name,
-            "status": "pending",
-            "expires_at": expires_at,
-        }
-
-
 async def _clear_stale_interrupt(graph: Any, config: dict, session_id: str) -> None:
     """Clear a stale HITL interrupt by resuming the graph with a 'reject' decision.
 
@@ -460,7 +379,13 @@ async def _get_graph(session_id: str) -> tuple[Any, dict]:
         err_str = str(exc).lower()
         is_conn_error = any(
             kw in err_str
-            for kw in ("connection is closed", "connection closed", "server closed", "consuming input failed")
+            for kw in (
+                "connection is closed",
+                "connection closed",
+                "server closed",
+                "consuming input failed",
+                "prepared statement",
+            )
         )
         if not is_conn_error:
             # Non-connection error — let the caller deal with it.
@@ -551,7 +476,7 @@ async def run(body: QueryRequest) -> Any:
             cached = await cache.get(query_vector)
             if cached:
                 log.info("orchestrator.semantic_cache_hit", session_id=body.session_id)
-                from src.utils.audit_client import fire_audit_log
+                from src.utils.audit.client import fire_audit_log
                 asyncio.create_task(
                     fire_audit_log(
                         client=http_client,
@@ -621,9 +546,6 @@ async def run(body: QueryRequest) -> Any:
 
         approval_id = interrupt_val.get("approval_id", str(uuid.uuid4()))
         action_name = interrupt_val.get("action_name", "unknown")
-        expires_at = datetime.now(UTC) + timedelta(seconds=settings.approval_timeout_seconds)
-
-        _persist_pending_approval(approval_id, body.session_id, action_name, expires_at)
 
         log.info(
             "orchestrator.hitl_paused",
@@ -747,9 +669,13 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                 interrupt_val = _extract_interrupt(snapshot)
                 approval_id = interrupt_val.get("approval_id", str(uuid.uuid4()))
                 action_name = interrupt_val.get("action_name", "unknown")
-                expires_at = datetime.now(UTC) + timedelta(seconds=settings.approval_timeout_seconds)
 
-                _persist_pending_approval(approval_id, body.session_id, action_name, expires_at)
+                log.info(
+                    "orchestrator.hitl_paused",
+                    session_id=body.session_id,
+                    approval_id=approval_id,
+                    action=action_name,
+                )
 
                 hitl_payload = json.dumps({
                     "node": "interrupt",
@@ -798,68 +724,28 @@ async def approval_callback(
     """
     Resume a paused graph after human approves or rejects a CRITICAL action.
     Called by the approval service with a valid X-Service-Token header.
-    Idempotent: duplicate callbacks return 409 Conflict.
     """
     log.info(
         "orchestrator.callback_received",
         approval_id=body.approval_id,
         decision=body.decision,
+        session_id=body.session_id,
     )
 
-    pool: ConnectionPool | None = getattr(app.state, "conn_pool", None)
+    session_id = body.session_id
+    if not session_id:
+        # Fallback: check Redis/ApprovalQueue if session_id was omitted
+        queue = getattr(app.state, "approval_queue", None)
+        if queue:
+            entry = await queue.get(body.approval_id)
+            if entry:
+                session_id = entry.get("session_id")
 
-    # ── Phase 1: Idempotency check (read-only, no commit yet) ─────────────────
-    session_id: str | None = None
-    if pool is not None:
-        try:
-            with pool.connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """
-                        SELECT session_id, status
-                        FROM   approval_map
-                        WHERE  approval_id = %s
-                        FOR UPDATE
-                        """,
-                    (body.approval_id,),
-                )
-                row = cur.fetchone()
+    if not session_id:
+        log.warning("orchestrator.callback_not_found", approval_id=body.approval_id)
+        raise HTTPException(status_code=404, detail="Approval ID not found.")
 
-                if not row:
-                    log.warning("orchestrator.callback_not_found", approval_id=body.approval_id)
-                    raise HTTPException(status_code=404, detail="Approval ID not found.")
-
-                session_id, current_status = row
-
-                if current_status != "pending":
-                    log.warning(
-                        "orchestrator.callback_already_resolved",
-                        approval_id=body.approval_id,
-                        status=current_status,
-                    )
-                    raise HTTPException(
-                        status_code=409,
-                        detail=f"Approval already resolved with status '{current_status}'.",
-                    )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            log.warning("orchestrator.postgres_callback_check_failed", error=str(exc))
-            pool = None
-
-    if pool is None:
-        rec = _IN_MEMORY_APPROVAL_MAP.get(body.approval_id)
-        if not rec:
-            raise HTTPException(status_code=404, detail="Approval ID not found.")
-        current_status = rec.get("status", "pending")
-        if current_status != "pending":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Approval already resolved with status '{current_status}'.",
-            )
-        session_id = rec.get("session_id")
-
-    # ── Phase 2: Acquire bounded semaphore — same guard as /run ───────────────
-    # A 503 here leaves the row 'pending' so the caller can retry the callback.
+    # ── Acquire bounded semaphore — same guard as /run ────────────────────────
     semaphore: asyncio.Semaphore | None = getattr(app.state, "graph_semaphore", None)
     if semaphore:
         if semaphore.locked():
@@ -867,7 +753,6 @@ async def approval_callback(
                 "orchestrator.callback_concurrency_limit_reached",
                 approval_id=body.approval_id,
             )
-            # Row stays 'pending' — caller can retry once capacity frees up.
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Server busy: maximum concurrent agent executions reached. Retry the callback.",
@@ -875,35 +760,25 @@ async def approval_callback(
         await semaphore.acquire()
 
     graph = app.state.agent_graph
-    config = _graph_config(session_id or "")
+    config = _graph_config(session_id)
 
     try:
-        # ── Phase 3: Commit UPDATE then resume graph (semaphore held) ──────────
-        if pool is not None:
-            try:
-                with pool.connection() as conn, conn.cursor() as cur:
-                    cur.execute(
-                        """
-                            UPDATE approval_map
-                            SET    status = %s, resolved_at = %s
-                            WHERE  approval_id = %s AND status = 'pending'
-                            """,
-                        (body.decision, datetime.now(UTC), body.approval_id),
-                    )
-            except Exception as exc:
-                log.warning("orchestrator.postgres_update_failed", error=str(exc))
-        else:
-            if body.approval_id in _IN_MEMORY_APPROVAL_MAP:
-                _IN_MEMORY_APPROVAL_MAP[body.approval_id]["status"] = body.decision
         log.info(
             "orchestrator.resuming",
             session_id=session_id,
             approval_id=body.approval_id,
             decision=body.decision,
+            approver_role=body.approver_role,
+            approver_id=body.approver_id,
         )
-        # Use ainvoke — nodes are now async; consistent with /run
         result = await graph.ainvoke(
-            Command(resume={"decision": body.decision}),
+            Command(
+                resume={
+                    "decision": body.decision,
+                    "approver_role": body.approver_role,
+                    "approver_id": body.approver_id,
+                }
+            ),
             config,
         )
     except Exception as exc:
@@ -913,7 +788,7 @@ async def approval_callback(
         if semaphore:
             semaphore.release()
 
-    return _build_response(session_id or "", result)
+    return _build_response(session_id, result)
 
 
 @app.post("/maintenance/prune-checkpoints", status_code=status.HTTP_200_OK)
@@ -935,8 +810,8 @@ def _extract_interrupt(snapshot: Any) -> dict[str, Any]:
                 return val
     return {}
 
-def _build_response(session_id: str, state: dict[str, Any]) -> QueryResponse:
-    """Convert final graph state into a QueryResponse."""
+def _build_response(session_id: str, state: dict[str, Any], trace_id: str | None = None) -> QueryResponse:
+    """Convert final graph state into a QueryResponse with a unique execution trace ID."""
     selected_action = state.get("selected_action")
     is_auto_respond = not selected_action or selected_action == "auto_respond"
 
@@ -965,6 +840,8 @@ def _build_response(session_id: str, state: dict[str, Any]) -> QueryResponse:
 
     chunk_scores = [c["relevance_score"] for c in formatted_chunks] if formatted_chunks else [float(c.get("relevance_score", 0.0)) for c in state.get("retrieved_chunks", []) if isinstance(c, dict)]
 
+    resolved_trace_id = trace_id or state.get("trace_id") or str(uuid.uuid4())
+
     return QueryResponse(
         session_id=session_id,
         answer=state.get("final_answer", "No answer generated."),
@@ -974,5 +851,5 @@ def _build_response(session_id: str, state: dict[str, Any]) -> QueryResponse:
         sources=[c["source"] for c in formatted_chunks],
         retrieved_chunks=formatted_chunks,
         chunk_scores=chunk_scores,
-        trace_id=session_id,
+        trace_id=resolved_trace_id,
     )

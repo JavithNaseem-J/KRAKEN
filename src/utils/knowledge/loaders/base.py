@@ -20,19 +20,21 @@ log = structlog.get_logger(__name__)
 def resolve_data_dir(source_name: str) -> Path:
     """
     Resolve data directory for a given knowledge source name ('tickets', 'sla', 'faq').
-    Checks KNOWLEDGE_DATA_DIR env var first, then repo-root path, and falls back to container path.
+    Checks KNOWLEDGE_DATA_DIR env var first, then traverses upwards to find data/knowledge/<source_name>.
     """
     if custom := os.getenv("KNOWLEDGE_DATA_DIR"):
         return Path(custom) / source_name
 
-    # Try local repo root path (parents[3] when in services/knowledge/loaders/base.py)
-    repo_path = Path(__file__).resolve().parents[3] / "data" / "knowledge" / source_name
-    if repo_path.exists():
-        return repo_path
+    # Try traversing upwards from current file to find data/knowledge/<source_name>
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        candidate = parent / "data" / "knowledge" / source_name
+        if candidate.exists():
+            return candidate
 
     # Fallback for Docker container layout (/app/data/knowledge/<source_name>)
-    container_path = Path("/app/data/knowledge") / source_name
-    return container_path
+    return Path("/app/data/knowledge") / source_name
+
 
 
 def load_structured_chunks(

@@ -1,5 +1,7 @@
+import { Shield } from 'lucide-react';
 import Markdown from 'react-markdown';
 import type { ChatMessage } from '../types/agent';
+import { usePersona } from '../context/PersonaContext';
 
 interface ReasoningInspectorDrawerProps {
   message: ChatMessage | null;
@@ -17,12 +19,14 @@ function formatReasoning(text: string): string {
 }
 
 export function ReasoningInspectorDrawer({ message, onClose }: ReasoningInspectorDrawerProps) {
+  const { activePersona } = usePersona();
   const open = message !== null;
   const meta = message?.metadata;
 
   const chunks = meta?.retrieved_chunks || [];
   const actionTaken = meta?.action_taken;
   const isAutoRespond = !actionTaken || actionTaken === 'auto_respond';
+  const hasRestrictedChunks = chunks.some((c) => c.content.includes('[🔒 RESTRICTED'));
 
   return (
     <>
@@ -43,15 +47,20 @@ export function ReasoningInspectorDrawer({ message, onClose }: ReasoningInspecto
         {/* Drawer Header */}
         <div className="flex items-center justify-between border-b border-neutral-800 p-4">
           <div>
-            <h3 className="text-sm font-black tracking-wide uppercase text-white font-mono">
-              Reasoning Inspector
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-black tracking-wide uppercase text-white font-mono">
+                Reasoning Inspector
+              </h3>
+              <span className="text-[9px] px-1.5 py-0.5 rounded border border-purple-500/30 bg-purple-500/10 font-mono text-purple-300">
+                {activePersona.badge}
+              </span>
+            </div>
             <p className="text-[10px] text-neutral-400">Autonomous LLM Audit Trail & Evidence Citations</p>
           </div>
           <button
             onClick={onClose}
             aria-label="Close inspector"
-            className="rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-neutral-400 transition-all hover:bg-neutral-800 hover:text-white"
+            className="rounded-xl border border-neutral-800 bg-neutral-900 px-3 py-1.5 text-xs font-semibold text-neutral-400 transition-all hover:bg-neutral-800 hover:text-white cursor-pointer"
           >
             Close
           </button>
@@ -59,6 +68,15 @@ export function ReasoningInspectorDrawer({ message, onClose }: ReasoningInspecto
 
         {/* Drawer Content */}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-5">
+          {hasRestrictedChunks && (
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-xs text-purple-300">
+              <Shield className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold">Least-Privilege Policy Active:</span> Technical commands
+                and forensic artifacts are dynamically redacted for role <em>{activePersona.label}</em>.
+              </div>
+            </div>
+          )}
           {meta?.trace_id && (
             <section className="rounded-2xl border border-neutral-800 bg-black/50 p-4">
               <div className="mb-2 flex items-center justify-between">
@@ -66,7 +84,7 @@ export function ReasoningInspectorDrawer({ message, onClose }: ReasoningInspecto
                   Execution Trace ID
                 </span>
                 <a
-                  href={`http://localhost:8006/audit/events/${meta.trace_id}`}
+                  href={`http://localhost:8000/v1/audit/events/${meta.trace_id}`}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-2.5 py-0.5 text-[10px] font-mono font-medium text-purple-300 hover:bg-purple-500/20 hover:text-white transition-colors"
@@ -130,10 +148,17 @@ export function ReasoningInspectorDrawer({ message, onClose }: ReasoningInspecto
               </span>
             </div>
             {!isAutoRespond && meta?.action_result != null && (
-              <div className="mt-3">
-                <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400 font-mono">
-                  Execution Output / Payload
-                </span>
+              <div className="mt-3 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400 font-mono">
+                    Downstream Attestation & Verified Receipt
+                  </span>
+                  {typeof meta.action_result === 'object' && meta.action_result !== null && (
+                    <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-400 border border-emerald-500/30">
+                      ✓ RECONCILED
+                    </span>
+                  )}
+                </div>
                 <pre className="mt-1.5 max-h-56 overflow-auto rounded-xl border border-neutral-800 bg-black p-3 font-mono text-xs text-emerald-400">
                   {typeof meta.action_result === 'string'
                     ? meta.action_result

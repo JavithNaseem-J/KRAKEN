@@ -19,31 +19,10 @@ import structlog
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import GraphState
-from src.models.llm_client import get_llm
+from src.prompts.registry import get_prompt
+from src.utils.llm import get_llm
 
 log = structlog.get_logger(__name__)
-
-_SYSTEM_PROMPT = """You are a security reasoning analyst for Xiarch, a cybersecurity consultancy.
-
-You will receive a user's request and a set of retrieved knowledge chunks.
-Your task is to analyse the chunks and produce clear, structured reasoning.
-
-You MUST format each bullet point on its own separate line starting with `- `. Do NOT combine multiple bullet points into a single line.
-
-Structure your response as follows:
-
-### **RELEVANT INFORMATION**
-- First factual point on its own line (citing specific source)
-- Second factual point on its own line (citing specific source)
-
-### **GAPS OR CONFLICTS**
-- Note missing context or write "None" on its own line
-
-### **CONCLUSION**
-Clear conclusion summarizing facts and appropriate action.
-
-Be factual. Only use what is in the provided chunks. Do not invent information.
-"""
 
 _MAX_USER_MESSAGE_LEN = 4_000
 
@@ -114,7 +93,7 @@ async def reasoner_node(state: GraphState) -> dict:
         llm = get_llm()
         response = await llm.ainvoke(
             [
-                SystemMessage(content=_SYSTEM_PROMPT),
+                SystemMessage(content=get_prompt("reasoner")),
                 HumanMessage(content=human_content),
             ]
         )

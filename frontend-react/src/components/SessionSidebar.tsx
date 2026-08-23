@@ -1,4 +1,15 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
+import {
+  MessageSquare,
+  PanelLeftClose,
+  Plus,
+  Trash2,
+  UserCheck,
+  Info,
+} from 'lucide-react';
+
+import type { ChatSession } from '../types/agent';
+import { usePersona, PERSONAS } from '../context/PersonaContext';
 
 function formatRelative(dateStr: string): string {
   const date = new Date(dateStr);
@@ -14,27 +25,18 @@ function formatRelative(dateStr: string): string {
   if (diffDays < 7) return `${diffDays} days ago`;
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
-import {
-  MessageSquare,
-  PanelLeftClose,
-  Plus,
-  Trash2,
-  UserCheck,
-} from 'lucide-react';
-
-import type { ChatSession, UserRole } from '../types/agent';
 
 interface SessionSidebarProps {
   sessions: ChatSession[];
   activeSessionId: string;
-  roles: UserRole[];
-  activeRole: UserRole;
   isOpen: boolean;
   onToggleOpen: () => void;
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
-  onSelectRole: (role: UserRole) => void;
+  roles?: unknown;
+  activeRole?: unknown;
+  onSelectRole?: (role: any) => void;
 }
 
 interface GroupedSessions {
@@ -76,16 +78,15 @@ function groupSessionsByDate(sessions: ChatSession[]): GroupedSessions {
 export function SessionSidebar({
   sessions,
   activeSessionId,
-  roles,
-  activeRole,
   isOpen,
   onToggleOpen,
   onSelectSession,
   onNewSession,
   onDeleteSession,
-  onSelectRole,
 }: SessionSidebarProps) {
   const grouped = useMemo(() => groupSessionsByDate(sessions), [sessions]);
+  const { activePersona, setPersona } = usePersona();
+  const [showInfo, setShowInfo] = useState(false);
 
   if (!isOpen) return null;
 
@@ -116,7 +117,7 @@ export function SessionSidebar({
               e.stopPropagation();
               onDeleteSession(s.session_id);
             }}
-            className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-red-400"
+            className="rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-red-400 cursor-pointer"
           >
             <Trash2 size={13} />
           </button>
@@ -126,18 +127,20 @@ export function SessionSidebar({
   };
 
   return (
-    <aside className="relative flex h-full w-72 flex-col justify-between border-r border-white/10 bg-black/85 backdrop-blur-xl z-20 transition-all duration-300">
+    <aside className="relative flex h-full w-[21.5rem] flex-col justify-between border-r border-white/10 bg-black/85 backdrop-blur-xl z-20 transition-all duration-300">
       {/* Top Header & New Chat Button */}
       <div className="flex flex-col gap-3 p-3 border-b border-white/10">
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-extrabold tracking-widest text-white uppercase">KRAKEN</span>
+            <span className="text-sm font-extrabold tracking-widest text-white uppercase font-mono">
+              KRAKEN
+            </span>
           </div>
 
           <button
             onClick={onToggleOpen}
             aria-label="Close Sidebar"
-            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 hover:text-white transition-colors"
+            className="rounded-lg p-1.5 text-neutral-400 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
           >
             <PanelLeftClose size={18} />
           </button>
@@ -145,7 +148,7 @@ export function SessionSidebar({
 
         <button
           onClick={onNewSession}
-          className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white transition-all hover:bg-white/10 hover:border-white/20 active:scale-[0.98]"
+          className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-white transition-all hover:bg-white/10 hover:border-white/20 active:scale-[0.98] cursor-pointer"
         >
           <span className="flex items-center gap-2">
             <Plus size={15} className="text-purple-400" />
@@ -155,7 +158,7 @@ export function SessionSidebar({
         </button>
       </div>
 
-      {/* Session History List (ChatGPT / Gemini Recency Sections) */}
+      {/* Session History List */}
       <div className="flex-1 overflow-y-auto px-2 py-3 space-y-4">
         {sessions.length === 0 && (
           <p className="px-3 py-6 text-center text-xs text-neutral-500">No chat history yet.</p>
@@ -199,29 +202,51 @@ export function SessionSidebar({
       </div>
 
       {/* Bottom Identity Role Switcher */}
-      <div className="p-3 border-t border-white/10 bg-black/40">
+      <div className="p-3 border-t border-white/10 bg-black/40 relative">
+        {/* Simplified, Plain English Popover spanning panel width */}
+        {showInfo && (
+          <div className="absolute bottom-full left-3 right-3 mb-2 p-3.5 rounded-xl bg-neutral-950/98 backdrop-blur-2xl border border-purple-500/40 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-150 space-y-2">
+            <p className="text-xs text-neutral-300 leading-relaxed font-sans text-left normal-case">
+              This switcher lets you test the system from different user levels. You can ask everyday questions as a regular employee, investigate alerts as a support analyst, or authorize security actions as a team lead and administrator.
+            </p>
+            <div className="pt-2 border-t border-neutral-800/80 text-[11px] text-neutral-400 leading-relaxed font-sans text-left normal-case">
+              <span className="font-semibold text-neutral-200">Production Plan:</span> In a real production deployment, this manual switcher will be replaced by your company&apos;s corporate single sign-on (SSO) login, automatically assigning access levels based on your work account.
+            </div>
+          </div>
+        )}
+
         <div className="mb-2 px-1 flex items-center justify-between text-[10px] uppercase font-bold tracking-wider text-neutral-400">
-          <span title="In production, user identities are authenticated via SAML SSO / Okta JWT tokens">
-            Dev Test Personas
-          </span>
-          <span className="text-purple-400 font-mono text-[9px]">DEV ONLY</span>
+          <span>Operational Personas</span>
+
+          <button
+            onMouseEnter={() => setShowInfo(true)}
+            onMouseLeave={() => setShowInfo(false)}
+            onClick={() => setShowInfo(!showInfo)}
+            className="p-1 rounded text-neutral-400 hover:text-white transition-colors cursor-pointer"
+            aria-label="Operational personas info"
+          >
+            <Info size={13} className="text-neutral-400 hover:text-purple-300" />
+          </button>
         </div>
-        <div className="grid grid-cols-3 gap-1">
-          {roles.map((role) => {
-            const isActive = role.user_id === activeRole.user_id;
+
+        {/* 4-Button Low-to-High Grid: User -> Alice -> Bob -> Admin */}
+        <div className="grid grid-cols-4 gap-1">
+          {PERSONAS.map((p) => {
+            const isActive = p.role === activePersona.role;
             return (
               <button
-                key={role.user_id}
-                onClick={() => onSelectRole(role)}
-                className={`flex flex-col items-center justify-center rounded-lg py-1.5 px-1 text-center transition-all ${
+                key={p.role}
+                onClick={() => setPersona(p.role)}
+                className={`flex flex-col items-center justify-center rounded-lg py-1.5 px-1 text-center transition-all cursor-pointer ${
                   isActive
                     ? 'bg-purple-600/30 text-white border border-purple-500/50 shadow-sm'
                     : 'text-neutral-400 hover:bg-white/5 hover:text-white border border-transparent'
                 }`}
+                title={p.description}
               >
                 <UserCheck size={14} className={isActive ? 'text-purple-400' : 'text-neutral-500'} />
-                <span className="text-[11px] font-medium mt-0.5">{role.label}</span>
-                <span className="text-[8px] text-neutral-400 truncate max-w-full">{role.title}</span>
+                <span className="text-[11px] font-medium mt-0.5">{p.label}</span>
+                <span className="text-[8px] text-neutral-400 truncate max-w-full">{p.title}</span>
               </button>
             );
           })}

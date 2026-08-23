@@ -5,7 +5,6 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
-import httpx
 import structlog
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
@@ -15,9 +14,11 @@ from src.tools.ticket import (
     execute_create_ticket,
     execute_escalate,
     execute_request_info,
+    quarantine_ip_handler,
+    unlock_account_handler,
 )
 from src.tools.write_tool import write_json_file
-from src.utils.audit_client import fire_audit_log
+from src.utils.audit.client import fire_audit_log
 from src.utils.auth import verify_service_token
 from src.utils.config import get_settings
 from src.utils.exceptions import (
@@ -26,7 +27,11 @@ from src.utils.exceptions import (
     InvalidExtensionError,
     PathTraversalError,
 )
-from src.utils.http_client import create_async_http_client
+from src.utils.http_client import (
+    create_async_http_client,
+    get_app_http_client,
+    simple_health_response,
+)
 from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.action import ActionRequest, ActionResult
@@ -41,6 +46,12 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Per-service lifespan: configure logging, create shared HTTP client, yield, teardown.
+
+    Each API module deliberately owns its own lifespan rather than sharing a factory.
+    This keeps services independently deployable and avoids hidden coupling between
+    startup sequencing concerns. See CONTRIBUTING.md § "Service lifespan pattern".
+    """
     configure_logging(
         log_level=settings.log_level, log_format=settings.log_format, service="action"
     )
@@ -48,18 +59,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Persistent HTTP client for outgoing audit logging calls
     app.state.http = create_async_http_client()
-
-    if settings.postgres_sync_url or settings.postgres_url:
-        try:
-            from src.utils.db import create_sync_pool, ensure_schema_sync
-
-            sync_url = settings.postgres_sync_url or settings.postgres_url
-            pool = create_sync_pool(sync_url)
-            ensure_schema_sync(pool)
-            pool.close()
-        except Exception as exc:
-            log.warning("action.schema_bootstrap_failed", error=str(exc))
-
     yield
 
     await app.state.http.aclose()
@@ -77,7 +76,7 @@ app.add_middleware(TraceIdMiddleware)
 
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "action"}
+    return simple_health_response("action")
 
 
 @app.get("/registry", tags=["actions"])
@@ -101,23 +100,19 @@ async def execute(
     _token: str = Depends(verify_service_token),
 ) -> ActionResult:
     """
-    Execute a registered action and write to the audit log.
-
-    WRITE actions reaching this endpoint have already been approved by a human
-    (the executor node in the orchestrator calls /execute only after HITL approval).
+    Execute a registered action synchronously or dispatch to background task.
+    Enforces service-token authentication.
+    Logs execution result to the audit service asynchronously.
     """
-    log.info(
-        "action.execute",
-        action=body.action_name,
-        session_id=body.session_id,
-        user_id=body.user_id,
-    )
-
     # ── 1. Registry lookup ────────────────────────────────────────────────────
     try:
         action_def = get_action(body.action_name)
     except ActionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=exc.message) from exc
+
+    # ── 1. RBAC check (if required by action definition) ──────────────────────
+    if action_def.requires_hitl and not body.user_id:
+        log.warning("action.missing_user_id", action=body.action_name)
 
     # ── 2. Dispatch ───────────────────────────────────────────────────────────
     result_data: dict[str, Any] | None = None
@@ -142,7 +137,7 @@ async def execute(
         log.error("action.unexpected_error", action=body.action_name, error=error_msg)
 
     # ── 3. Audit log (non-blocking BackgroundTask) ────────────────────────────
-    client: httpx.AsyncClient = app.state.http
+    client = get_app_http_client(app)
     background_tasks.add_task(
         fire_audit_log,
         client=client,
@@ -190,6 +185,14 @@ HANDLER_MAP: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     ),
     "write_json_file": lambda p: write_json_file(
         p.get("target_path", ""), p.get("content", {})
+    ),
+    "quarantine_ip": lambda p: quarantine_ip_handler(
+        ip=p.get("ip", ""), reason=p.get("reason"), evidence=p.get("evidence")
+    ),
+    "unlock_account": lambda p: unlock_account_handler(
+        user_email=p.get("user_email", p.get("email", p.get("user", ""))),
+        reason=p.get("reason"),
+        evidence=p.get("evidence"),
     ),
 }
 

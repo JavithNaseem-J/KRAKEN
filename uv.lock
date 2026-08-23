@@ -814,7 +814,6 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "structlog" },
     { name = "tenacity" },
-    { name = "typing-extensions" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -853,7 +852,6 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=3.0.0" },
     { name = "structlog", specifier = ">=24.1.0" },
     { name = "tenacity", specifier = ">=8.3.0" },
-    { name = "typing-extensions", specifier = ">=4.12.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
 ]
 provides-extras = ["dev"]

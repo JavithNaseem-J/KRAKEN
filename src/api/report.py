@@ -73,7 +73,3 @@ def generate_incident_html(session_data: dict[str, Any]) -> str:
         export_time=export_time,
     )
 
-
-def generate_incident_brief(session_data: dict[str, Any]) -> str:
-    """Alias for generate_incident_html."""
-    return generate_incident_html(session_data)

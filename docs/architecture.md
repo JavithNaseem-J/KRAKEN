@@ -2,6 +2,8 @@
 
 KRAKEN (Knowledge Retrieval & Autonomous Knowledge Execution Network) is a production-grade autonomous AI system designed for automated IT service desk operations, knowledge retrieval, and human-in-the-loop (HITL) action execution.
 
+For details on the internal LangGraph reasoning state machine, node contracts, and prompt versioning, see [Agent Pipeline](agent-pipeline.md).
+
 ---
 
 ## 1. System Topology Diagram
@@ -22,9 +24,9 @@ flowchart TD
         Audit["Audit Subsystem<br/>• Cryptographic Hash-Chain<br/>• Append-Only Log Store"]
     end
 
-    Qdrant[("Qdrant Vector DB")]
-    PostgreSQL[("PostgreSQL Database<br/>(pgvector + PostgresSaver)")]
-    Redis[("Redis<br/>(Rate Limiter & HITL Queue)")]
+    Qdrant[("Qdrant Vector DB<br/>(Knowledge RAG, Semantic Cache & Episodic Memory)")]
+    PostgreSQL[("PostgreSQL Database<br/>(Audit Logs & Ticket State)")]
+    Redis[("Redis<br/>(Rate Limiter, Session Buffer & HITL Queue)")]
 
     Client -->|X-API-Key| Gateway
     Gateway -.->|In-Process ASGI| Orchestrator
@@ -38,7 +40,7 @@ flowchart TD
 
     Knowledge --> Qdrant
     Memory --> Redis
-    Memory --> PostgreSQL
+    Memory --> Qdrant
     Approval --> Redis
     Audit --> PostgreSQL
     Action --> PostgreSQL
@@ -104,5 +106,5 @@ sequenceDiagram
 | **Knowledge** | In-Process | SLA rules and operational doc loading, embedding generation, Qdrant vector retrieval. | Qdrant Vector Cloud |
 | **Action** | In-Process | Risk-classified IT action handlers (tickets, workspace file I/O). | PostgreSQL (`tickets`) |
 | **Approval** | In-Process & `:8000/approve/*` | Human-in-the-Loop (HITL) pause handling, CSRF-protected web review and API proxy endpoints. | Redis |
-| **Memory** | In-Process | Short-term message history buffer and long-term episodic memory storage. | Redis & PostgreSQL (`pgvector`) |
+| **Memory** | In-Process | Short-term message history buffer and long-term episodic memory storage. | Redis & Qdrant (`kraken_episodic_memory`) |
 | **Audit** | In-Process | Cryptographically chained, append-only security audit log. | PostgreSQL (`audit_log`) |

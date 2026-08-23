@@ -28,17 +28,21 @@ const GATEWAY_URL = getBaseUrl(
 );
 const APPROVAL_URL = getBaseUrl(
   import.meta.env.VITE_APPROVAL_URL || import.meta.env.VITE_API_URL,
-  'http://localhost:8004',
+  GATEWAY_URL,
 );
 
-function gatewayClient(apiKey: string): AxiosInstance {
+function gatewayClient(apiKey: string, operatorRole?: string, userId?: string): AxiosInstance {
+  const headers: Record<string, string> = {
+    'X-API-Key': apiKey,
+    'Content-Type': 'application/json',
+  };
+  if (operatorRole) headers['X-Operator-Role'] = operatorRole;
+  if (userId) headers['X-User-Id'] = userId;
+
   return axios.create({
     baseURL: GATEWAY_URL,
     timeout: 120_000,
-    headers: {
-      'X-API-Key': apiKey,
-      'Content-Type': 'application/json',
-    },
+    headers,
   });
 }
 
@@ -55,8 +59,10 @@ export async function runAgentQuery(
   message: string,
   sessionId: string,
   apiKey: string,
+  operatorRole?: string,
+  userId?: string,
 ): Promise<RunResponse> {
-  const { data } = await gatewayClient(apiKey).post<RunResponse>('/v1/run', {
+  const { data } = await gatewayClient(apiKey, operatorRole, userId).post<RunResponse>('/v1/run', {
     message,
     session_id: sessionId,
   });
@@ -67,8 +73,10 @@ export async function runAgentQuery(
 export async function pollSessionStatus(
   sessionId: string,
   apiKey: string,
+  operatorRole?: string,
+  userId?: string,
 ): Promise<RunResponse> {
-  return runAgentQuery('', sessionId, apiKey);
+  return runAgentQuery('', sessionId, apiKey, operatorRole, userId);
 }
 
 /** Upload a document file dynamically into the knowledge vector store. */
@@ -129,8 +137,14 @@ export async function submitApprovalDecision(
   approvalId: string,
   decision: 'approve' | 'reject',
   csrfToken: string,
+  approverRole?: string,
+  approverId?: string,
 ): Promise<{ session_id: string }> {
-  const body = new URLSearchParams({ decision, csrf_token: csrfToken });
+  const params: Record<string, string> = { decision, csrf_token: csrfToken };
+  if (approverRole) params['approver_role'] = approverRole;
+  if (approverId) params['approver_id'] = approverId;
+
+  const body = new URLSearchParams(params);
   const { data: html } = await approvalClient.post<string>(
     `/approve/${approvalId}/decision`,
     body,
@@ -159,13 +173,19 @@ export async function streamAgentQuery(
   sessionId: string,
   apiKey: string,
   onEvent: (event: AgentStreamEvent) => void,
+  operatorRole?: string,
+  userId?: string,
 ): Promise<RunResponse | undefined> {
+  const reqHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-API-Key': apiKey,
+  };
+  if (operatorRole) reqHeaders['X-Operator-Role'] = operatorRole;
+  if (userId) reqHeaders['X-User-Id'] = userId;
+
   const response = await fetch(`${GATEWAY_URL}/v1/run/stream`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': apiKey,
-    },
+    headers: reqHeaders,
     body: JSON.stringify({ message, session_id: sessionId }),
   });
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -16,14 +16,20 @@ from .nodes import (
     responder_node,
     retriever_node,
 )
-from .router import route_after_decision
 
 if TYPE_CHECKING:
     from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 
+def route_after_decision(state: dict[str, Any] | GraphState) -> str:
+    """Route after decider node: if action selected, go to executor, else direct to responder."""
+    if state.get("selected_action"):
+        return "executor"
+    return "responder"
+
+
 def _create_graph_builder() -> StateGraph:
-    """Create and wire the StateGraph structure for the AKEA agent."""
+    """Create and wire the StateGraph structure for the KRAKEN agent."""
     builder = StateGraph(GraphState)
 
     builder.add_node("retriever", retriever_node)
@@ -50,7 +56,7 @@ def _create_graph_builder() -> StateGraph:
 
 async def build_graph_async(saver: AsyncPostgresSaver | None = None) -> CompiledStateGraph:
     """
-    Build and compile the AKEA LangGraph agent graph with AsyncPostgresSaver or MemorySaver fallback.
+    Build and compile the KRAKEN LangGraph agent graph with AsyncPostgresSaver or MemorySaver fallback.
     """
     builder = _create_graph_builder()
     if saver:

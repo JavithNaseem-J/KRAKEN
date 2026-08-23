@@ -72,18 +72,22 @@ def create_async_redis_client(
 
     Uses redis.asyncio with standard connection pooling, health checks, and keepalive options.
     """
+    import sys
+
     import redis.asyncio as aioredis
 
     redis_url = url if (url and url.strip()) else "redis://localhost:6379"
 
-    return aioredis.from_url(
-        redis_url,
-        decode_responses=decode_responses,
-        socket_connect_timeout=socket_connect_timeout,
-        health_check_interval=health_check_interval,
-        retry_on_timeout=True,
-        socket_keepalive=True,
-    )
+    kwargs: dict[str, Any] = {
+        "decode_responses": decode_responses,
+        "socket_connect_timeout": socket_connect_timeout,
+        "health_check_interval": health_check_interval,
+        "retry_on_timeout": True,
+    }
+    if sys.platform != "win32":
+        kwargs["socket_keepalive"] = True
+
+    return aioredis.from_url(redis_url, **kwargs)
 
 
 def get_in_process_app_for_url(url: str) -> Any | None:
@@ -193,4 +197,30 @@ async def post_with_retry(
     return await internal_request(
         "POST", url, json_payload=json_payload, headers=headers, client=client
     )
+
+
+def get_app_http_client(app: Any) -> httpx.AsyncClient:
+    """Return initialized HTTP client with lazy fallback."""
+    client = getattr(app.state, "http", None)
+    if client is None:
+        client = create_async_http_client()
+        app.state.http = client
+    return client
+
+
+def metrics_text(service_name: str) -> str:
+    """Prometheus metrics endpoint text template parameterized by service name."""
+    return (
+        "# HELP kraken_service_up Liveness indicator (1 = healthy)\n"
+        "# TYPE kraken_service_up gauge\n"
+        f'kraken_service_up{{service="{service_name}"}} 1\n'
+        "# HELP kraken_requests_total Total HTTP requests processed\n"
+        "# TYPE kraken_requests_total counter\n"
+        f'kraken_requests_total{{service="{service_name}"}} 1\n'
+    )
+
+
+def simple_health_response(service_name: str) -> dict[str, str]:
+    """Standard health endpoint response for simple microservices."""
+    return {"status": "ok", "service": service_name}
 

@@ -20,6 +20,7 @@ SIMILARITY_THRESHOLD = 0.92
 
 def create_async_qdrant_client() -> AsyncQdrantClient:
     """Factory returning a configured AsyncQdrantClient (remote Cloud or in-memory fallback)."""
+    settings = get_settings()
     if settings.qdrant_url:
         log.info("qdrant.remote_client", url=settings.qdrant_url)
         return AsyncQdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
@@ -54,6 +55,7 @@ class SemanticCache:
 
     async def init(self) -> None:
         """Ensure the cache collection exists. Must be awaited during service startup."""
+        settings = get_settings()
         try:
             if not await self._client.collection_exists(SEMANTIC_CACHE_COLLECTION):
                 await self._client.create_collection(

@@ -13,7 +13,6 @@ interface ChatMessageProps {
   onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject') => void;
   onApprovalExpired?: (approvalId: string) => void;
   onInspectReasoning: (message: ChatMessageType) => void;
-  onInspectTelemetry?: (message: ChatMessageType) => void;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -41,7 +40,6 @@ export function ChatMessage({
   onApprovalResolved,
   onApprovalExpired,
   onInspectReasoning,
-  onInspectTelemetry,
 }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -186,15 +184,6 @@ export function ChatMessage({
           }`}
         >
           <span>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          {!isUser && onInspectTelemetry && (
-            <button
-              onClick={() => onInspectTelemetry(message)}
-              className="flex items-center gap-1 rounded border border-purple-500/30 bg-purple-500/10 px-1.5 py-0.5 text-purple-300 hover:bg-purple-500/20 hover:text-white transition-colors"
-            >
-              <BrainCircuit size={11} />
-              Telemetry
-            </button>
-          )}
           {message.metadata &&
             (message.metadata.reasoning ||
               (message.metadata.retrieved_chunks && message.metadata.retrieved_chunks.length > 0) ||

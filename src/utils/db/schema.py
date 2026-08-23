@@ -1,5 +1,6 @@
 """
 Idempotent Database Schema Bootstrap helper for cloud deployments.
+Pure relational schema for audit logging and ticket records.
 """
 
 from __future__ import annotations
@@ -8,17 +9,12 @@ from typing import Any
 
 import structlog
 
-from src.utils.config import get_settings
-
 log = structlog.get_logger(__name__)
-settings = get_settings()
 
 
 async def ensure_schema_async(pool: Any) -> None:
     """Execute idempotent DDL statements against an asyncpg connection pool."""
-    dim = settings.embedding_dim or 1536
-    ddl = f"""
-    CREATE EXTENSION IF NOT EXISTS vector;
+    ddl = """
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
     CREATE TABLE IF NOT EXISTS audit_log (
@@ -43,25 +39,12 @@ async def ensure_schema_async(pool: Any) -> None:
     CREATE INDEX IF NOT EXISTS idx_audit_log_session ON audit_log (session_id, timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log (user_id, timestamp DESC);
 
-    CREATE TABLE IF NOT EXISTS episodic_memory (
-        id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-        session_id  VARCHAR(64) NOT NULL,
-        user_id     VARCHAR(64) NOT NULL,
-        timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        content     TEXT        NOT NULL,
-        embedding   vector({dim}),
-        metadata    JSONB       NOT NULL DEFAULT '{{}}'
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_episodic_memory_user ON episodic_memory (user_id, timestamp DESC);
-    CREATE INDEX IF NOT EXISTS idx_episodic_memory_session ON episodic_memory (session_id, timestamp DESC);
-
     CREATE TABLE IF NOT EXISTS tickets (
         id VARCHAR(64) PRIMARY KEY,
         title TEXT,
         status VARCHAR(32) NOT NULL DEFAULT 'open',
         priority VARCHAR(32) NOT NULL DEFAULT 'medium',
-        payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
     """
@@ -75,9 +58,7 @@ async def ensure_schema_async(pool: Any) -> None:
 
 def ensure_schema_sync(pool: Any) -> None:
     """Execute idempotent DDL statements against a psycopg_pool ConnectionPool."""
-    dim = settings.embedding_dim or 1536
-    ddl = f"""
-    CREATE EXTENSION IF NOT EXISTS vector;
+    ddl = """
     CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
     CREATE TABLE IF NOT EXISTS audit_log (
@@ -102,25 +83,12 @@ def ensure_schema_sync(pool: Any) -> None:
     CREATE INDEX IF NOT EXISTS idx_audit_log_session ON audit_log (session_id, timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log (user_id, timestamp DESC);
 
-    CREATE TABLE IF NOT EXISTS episodic_memory (
-        id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-        session_id  VARCHAR(64) NOT NULL,
-        user_id     VARCHAR(64) NOT NULL,
-        timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        content     TEXT        NOT NULL,
-        embedding   vector({dim}),
-        metadata    JSONB       NOT NULL DEFAULT '{{}}'
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_episodic_memory_user ON episodic_memory (user_id, timestamp DESC);
-    CREATE INDEX IF NOT EXISTS idx_episodic_memory_session ON episodic_memory (session_id, timestamp DESC);
-
     CREATE TABLE IF NOT EXISTS tickets (
         id VARCHAR(64) PRIMARY KEY,
         title TEXT,
         status VARCHAR(32) NOT NULL DEFAULT 'open',
         priority VARCHAR(32) NOT NULL DEFAULT 'medium',
-        payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
     );
     """

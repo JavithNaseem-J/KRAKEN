@@ -15,6 +15,7 @@ import httpx
 import structlog
 
 from src.agent.state import GraphState
+from src.utils.auth import resolve_user_role
 from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
 from src.utils.http_client import internal_request, post_with_retry, service_headers
@@ -60,9 +61,7 @@ async def retriever_node(state: GraphState) -> dict:
     else:
         target_sources = [KnowledgeSource.FAQ, KnowledgeSource.SLA]
 
-    user_id = (state.get("user_id") or "public").lower().strip()
-    role_map = {"alice": "tier1", "bob": "security_lead", "admin": "admin"}
-    user_role = role_map.get(user_id, user_id)
+    user_role = resolve_user_role(state.get("user_id") or "public")
 
     request_payload = RetrievalRequest(
         query=user_message,
@@ -113,3 +112,4 @@ async def retriever_node(state: GraphState) -> dict:
 
     log.info("retriever.done", session_id=session_id, chunks=len(chunks))
     return {"retrieved_chunks": chunks}
+

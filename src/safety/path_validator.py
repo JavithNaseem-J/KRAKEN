@@ -25,7 +25,7 @@ from typing import Any
 from src.utils.exceptions import InvalidExtensionError, PathTraversalError
 
 # ── Hardcoded constants — do NOT make these configurable ──────────────────────
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]  # repo root
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]  # repo root
 WORKSPACE_ROOT: Path = (_PROJECT_ROOT / "data" / "workspace").resolve()
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".json"})
 # ─────────────────────────────────────────────────────────────────────────────
@@ -98,3 +98,28 @@ def atomic_write_json(target_path: Path | str, content: Any) -> int:
         with contextlib.suppress(OSError):
             os.unlink(tmp_path)
         raise
+
+
+def backup_if_exists(target: Path) -> Path | None:
+    """
+    If `target` exists, copy it to `target.stem_<timestamp>.bak.json`.
+
+    Args:
+        target: The validated absolute path that is about to be written.
+
+    Returns:
+        Path of the backup file if one was created, else None.
+    """
+    import shutil
+    from datetime import UTC, datetime
+
+    if not target.exists():
+        return None
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    backup_name = f"{target.stem}_{timestamp}.bak{target.suffix}"
+    backup_path = target.parent / backup_name
+
+    shutil.copy2(target, backup_path)
+    return backup_path
+

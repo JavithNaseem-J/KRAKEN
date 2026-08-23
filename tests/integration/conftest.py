@@ -31,7 +31,7 @@ if "src.utils.config" in sys.modules:
     )
 
 _TEST_HITL_TOKEN = "itest-hitl-token-0123456789abcdef0123456789"
-_TEST_API_KEY = "itest-alice-key-0123456789abcdef"
+_TEST_API_KEY = "itest-demo-key-0123456789abcdef"
 
 os.environ.update(
     {
@@ -56,7 +56,7 @@ os.environ.update(
         "SEMANTIC_CACHE_ENABLED": "false",
         # Known test secrets (config validation requires >= 32 chars).
         "HITL_SERVICE_TOKEN": _TEST_HITL_TOKEN,
-        "GATEWAY_API_KEYS": f"{_TEST_API_KEY}:alice",
+        "GATEWAY_API_KEYS": f"{_TEST_API_KEY}:demo-user-1",
         "LOG_LEVEL": "WARNING",
         "LOG_FORMAT": "console",
     }

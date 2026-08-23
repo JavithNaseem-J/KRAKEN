@@ -140,7 +140,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AKEA Load Benchmark")
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--endpoint", default="/v1/run")
-    parser.add_argument("--api-key", default="dev-key-alice-longer-secure-key")
+    parser.add_argument("--api-key", default="dev-key-analyst-default")
     parser.add_argument("--requests", type=int, default=30)
     parser.add_argument("--concurrency", type=int, default=5)
     args = parser.parse_args()

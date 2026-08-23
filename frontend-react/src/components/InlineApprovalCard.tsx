@@ -5,6 +5,7 @@ import Markdown from 'react-markdown';
 
 import { fetchApprovalDetails, submitApprovalDecision } from '../services/api';
 import type { ApprovalDetails, ApprovalState } from '../types/agent';
+import { usePersona } from '../context/PersonaContext';
 
 interface InlineApprovalCardProps {
   approvalId: string;
@@ -40,6 +41,7 @@ export function InlineApprovalCard({
   onResolved,
   onExpired,
 }: InlineApprovalCardProps) {
+  const { activePersona } = usePersona();
   const [details, setDetails] = useState<ApprovalDetails | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<'approve' | 'reject' | null>(null);
@@ -114,10 +116,20 @@ export function InlineApprovalCard({
 
   const decide = async (decision: 'approve' | 'reject') => {
     if (!details || submitting || isExpired) return;
+    if (decision === 'approve' && !activePersona.canApprove) {
+      setError(`Access Denied: ${activePersona.label} cannot authorize operational execution.`);
+      return;
+    }
     setSubmitting(decision);
     setError(null);
     try {
-      await submitApprovalDecision(approvalId, decision, details.csrf_token);
+      await submitApprovalDecision(
+        approvalId,
+        decision,
+        details.csrf_token,
+        activePersona.role,
+        activePersona.id,
+      );
       onResolved(approvalId, decision);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to submit decision.');
@@ -319,31 +331,55 @@ export function InlineApprovalCard({
 
       {/* Active Decision Buttons */}
       {state === 'pending' && !isExpired && (
-        <div className="mt-4 flex items-center gap-2">
-          <button
-            disabled={!details || submitting !== null}
-            onClick={() => void decide('approve')}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 transition-all active:scale-[0.98] disabled:opacity-40 shadow-lg shadow-emerald-950"
-          >
-            {submitting === 'approve' ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Check size={14} />
-            )}
-            Authorize Execution
-          </button>
-          <button
-            disabled={!details || submitting !== null}
-            onClick={() => void decide('reject')}
-            className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-neutral-700 bg-neutral-800 px-4 py-2 text-xs font-bold text-neutral-300 hover:bg-neutral-700 hover:text-white transition-all active:scale-[0.98] disabled:opacity-40"
-          >
-            {submitting === 'reject' ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <X size={14} />
-            )}
-            Deny Request
-          </button>
+        <div className="mt-4 flex flex-col gap-2.5">
+          {!activePersona.canApprove && (
+            <div className="flex items-center gap-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-300">
+              <Lock size={14} className="shrink-0 text-amber-400" />
+              <span>
+                <strong>Clearance Required:</strong> Current persona (<em>{activePersona.label}</em>)
+                cannot authorize operational execution. Switch to{' '}
+                <strong>Incident Commander</strong> or <strong>Admin</strong> in the header to approve.
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              disabled={!details || submitting !== null || !activePersona.canApprove}
+              onClick={() => void decide('approve')}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all shadow-lg ${
+                activePersona.canApprove
+                  ? 'bg-emerald-600 text-white hover:bg-emerald-500 active:scale-[0.98] shadow-emerald-950 cursor-pointer'
+                  : 'bg-neutral-800 text-neutral-500 border border-neutral-700/50 cursor-not-allowed opacity-50'
+              }`}
+              title={
+                activePersona.canApprove
+                  ? 'Authorize execution of staged operational change'
+                  : 'Insufficient clearance to authorize execution'
+              }
+            >
+              {submitting === 'approve' ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : activePersona.canApprove ? (
+                <Check size={14} />
+              ) : (
+                <Lock size={14} />
+              )}
+              {activePersona.canApprove ? 'Authorize Execution' : 'Authorization Locked'}
+            </button>
+            <button
+              disabled={!details || submitting !== null}
+              onClick={() => void decide('reject')}
+              className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-neutral-700 bg-neutral-800 px-4 py-2 text-xs font-bold text-neutral-300 hover:bg-neutral-700 hover:text-white transition-all active:scale-[0.98] disabled:opacity-40"
+            >
+              {submitting === 'reject' ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <X size={14} />
+              )}
+              Deny Request
+            </button>
+          </div>
         </div>
       )}
 

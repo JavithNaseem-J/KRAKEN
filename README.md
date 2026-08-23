@@ -2,9 +2,9 @@
 
 [![CI](https://github.com/JavithNaseem-J/Autonomous-Knowledge-Execution-Agent/actions/workflows/ci.yml/badge.svg)](https://github.com/JavithNaseem-J/Autonomous-Knowledge-Execution-Agent/actions/workflows/ci.yml)
 
-KRAKEN is a production-grade autonomous AI agent system built with FastAPI, LangGraph, PostgreSQL (pgvector + PostgresSaver), Redis, and Qdrant. It handles complex cybersecurity and IT support queries, performs hybrid vector RAG over domain knowledge, executes safe actions autonomously, and routes high-risk operations through a Human-in-the-Loop (HITL) approval queue with an append-only cryptographic audit trail.
+KRAKEN is a production-grade autonomous AI agent system built with FastAPI, LangGraph, PostgreSQL (Audit & Ticket Store), Redis, and Qdrant (Knowledge RAG, Semantic Cache & Episodic Memory). It handles complex cybersecurity and IT support queries, performs hybrid vector RAG over domain knowledge, executes safe actions autonomously, and routes high-risk operations through a Human-in-the-Loop (HITL) approval queue with an append-only cryptographic audit trail.
 
-For a detailed topology and sequence diagrams of the HITL workflow, see the [System Architecture Documentation](docs/architecture.md).
+For a detailed topology and sequence diagrams of the HITL workflow, see the [System Architecture Documentation](docs/architecture.md). For the internal LangGraph reasoning state machine, node contracts, and prompt versioning guide, see the [Agent Pipeline Documentation](docs/agent-pipeline.md).
 
 ---
 
@@ -14,7 +14,7 @@ For a detailed topology and sequence diagrams of the HITL workflow, see the [Sys
 - **LangGraph State Machine**: ReAct agent orchestrator with state persistence, checkpointer recovery, and concurrency limits.
 - **Human-in-the-Loop (HITL) Security**: Automated risk-classification that pauses CRITICAL actions for human review via CSRF-protected Web UI and API endpoints.
 - **Append-Only Cryptographic Audit Trail**: Every executed action is signed into a SHA-256 hash-chain stored in PostgreSQL with keyset-paginated verification.
-- **Qdrant Hybrid Vector RAG**: Dense embeddings (BAAI/bge-small-en), keyword frequency RRF fusion, and payload-filtered ticket isolation.
+- **Unified Qdrant Vector Engine**: Dense embeddings (BAAI/bge-small-en), knowledge base RAG, semantic caching, and user-isolated episodic memory.
 - **Production Observability**: Prometheus `/metrics` endpoints and Langfuse LLM monitoring.
 
 ---
@@ -51,7 +51,7 @@ python main.py
 ### Option B: Docker Compose
 
 ```bash
-# Start the full stack (App + PostgreSQL with pgvector + Redis + React frontend)
+# Start the full stack (App + PostgreSQL + Redis + React frontend)
 docker compose up -d
 
 # Ingest domain knowledge into vector store
@@ -69,12 +69,12 @@ Once running, access the React web frontend chat UI at [http://localhost:5173](h
 
 | Subsystem | Scope / Endpoint | Description |
 |-----------|------------------|-------------|
-| **Gateway** | `:8000` | Edge API Gateway, API Key Auth, Sliding-Window Rate Limiter, Prompt Guard |
+| **Gateway** | `:8000` (`src.api.gateway:app`) | Edge API Gateway, API Key Auth, Sliding-Window Rate Limiter, Prompt Guard |
 | **Orchestrator** | In-Process / `/run` | LangGraph ReAct Agent with checkpoint persistence and HITL interrupt |
 | **Knowledge** | In-Process / `/retrieve` | Vector Store RAG engine (Qdrant + BAAI/bge-small-en embeddings) |
 | **Action** | In-Process / `/execute` | Ticket Management & Safe Workspace Execution Sandbox |
 | **Approval** | In-Process & `:8000/approve/*` | Human-in-the-Loop (HITL) Approval Queue, Details & Decision endpoints |
-| **Memory** | In-Process / `/session` | Short-term Redis Session Memory & Long-term pgvector Memory |
+| **Memory** | In-Process / `/session` | Short-term Redis Session Memory & Long-term Qdrant Episodic Memory |
 | **Audit** | In-Process / `/log` | Cryptographically chained, append-only PostgreSQL Audit Log |
 
 ---

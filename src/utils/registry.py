@@ -65,6 +65,30 @@ REGISTRY: dict[str, ActionDefinition] = {
             "evidence": "str",
         },
     ),
+    "quarantine_ip": ActionDefinition(
+        name="quarantine_ip",
+        description="Block or quarantine an external IP address on the perimeter firewall.",
+        action_type=ActionType.WRITE,
+        risk_level=RiskLevel.CRITICAL,
+        requires_hitl=True,
+        parameter_schema={
+            "ip": "str",
+            "reason": "str",
+            "evidence": "str",
+        },
+    ),
+    "unlock_account": ActionDefinition(
+        name="unlock_account",
+        description="Unlock a locked user or Active Directory account after failed login attempts.",
+        action_type=ActionType.WRITE,
+        risk_level=RiskLevel.CRITICAL,
+        requires_hitl=True,
+        parameter_schema={
+            "user_email": "str",
+            "reason": "str",
+            "evidence": "str",
+        },
+    ),
 }
 
 

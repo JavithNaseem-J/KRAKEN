@@ -93,7 +93,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         # Ops probes and the browser-facing HITL approval flow (protected by
         # unguessable approval_id + CSRF token) bypass API-key auth.
-        if path in ("/health", "/metrics", "/docs", "/openapi.json") or path.startswith(
+        if path in ("/health", "/ready", "/metrics", "/docs", "/openapi.json") or path.startswith(
             "/approve/"
         ):
             return await call_next(request)
@@ -112,7 +112,8 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             )
 
         settings = get_settings()
-        valid_keys = self.api_keys_map or parse_api_keys(settings.gateway_api_keys)
+        current_keys = parse_api_keys(settings.gateway_api_keys)
+        valid_keys = {**self.api_keys_map, **current_keys} if self.api_keys_map else current_keys
 
         if api_key and (api_key in valid_keys or safe_compare_tokens(api_key, settings.gateway_api_keys)):
             return await call_next(request)
@@ -124,4 +125,17 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         )
 
 
+USER_ROLE_MAP: dict[str, str] = {
+    "demo-user-1": "tier1",
+    "demo-user-2": "security_lead",
+    "demo-admin": "admin",
+}
 
+
+def resolve_user_role(user_id: str) -> str:
+    """
+    Map a user_id to an operational role for RBAC-scoped retrieval.
+    Falls back to using the user_id as-is if not found in the mapping.
+    """
+    normalized = (user_id or "public").lower().strip()
+    return USER_ROLE_MAP.get(normalized, normalized)

@@ -4,10 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ReasoningInspectorDrawer } from './components/ReasoningInspectorDrawer';
 import { SessionSidebar } from './components/SessionSidebar';
-import { TelemetryDrawer } from './components/TelemetryDrawer';
 import RuixenMoonChat from './components/ui/ruixen-moon-chat';
 import { useApprovalPoller } from './hooks/useApprovalPoller';
 import { runAgentQuery, streamAgentQuery, type AgentStreamEvent } from './services/api';
+import { usePersona } from './context/PersonaContext';
 import {
   isPendingApproval,
   type ChatMessage as ChatMessageType,
@@ -17,7 +17,6 @@ import {
 } from './types/agent';
 
 const SESSIONS_STORAGE_KEY = 'akea.chat.sessions.v1';
-const ROLE_STORAGE_KEY = 'akea.chat.active_role.v1';
 
 const USER_ROLES: UserRole[] = [
   {
@@ -105,14 +104,10 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string>(
     () => sessions[0]?.session_id ?? '',
   );
-  const [activeRole, setActiveRole] = useState<UserRole>(() => {
-    const saved = localStorage.getItem(ROLE_STORAGE_KEY);
-    return USER_ROLES.find((r) => r.user_id === saved) ?? USER_ROLES[0];
-  });
+  const { activePersona } = usePersona();
   const [busy, setBusy] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
   const [inspectedMessage, setInspectedMessage] = useState<ChatMessageType | null>(null);
-  const [telemetryMessage, setTelemetryMessage] = useState<ChatMessageType | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const activeSession = sessions.find((s) => s.session_id === activeSessionId) ?? null;
@@ -127,10 +122,6 @@ export default function App() {
     }
     localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(toSave));
   }, [sessions]);
-
-  useEffect(() => {
-    localStorage.setItem(ROLE_STORAGE_KEY, activeRole.user_id);
-  }, [activeRole]);
 
   const updateSession = useCallback(
     (sessionId: string, updater: (s: ChatSession) => ChatSession) => {
@@ -177,7 +168,7 @@ export default function App() {
   // Background polling while pending approval
   useApprovalPoller({
     pendingSessionId,
-    apiKey: activeRole.api_key,
+    apiKey: activePersona.apiKey,
     onUpdate: (res) => {
       if (!isPendingApproval(res)) {
         handleCompletedResponse(res.session_id, res);
@@ -222,8 +213,10 @@ export default function App() {
       const finalRes = await streamAgentQuery(
         text,
         sessionId,
-        activeRole.api_key,
+        activePersona.apiKey,
         (event) => setStreamingSteps((prev) => [...prev, event]),
+        activePersona.role,
+        activePersona.id,
       );
       setStreamingSteps([]);
 
@@ -243,7 +236,13 @@ export default function App() {
         }
       } else {
         // SSE ended without a response payload — fall back to poll
-        const res = await runAgentQuery('', sessionId, activeRole.api_key);
+        const res = await runAgentQuery(
+          '',
+          sessionId,
+          activePersona.apiKey,
+          activePersona.role,
+          activePersona.id,
+        );
         if (isPendingApproval(res)) {
           appendMessage(sessionId, {
             id: crypto.randomUUID(),
@@ -360,6 +359,16 @@ export default function App() {
 
   const messages = useMemo(() => activeSession?.messages ?? [], [activeSession]);
 
+  const activeRole: UserRole = useMemo(
+    () => ({
+      user_id: activePersona.id,
+      label: activePersona.label,
+      title: activePersona.title,
+      api_key: activePersona.apiKey,
+    }),
+    [activePersona],
+  );
+
   return (
     <div className="flex h-full w-full bg-black overflow-hidden">
       {/* Session Sidebar */}
@@ -373,7 +382,7 @@ export default function App() {
         onSelectSession={(id) => setActiveSessionId(id)}
         onNewSession={createSession}
         onDeleteSession={deleteSession}
-        onSelectRole={setActiveRole}
+        onSelectRole={() => {}}
       />
 
       {/* Main Ruixen Moon Chat Component */}
@@ -391,7 +400,6 @@ export default function App() {
           onApprovalResolved={handleApprovalResolved}
           onApprovalExpired={handleApprovalExpired}
           onInspectReasoning={setInspectedMessage}
-          onInspectTelemetry={setTelemetryMessage}
           streamingSteps={streamingSteps}
         />
       </main>
@@ -401,15 +409,6 @@ export default function App() {
         <ReasoningInspectorDrawer
           message={inspectedMessage}
           onClose={() => setInspectedMessage(null)}
-        />
-      </ErrorBoundary>
-
-      {/* Slide-Over Telemetry Inspector */}
-      <ErrorBoundary>
-        <TelemetryDrawer
-          message={telemetryMessage}
-          activeRole={activeRole}
-          onClose={() => setTelemetryMessage(null)}
         />
       </ErrorBoundary>
     </div>

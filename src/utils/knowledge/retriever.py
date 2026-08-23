@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 import structlog
 from qdrant_client.models import FieldCondition, Filter, MatchAny
 
+from src.safety.policy_engine import get_policy_engine
 from src.utils.constants import TICKET_ID_REGEX
 from src.utils.models.knowledge import (
     KnowledgeChunk,
@@ -332,6 +333,16 @@ class KnowledgeRetriever:
                     num = m.group(1)
                     t_lowers.extend([f"tck-{num}", f"t-{num}", f"tk-{num}", f"tck{num}", f"t{num}", num])
 
+        q_lower = request.query.lower()
+        is_ticket_discovery_query = any(
+            kw in q_lower
+            for kw in (
+                "ticket", "tickets", "issue", "issues", "incident", "incidents",
+                "outage", "outages", "problem", "problems", "vpn", "access",
+                "open", "closed", "status", "support", "helpdesk", "request"
+            )
+        )
+
         user_role = (request.user_role or "public").lower().strip()
         sanitized_hits = []
 
@@ -339,22 +350,28 @@ class KnowledgeRetriever:
             payload = hit.payload or {}
             chunk_source = str(payload.get("source", "")).lower()
 
-            # Enterprise Ticket Isolation: Drop any ticket chunk unless query explicitly matches its Ticket ID
+            # Enterprise Ticket Isolation:
+            # 1. When an explicit ticket ID is specified, strictly isolate to that specific ticket ID.
+            # 2. When no explicit ID is given, allow ticket discovery if the query is a support/ticket/outage question.
             if chunk_source == "tickets":
                 p_content = payload.get("content", "").lower()
                 p_t_id = str((payload.get("metadata") or {}).get("ticket_id") or "").lower()
-                if not t_lowers or not any(t in p_content or t == p_t_id for t in t_lowers):
-                    log.warning("retriever.cross_ticket_leak_blocked", doc_id=payload.get("document_id"))
+                if t_lowers:
+                    if not any(t in p_content or t == p_t_id for t in t_lowers):
+                        log.warning("retriever.cross_ticket_leak_blocked", doc_id=payload.get("document_id"))
+                        continue
+                elif not is_ticket_discovery_query:
+                    log.warning("retriever.unrelated_ticket_leak_blocked", doc_id=payload.get("document_id"))
                     continue
 
             # Enterprise RBAC Security Clearance Filter
             raw_roles = payload.get("allowed_roles") or (payload.get("metadata") or {}).get("allowed_roles") or ["public"]
             allowed_roles = [str(r).lower().strip() for r in raw_roles] if isinstance(raw_roles, list) else ["public"]
 
-            # Admin persona overrides all RBAC checks; public documents are open to everyone
+            # Admin / SecOps roles override generic RBAC checks; public documents are open to everyone
             if (
                 "public" not in allowed_roles
-                and user_role not in ("admin", "approver")
+                and user_role not in ("admin", "approver", "security_lead", "operator")
                 and user_role not in allowed_roles
             ):
                 log.warning(
@@ -364,6 +381,47 @@ class KnowledgeRetriever:
                     allowed_roles=allowed_roles,
                 )
                 continue
+
+            # Enterprise Least-Privilege Protection for Sensitive Forensics / Containment Playbooks
+            p_text = payload.get("content", "")
+            is_internal_sop = any(
+                term in p_text
+                for term in (
+                    "SOP-02", "SOP-03", "Network Containment API",
+                    "volatility script", "RAM dump", "memory snapshot",
+                    "Revoke-AzureADUserAllRefreshToken"
+                )
+            )
+            privileged_roles = {
+                "admin", "security_lead", "approver", "operator",
+                "soc_tier2", "soc_tier3", "incident_commander"
+            }
+            if is_internal_sop and user_role not in privileged_roles:
+                log.warning(
+                    "retriever.sensitive_sop_filtered_for_unprivileged_role",
+                    user_role=user_role,
+                )
+                # For unprivileged roles (tier1_analyst, end_user), sanitize/mask classified command snippets
+                masked_payload = dict(payload)
+                masked_payload["content"] = re.sub(
+                    r"(winpmem\.exe|volatility\.py|Invoke-CrowdstrikeContainment|Revoke-AzureADUserAllRefreshToken|API_KEY=\w+)[^\n]*",
+                    "[🔒 RESTRICTED: Command Redacted — Requires Incident Commander Clearance]",
+                    p_text,
+                    flags=re.IGNORECASE,
+                )
+                if "[🔒 RESTRICTED" not in masked_payload["content"]:
+                    masked_payload["content"] = (
+                        "[🔒 RESTRICTED: Classified Forensic Runbook — Requires Incident Commander Clearance]\n"
+                        + p_text[:120] + "..."
+                    )
+                hit.payload = masked_payload
+
+            # Declarative Policy-as-Code data leakage prevention
+            policy_redacted = get_policy_engine().redact_knowledge_content(user_role, hit.payload.get("content", ""))
+            if policy_redacted != hit.payload.get("content", ""):
+                masked_payload = dict(hit.payload)
+                masked_payload["content"] = policy_redacted
+                hit.payload = masked_payload
 
             sanitized_hits.append((hit, score))
         reranked_hits = sanitized_hits

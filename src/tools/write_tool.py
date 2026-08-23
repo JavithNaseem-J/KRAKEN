@@ -19,10 +19,10 @@ import structlog
 
 from src.utils.exceptions import ActionExecutionError
 
-from ..safety.backup import backup_if_exists
 from ..safety.path_validator import (
     WORKSPACE_ROOT,
     atomic_write_json,
+    backup_if_exists,
     validate_write_target,
 )
 

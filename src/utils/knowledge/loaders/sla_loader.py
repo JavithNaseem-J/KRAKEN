@@ -61,7 +61,9 @@ def load_sla_chunks() -> list[dict[str, Any]]:
                 content = "\n".join(p for p in content_parts if p)
 
                 chunks.append({
+                    "id": f"sla_{p_level.lower()}",
                     "chunk_id": f"sla_{p_level.lower()}",
+                    "document": content,
                     "content": content,
                     "metadata": {
                         "severity": p_level,
@@ -77,7 +79,9 @@ def load_sla_chunks() -> list[dict[str, Any]]:
             mapping_lines = [f"- {action}: {risk}" for action, risk in risk_mapping.items()]
             content = "SLA Action Risk Level Mapping:\n" + "\n".join(mapping_lines)
             chunks.append({
+                "id": "sla_action_risk_mapping",
                 "chunk_id": "sla_action_risk_mapping",
+                "document": content,
                 "content": content,
                 "metadata": {
                     "type": "action_risk_mapping",

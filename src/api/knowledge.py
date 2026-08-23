@@ -25,6 +25,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 
 from src.utils.auth import verify_service_token
 from src.utils.config import get_settings
+from src.utils.http_client import simple_health_response
 from src.utils.knowledge.retriever import KnowledgeRetriever
 from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
@@ -88,7 +89,7 @@ app.add_middleware(TraceIdMiddleware)
 
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "knowledge"}
+    return simple_health_response("knowledge")
 
 
 @app.get("/stats", tags=["ops"])

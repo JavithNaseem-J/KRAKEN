@@ -110,7 +110,7 @@ class Settings(BaseSettings):
     audit_url: str = "http://localhost:8006"
 
     gateway_api_keys: str = (
-        "dev-key-alice-longer-secure-key:alice,dev-key-bob-longer-secure-key:bob"
+        "dev-key-analyst-default:tier1_analyst,dev-key-admin-default:admin"
     )
     cors_allowed_origins: str = "http://localhost:5173,http://localhost:3000,https://*.onrender.com,*"
     gateway_rate_limit_requests: int = 60

@@ -37,14 +37,14 @@ async def upsert_chunks_async(
         log.warning("ingest.empty_source", source=source_name)
         return 0
 
-    doc_texts = [c["document"] for c in chunks]
+    doc_texts = [c.get("document") or c.get("content", "") for c in chunks]
     vectors = embedder.embed_documents(doc_texts)
 
     roles = default_allowed_roles or ["public"]
 
     points: list[PointStruct] = []
     for c, vector in zip(chunks, vectors, strict=True):
-        raw_id = c.get("id")
+        raw_id = c.get("id") or c.get("chunk_id")
         try:
             point_uuid = str(uuid.UUID(str(raw_id)))
         except ValueError:
@@ -53,7 +53,14 @@ async def upsert_chunks_async(
             )
 
         meta = c.get("metadata", {})
-        doc_id = str(meta.get("file") or meta.get("ticket_id") or meta.get("rule_id") or c.get("id") or "unknown")
+        doc_id = str(
+            meta.get("file")
+            or meta.get("file_name")
+            or meta.get("ticket_id")
+            or meta.get("rule_id")
+            or raw_id
+            or "unknown"
+        )
 
         chunk_roles = c.get("allowed_roles") or meta.get("allowed_roles") or roles
 
@@ -208,6 +215,11 @@ async def ensure_collection(
         await client.create_payload_index(
             collection_name=collection_name,
             field_name="source",
+            field_schema=PayloadSchemaType.KEYWORD,
+        )
+        await client.create_payload_index(
+            collection_name=collection_name,
+            field_name="metadata.ticket_id",
             field_schema=PayloadSchemaType.KEYWORD,
         )
     except Exception as exc:

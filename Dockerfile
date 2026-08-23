@@ -4,13 +4,17 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy dependency manifests first for layer caching
+COPY pyproject.toml uv.lock ./
+
+# Install production dependencies into /app/.venv using the committed lockfile
+RUN uv sync --no-dev --frozen
 
 # ── STAGE 2: Runner ────────────────────────────────────────────────
 FROM python:3.12-slim AS runner
@@ -24,8 +28,8 @@ RUN groupadd -r kraken && useradd -r -g kraken -s /sbin/nologin kraken
 
 WORKDIR /app
 
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --chown=kraken:kraken src/ /app/src/
 COPY --chown=kraken:kraken data/ /app/data/

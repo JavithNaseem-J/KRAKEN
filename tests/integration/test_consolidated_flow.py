@@ -1,7 +1,7 @@
 """
 Integration gate for the consolidated KRAKEN runtime.
 
-Boots the single gateway app (``src.api.routes:app``) with REAL lifespans via
+Boots the single gateway app (``src.api.gateway:app``) with REAL lifespans via
 TestClient — every subsystem lifespan runs, initializing real app.state
 (approval queue, audit store, memory stores, knowledge retriever, agent graph).
 
@@ -29,7 +29,7 @@ import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
-API_KEY = "itest-alice-key-0123456789abcdef"
+API_KEY = "itest-demo-key-0123456789abcdef"
 AUTH = {"X-API-Key": API_KEY}
 OPERATOR = {**AUTH, "X-Operator-Role": "operator"}
 
@@ -102,7 +102,7 @@ def _make_redis_factory(server: fakeredis.FakeServer):
 # ── Fixture: consolidated app with real lifespans ─────────────────────────────
 @pytest.fixture(scope="module")
 def client() -> Iterator[TestClient]:
-    from src.api.routes import app
+    from src.api.gateway import app
 
     SCRIPT.set_safe()
     server = fakeredis.FakeServer()
@@ -127,7 +127,7 @@ def _poll_to_completion(client: TestClient, session_id: str, timeout: float = 25
     while time.time() < deadline:
         resp = client.post(
             "/v1/run",
-            json={"message": "", "session_id": session_id, "user_id": "alice"},
+            json={"message": "", "session_id": session_id, "user_id": "demo-user-1"},
             headers=AUTH,
         )
         assert resp.status_code == 200, resp.text
@@ -166,7 +166,7 @@ class TestConsolidatedFlow:
             json={
                 "message": "How do I reset my VPN password?",
                 "session_id": "itest-safe-1",
-                "user_id": "alice",
+                "user_id": "demo-user-1",
             },
             headers=AUTH,
         )
@@ -190,7 +190,7 @@ class TestConsolidatedFlow:
                 json={
                     "message": "Please escalate ticket TCK-1001, critical RCE confirmed.",
                     "session_id": "itest-hitl-approve",
-                    "user_id": "alice",
+                    "user_id": "demo-user-1",
                 },
                 headers=OPERATOR,
             )
@@ -227,7 +227,7 @@ class TestConsolidatedFlow:
                 json={
                     "message": "Escalate ticket TCK-1001 immediately.",
                     "session_id": "itest-hitl-reject",
-                    "user_id": "alice",
+                    "user_id": "demo-user-1",
                 },
                 headers=OPERATOR,
             )
@@ -260,7 +260,7 @@ class TestConsolidatedFlow:
             json={
                 "message": "How do I set up two-factor authentication?",
                 "session_id": "itest-stream-1",
-                "user_id": "alice",
+                "user_id": "demo-user-1",
             },
             headers=AUTH,
         ) as resp:

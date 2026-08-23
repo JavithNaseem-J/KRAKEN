@@ -77,13 +77,6 @@ export type ChatMessageRole = 'user' | 'assistant' | 'system';
 
 export type ApprovalState = 'pending' | 'approved' | 'rejected' | 'expired';
 
-export interface TelemetryData {
-  role?: string;
-  chunk_scores?: number[];
-  trace_id?: string | null;
-  execution_ms?: number | null;
-}
-
 /** A single entry in the chat stream. */
 export interface ChatMessage {
   id: string;
@@ -96,7 +89,6 @@ export interface ChatMessage {
   approval_id?: string;
   approval_state?: ApprovalState;
   approval_details?: ApprovalDetails;
-  telemetry?: TelemetryData;
 }
 
 /** A persisted chat session/thread. */
