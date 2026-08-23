@@ -184,7 +184,7 @@ class Settings(BaseSettings):
         """
         from urllib.parse import urlparse
 
-        if self.environment == "dev":
+        if self.environment in ("dev", "test"):
             return self
 
         local_hostnames: frozenset[str] = frozenset(
