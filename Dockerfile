@@ -22,7 +22,8 @@ FROM python:3.12-slim AS runner
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/app" \
-    PORT=8000
+    PORT=8000 \
+    HITL_SERVICE_TOKEN="kraken-default-docker-token-min-32-characters-ok"
 
 RUN groupadd -r kraken && useradd -r -g kraken -s /sbin/nologin kraken
 
