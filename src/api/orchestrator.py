@@ -710,13 +710,13 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                     output = event.get("data", {}).get("output") or {}
                     extra = {}
                     if (
-                        name == "responder_node"
+                        name in ("responder", "responder_node")
                         or "final_answer" in output
-                        or (isinstance(output, dict) and "final_answer" in output.get(name, {}))
+                        or (isinstance(output, dict) and ("final_answer" in output.get(name, {}) or "action_result" in output.get(name, {})))
                     ):
                         try:
                             snapshot = await graph.aget_state(config)
-                            if snapshot.values and "final_answer" in snapshot.values:
+                            if snapshot.values:
                                 response = _build_response(body.session_id, snapshot.values)
                                 extra = {"response": response.model_dump(mode="json")}
                         except Exception as snapshot_exc:
@@ -761,7 +761,7 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                     }
                 )
                 yield f"data: {hitl_payload}\n\n"
-            elif snapshot.values and "final_answer" in snapshot.values:
+            elif snapshot.values:
                 response = _build_response(body.session_id, snapshot.values)
                 extra_done = {"response": response.model_dump(mode="json")}
 
@@ -943,9 +943,32 @@ def _build_response(
 
     resolved_trace_id = trace_id or state.get("trace_id") or str(uuid.uuid4())
 
+    answer_val = state.get("final_answer")
+    if not answer_val or not str(answer_val).strip():
+        action_res = state.get("action_result")
+        if isinstance(action_res, dict) and action_res.get("ticket_id"):
+            t = action_res
+            answer_val = (
+                f"### Ticket Information: {t.get('ticket_id')}\n\n"
+                f"- **Title:** {t.get('title')}\n"
+                f"- **Status:** `{t.get('status', 'open')}`\n"
+                f"- **Priority:** `{t.get('priority', 'N/A')}`\n"
+                f"- **Category:** {t.get('category', 'General')}\n"
+                f"- **Assignee:** {t.get('assignee', 'Unassigned')}\n"
+                f"- **Description:** {t.get('description', 'No description.')}"
+            )
+            if t.get("resolution"):
+                answer_val += f"\n- **Resolution:** {t.get('resolution')}"
+        elif isinstance(action_res, dict) and action_res.get("message"):
+            answer_val = str(action_res["message"])
+        elif state.get("reasoning"):
+            answer_val = str(state.get("reasoning"))
+        else:
+            answer_val = "Analysis completed. No further action needed."
+
     return QueryResponse(
         session_id=session_id,
-        answer=state.get("final_answer", "No answer generated."),
+        answer=str(answer_val),
         reasoning=state.get("reasoning", ""),
         action_taken=state.get("selected_action"),
         action_result=state.get("action_result"),

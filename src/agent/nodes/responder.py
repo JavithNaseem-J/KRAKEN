@@ -104,6 +104,27 @@ async def responder_node(state: GraphState) -> dict:
                 "Please check your LLM provider credentials or try again."
             )
 
+    if not final_answer or not final_answer.strip():
+        if isinstance(action_result, dict) and action_result.get("ticket_id"):
+            t = action_result
+            final_answer = (
+                f"### Ticket Information: {t.get('ticket_id')}\n\n"
+                f"- **Title:** {t.get('title')}\n"
+                f"- **Status:** `{t.get('status', 'open')}`\n"
+                f"- **Priority:** `{t.get('priority', 'N/A')}`\n"
+                f"- **Category:** {t.get('category', 'General')}\n"
+                f"- **Assignee:** {t.get('assignee', 'Unassigned')}\n"
+                f"- **Description:** {t.get('description', 'No description.')}"
+            )
+            if t.get("resolution"):
+                final_answer += f"\n- **Resolution:** {t.get('resolution')}"
+        elif isinstance(action_result, dict) and action_result.get("message"):
+            final_answer = str(action_result["message"])
+        elif reasoning:
+            final_answer = reasoning
+        else:
+            final_answer = "Analysis completed. No further action needed."
+
     # Build action explanation (used in audit log)
     if selected_action:
         explanation = f"Action '{selected_action}' was selected."

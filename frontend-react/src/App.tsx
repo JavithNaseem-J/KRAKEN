@@ -78,10 +78,28 @@ function loadSessions(): ChatSession[] {
 }
 
 function queryResponseToMessage(res: QueryResponse): ChatMessageType {
+  let content = res.answer;
+  if (!content || !content.trim()) {
+    const act = res.action_result as Record<string, unknown> | undefined;
+    if (act && typeof act === 'object') {
+      if (act.ticket_id) {
+        content = `### Ticket Details: ${act.ticket_id}\n\n- **Title:** ${act.title || 'N/A'}\n- **Status:** \`${act.status || 'open'}\`\n- **Priority:** \`${act.priority || 'P3'}\`\n- **Category:** ${act.category || 'Support'}\n- **Assignee:** ${act.assignee || 'Unassigned'}\n- **Description:** ${act.description || ''}`;
+        if (act.resolution) {
+          content += `\n- **Resolution:** ${act.resolution}`;
+        }
+      } else if (act.message) {
+        content = String(act.message);
+      }
+    }
+  }
+  if (!content || !content.trim()) {
+    content = res.reasoning || 'The agent processed your request successfully.';
+  }
+
   return {
     id: crypto.randomUUID(),
     role: 'assistant',
-    content: res.answer,
+    content,
     timestamp: res.timestamp ?? new Date().toISOString(),
     metadata: {
       reasoning: res.reasoning,
@@ -256,7 +274,7 @@ export default function App() {
             approval_state: 'pending',
           });
           if (res.approval_id) setPendingSessionId(sessionId);
-        } else if (res && res.answer) {
+        } else if (res && (res.answer || res.action_result || res.action_taken || res.reasoning)) {
           appendMessage(sessionId, queryResponseToMessage(res));
         } else {
           appendMessage(sessionId, {
