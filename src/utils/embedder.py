@@ -8,6 +8,7 @@ Provides vector embedding services for Knowledge and Memory microservices.
 from __future__ import annotations
 
 import threading
+from collections import OrderedDict
 from typing import Any
 
 import structlog
@@ -49,7 +50,8 @@ class BGEEmbedder:
         provider = settings.embedding_provider.lower()
         model_name = model_name or settings.embedding_model
         device = device or settings.embedding_device
-        self._query_cache: dict[str, list[float]] = {}
+        self._query_cache: OrderedDict[str, list[float]] = OrderedDict()
+        self._cache_lock = threading.Lock()
         self._model: Any
 
         log.info("embedder.loading", provider=provider, model=model_name)
@@ -89,12 +91,21 @@ class BGEEmbedder:
         self.device = device
 
     def embed_query(self, text: str) -> list[float]:
-        """Embed a single query string using in-memory dict cache."""
-        if text not in self._query_cache:
+        """Embed a single query string using bounded OrderedDict LRU cache."""
+        with self._cache_lock:
+            if text in self._query_cache:
+                self._query_cache.move_to_end(text)
+                return self._query_cache[text]
+
+        embedding = list(self._model.embed_query(text))
+        with self._cache_lock:
+            if text in self._query_cache:
+                self._query_cache.move_to_end(text)
+                return self._query_cache[text]
             if len(self._query_cache) >= 1024:
-                self._query_cache.clear()
-            self._query_cache[text] = list(self._model.embed_query(text))
-        return self._query_cache[text]
+                self._query_cache.popitem(last=False)
+            self._query_cache[text] = embedding
+            return embedding
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch of document strings."""

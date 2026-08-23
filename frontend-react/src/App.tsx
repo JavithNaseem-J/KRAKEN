@@ -23,13 +23,13 @@ const USER_ROLES: UserRole[] = [
     user_id: 'alice',
     label: 'Alice',
     title: 'Tier 1 Analyst',
-    api_key: import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-alice-longer-secure-key',
+    api_key: import.meta.env.VITE_API_KEY_ANALYST ?? import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-analyst-default',
   },
   {
     user_id: 'bob',
     label: 'Bob',
     title: 'Security Lead',
-    api_key: import.meta.env.VITE_API_KEY_BOB ?? 'dev-key-bob-longer-secure-key',
+    api_key: import.meta.env.VITE_API_KEY_ADMIN ?? import.meta.env.VITE_API_KEY_BOB ?? 'dev-key-admin-default',
   },
   {
     user_id: 'admin',
@@ -37,8 +37,7 @@ const USER_ROLES: UserRole[] = [
     title: 'Approver',
     api_key:
       import.meta.env.VITE_API_KEY_ADMIN ??
-      import.meta.env.VITE_API_KEY_ALICE ??
-      'dev-key-alice-longer-secure-key',
+      'dev-key-admin-default',
   },
 ];
 

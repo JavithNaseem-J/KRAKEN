@@ -68,16 +68,14 @@ def get_pg_pool() -> Any:
 
 
 def _init_pg_tickets_table(pool: Any) -> None:
-    """Creates the tickets table in PostgreSQL and seeds initial data if empty."""
+    """Creates the tickets table in PostgreSQL and ensures seed tickets exist."""
     try:
         from src.utils.db.tickets import ensure_tickets_table, seed_tickets
 
-        with pool.connection() as conn, conn.cursor() as cur:
+        with pool.connection() as conn:
             ensure_tickets_table(conn)
-            cur.execute("SELECT COUNT(*) FROM tickets;")
-            count = cur.fetchone()[0]
-            if count == 0:
-                seed_data = _load_seed_tickets()
+            seed_data = _load_seed_tickets()
+            if seed_data:
                 seeded = seed_tickets(conn, seed_data, update_on_conflict=False)
                 log.info("ticket_handler.pg_seeded", count=seeded)
     except Exception as exc:
@@ -140,7 +138,8 @@ def _find_ticket(tickets: list[dict[str, Any]], ticket_id: str) -> dict[str, Any
     """Find ticket by ID using case-insensitive, whitespace-normalized matching."""
     norm_id = ticket_id.strip().upper()
     for ticket in tickets:
-        if str(ticket.get("id", "")).strip().upper() == norm_id:
+        t_id = str(ticket.get("id") or ticket.get("ticket_id") or "").strip().upper()
+        if t_id == norm_id:
             return ticket
     return None
 
@@ -168,6 +167,19 @@ def _mutate_ticket(
                     (norm_id,),
                 )
                 row = cur.fetchone()
+                if not row:
+                    seed_data = _load_seed_tickets()
+                    found_seed = _find_ticket(seed_data, ticket_id)
+                    if found_seed:
+                        from src.utils.db.tickets import seed_tickets
+
+                        seed_tickets(conn, [found_seed], update_on_conflict=False)
+                        cur.execute(
+                            "SELECT id, title, status, priority, payload FROM tickets WHERE UPPER(id) = %s FOR UPDATE;",
+                            (norm_id,),
+                        )
+                        row = cur.fetchone()
+
                 if not row:
                     raise ActionExecutionError(
                         f"Ticket '{ticket_id}' not found in PostgreSQL database."
@@ -253,13 +265,14 @@ def execute_auto_respond(
     }
 
     if ticket_id:
-        _mutate_ticket(
+        res = _mutate_ticket(
             ticket_id=ticket_id,
             new_status="resolved",
             ticket_updates={"resolution_response": response_text, "evidence_cited": evidence},
             result_dict={},
             log_event="ticket_handler.auto_respond_success",
         )
+        result_meta.update(res)
         result_meta["ticket_id"] = ticket_id
         result_meta["status_updated_to"] = "resolved"
     else:

@@ -136,9 +136,16 @@ async def ingest(
     Called by the ingest script or admin endpoint via HTTP.
     """
     try:
+        from src.utils.cache import SemanticCache  # noqa: PLC0415
         from src.utils.knowledge.ingest import run_ingest_async  # noqa: PLC0415
 
         counts = await run_ingest_async(app.state.client, app.state.embedder)
+        try:
+            cache = SemanticCache(client=app.state.client)
+            await cache.invalidate()
+        except Exception as exc:
+            log.warning("knowledge.cache_invalidation_error", error=str(exc))
+
         log.info("knowledge.ingest.complete", counts=counts)
         return counts
     except Exception as exc:

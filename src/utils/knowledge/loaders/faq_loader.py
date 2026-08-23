@@ -22,25 +22,94 @@ from .base import resolve_data_dir
 log = structlog.get_logger(__name__)
 
 # Chunking constants
-CHUNK_SIZE = 800  # characters — balances context vs. precision
-CHUNK_OVERLAP = 100  # characters — preserves sentence continuity across boundaries
+MAX_CHUNK_SIZE = 1200  # characters — balances section continuity vs. embedding model context
 
 FAQ_DIR = resolve_data_dir("faq")
 
 
-def _chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """Split text into overlapping character-level chunks."""
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+def _clean_text(text: str) -> str:
+    """Normalize excess whitespace and line breaks."""
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _chunk_markdown(text: str, max_chunk_size: int = MAX_CHUNK_SIZE) -> list[tuple[str, str]]:
+    """
+    Split markdown text by headers (#, ##, ###) while preserving section titles and tables.
+    Returns a list of (chunk_content, section_title) tuples.
+    """
+    lines = text.splitlines()
+    sections: list[tuple[str, list[str]]] = []
+    current_title = "General"
+    current_lines: list[str] = []
+
+    header_regex = re.compile(r"^(#{1,3})\s+(.+)$")
+
+    for line in lines:
+        match = header_regex.match(line)
+        if match:
+            if current_lines and any(line_item.strip() for line_item in current_lines):
+                sections.append((current_title, current_lines))
+                current_lines = []
+            current_title = match.group(2).strip()
+            current_lines.append(line)
+        else:
+            current_lines.append(line)
+
+    if current_lines and any(line_item.strip() for line_item in current_lines):
+        sections.append((current_title, current_lines))
+
+    chunks: list[tuple[str, str]] = []
+    for title, sec_lines in sections:
+        sec_text = "\n".join(sec_lines).strip()
+        if not sec_text:
+            continue
+
+        if len(sec_text) <= max_chunk_size:
+            chunks.append((sec_text, title))
+        else:
+            paragraphs = [p.strip() for p in re.split(r"\n{2,}", sec_text) if p.strip()]
+            current_parts: list[str] = []
+            current_len = 0
+
+            for para in paragraphs:
+                if current_len + len(para) + 2 > max_chunk_size and current_parts:
+                    chunk_body = "\n\n".join(current_parts)
+                    chunks.append((chunk_body, title))
+                    current_parts = [f"### {title}\n(continued)\n\n" + para]
+                    current_len = len(current_parts[0])
+                else:
+                    current_parts.append(para)
+                    current_len += len(para) + 2
+
+            if current_parts:
+                chunks.append(("\n\n".join(current_parts), title))
+
+    return chunks if chunks else [(_clean_text(text), "General")]
+
+
+def _chunk_text(text: str, chunk_size: int = 1000) -> list[str]:
+    """Split plain text or PDF text into paragraphs up to chunk_size."""
+    text = _clean_text(text)
+    paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+    if not paragraphs:
+        return []
+
     chunks: list[str] = []
-    start = 0
-    while start < len(text):
-        end = min(start + chunk_size, len(text))
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        if end == len(text):
-            break
-        start += chunk_size - overlap
+    current_parts: list[str] = []
+    current_len = 0
+
+    for para in paragraphs:
+        if current_len + len(para) + 2 > chunk_size and current_parts:
+            chunks.append("\n\n".join(current_parts))
+            current_parts = [para]
+            current_len = len(para)
+        else:
+            current_parts.append(para)
+            current_len += len(para) + 2
+
+    if current_parts:
+        chunks.append("\n\n".join(current_parts))
+
     return chunks
 
 
@@ -67,7 +136,7 @@ def _load_text(path: Path) -> str:
 
 def load_faq_chunks() -> list[dict[str, Any]]:
     """
-    Load all FAQ/Policy documents and return Qdrant-ready chunk dicts.
+    Load all FAQ/Policy documents and return Qdrant-ready chunk dicts with structured section metadata.
 
     Returns:
         List of dicts with keys: id, document, metadata
@@ -88,12 +157,26 @@ def load_faq_chunks() -> list[dict[str, Any]]:
     for file_path in sorted(files):
         log.info("faq_loader.loading", file=file_path.name)
 
-        raw = _load_pdf(file_path) if file_path.suffix.lower() == ".pdf" else _load_text(file_path)
-        if not raw.strip():
-            log.warning("faq_loader.empty_file", file=file_path.name)
-            continue
+        if file_path.suffix.lower() == ".md":
+            raw = _load_text(file_path)
+            if not raw.strip():
+                log.warning("faq_loader.empty_file", file=file_path.name)
+                continue
+            section_chunks = _chunk_markdown(raw)
+        else:
+            raw = (
+                _load_pdf(file_path)
+                if file_path.suffix.lower() == ".pdf"
+                else _load_text(file_path)
+            )
+            if not raw.strip():
+                log.warning("faq_loader.empty_file", file=file_path.name)
+                continue
+            section_chunks = [
+                (c, file_path.stem.replace("_", " ").title())
+                for c in _chunk_text(raw)
+            ]
 
-        chunks = _chunk_text(raw)
         doc_id = hashlib.blake2b(file_path.name.encode(), digest_size=6).hexdigest()
         faq_doc = FAQDocument(
             doc_id=doc_id,
@@ -102,24 +185,25 @@ def load_faq_chunks() -> list[dict[str, Any]]:
             category="policy",
         )
 
-        for i, chunk in enumerate(chunks):
+        for i, (chunk_text, section_title) in enumerate(section_chunks):
             chunk_id = f"faq_{doc_id}_{i:04d}"
             all_chunks.append(
                 {
                     "id": chunk_id,
-                    "document": chunk,
+                    "document": chunk_text,
                     "metadata": {
                         "source": "faq",
                         "file": file_path.name,
                         "title": faq_doc.title,
+                        "section_title": section_title,
                         "category": faq_doc.category,
                         "chunk_index": i,
-                        "total_chunks": len(chunks),
+                        "total_chunks": len(section_chunks),
                     },
                 }
             )
 
-        log.info("faq_loader.done", file=file_path.name, chunks=len(chunks))
+        log.info("faq_loader.done", file=file_path.name, chunks=len(section_chunks))
 
     log.info("faq_loader.complete", total_chunks=len(all_chunks), files=len(files))
     return all_chunks

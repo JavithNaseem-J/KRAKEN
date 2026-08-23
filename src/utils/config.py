@@ -73,6 +73,10 @@ class Settings(BaseSettings):
                 or ""
             )
             values["llm_api_key"] = llm_key.strip()
+
+            pg_url = values.get("postgres_url") or os.getenv("POSTGRES_URL") or ""
+            if pg_url and not values.get("postgres_sync_url"):
+                values["postgres_sync_url"] = pg_url.replace("postgresql+asyncpg://", "postgresql://")
             if not values.get("embedding_api_key"):
                 values["embedding_api_key"] = (
                     os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY") or llm_key.strip()

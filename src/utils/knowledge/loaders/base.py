@@ -68,16 +68,21 @@ def load_structured_chunks(
 
             for idx, item in enumerate(records):
                 if text := record_to_text(item):
-                    doc_id = item.get("id") or f"{id_prefix}_{file_path.stem}_{idx + 1}"
+                    doc_id = item.get("id") or item.get("ticket_id") or f"{id_prefix}_{file_path.stem}_{idx + 1}"
+                    meta_dict: dict[str, Any] = {
+                        "source": id_prefix,
+                        "file": file_path.name,
+                        "raw": item,
+                    }
+                    for field in ("ticket_id", "subject", "title", "category", "priority", "status", "user_id"):
+                        if field in item:
+                            meta_dict[field] = item[field]
+
                     chunks.append(
                         {
                             "id": doc_id,
                             "document": text,
-                            "metadata": {
-                                "source": id_prefix,
-                                "file": file_path.name,
-                                "raw": item,
-                            },
+                            "metadata": meta_dict,
                         }
                     )
         except Exception as exc:

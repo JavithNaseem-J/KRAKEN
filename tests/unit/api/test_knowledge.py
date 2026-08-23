@@ -95,3 +95,17 @@ class TestKnowledgeAPI:
         )
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["faq"] == 10
+
+    @patch("src.utils.cache.SemanticCache.invalidate", new_callable=AsyncMock)
+    @patch("src.utils.knowledge.ingest.run_ingest_async", new_callable=AsyncMock)
+    def test_ingest_invalidates_semantic_cache(
+        self, mock_run: AsyncMock, mock_invalidate: AsyncMock, client
+    ) -> None:
+        mock_run.return_value = {"faq": 10, "tickets": 5, "sla": 2}
+
+        response = client.post(
+            "/ingest",
+            headers=_HEADERS,
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert mock_invalidate.called

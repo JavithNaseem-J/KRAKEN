@@ -341,6 +341,10 @@ _HIGH_PRIVILEGE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_ALLOWED_OPERATOR_ROLES: frozenset[str] = frozenset(
+    {"operator", "tier1_analyst", "incident_commander", "security_lead", "admin", "soc_tier1", "soc_tier2"}
+)
+
 
 @app.post(
     "/v1/run",
@@ -374,7 +378,7 @@ async def run(request: Request) -> JSONResponse:
 
     message = body.get("message", "") if isinstance(body, dict) else ""
     if isinstance(message, str) and message:
-        is_operator = request.headers.get("X-Operator-Role", "").strip().lower() == "operator"
+        is_operator = request.headers.get("X-Operator-Role", "").strip().lower() in _ALLOWED_OPERATOR_ROLES
         if check_prompt_injection(message) and not is_operator:
             log.warning("gateway.prompt_injection_blocked", path=request.url.path)
             return JSONResponse(
@@ -393,7 +397,7 @@ async def run(request: Request) -> JSONResponse:
     # expose internal ticket data.
     if isinstance(message, str) and _HIGH_PRIVILEGE_PATTERNS.search(message):
         operator_role = request.headers.get("X-Operator-Role", "").strip().lower()
-        if operator_role != "operator":
+        if operator_role not in _ALLOWED_OPERATOR_ROLES:
             user_id = getattr(request.state, "user_id", "anonymous")
             log.warning(
                 "gateway.privilege_escalation_denied",
@@ -461,7 +465,7 @@ async def run_stream(request: Request) -> Any:
 
     message = body.get("message", "") if isinstance(body, dict) else ""
     if isinstance(message, str) and message:
-        is_operator = request.headers.get("X-Operator-Role", "").strip().lower() == "operator"
+        is_operator = request.headers.get("X-Operator-Role", "").strip().lower() in _ALLOWED_OPERATOR_ROLES
         if check_prompt_injection(message) and not is_operator:
             log.warning("gateway.prompt_injection_blocked", path=request.url.path)
             return JSONResponse(
@@ -475,7 +479,7 @@ async def run_stream(request: Request) -> Any:
 
     if isinstance(message, str) and _HIGH_PRIVILEGE_PATTERNS.search(message):
         operator_role = request.headers.get("X-Operator-Role", "").strip().lower()
-        if operator_role != "operator":
+        if operator_role not in _ALLOWED_OPERATOR_ROLES:
             log.warning(
                 "gateway.privilege_escalation_denied",
                 user_id=user_id,

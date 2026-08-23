@@ -31,7 +31,7 @@ export const PERSONAS: Persona[] = [
     badge: 'User',
     title: 'End User',
     description: 'General IT inquiries and personal ticket status. Cannot trigger operational actions.',
-    apiKey: import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-alice-longer-secure-key',
+    apiKey: import.meta.env.VITE_API_KEY_ANALYST ?? import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-analyst-default',
     canApprove: false,
     clearanceLevel: 'PUBLIC',
   },
@@ -43,7 +43,7 @@ export const PERSONAS: Persona[] = [
     badge: 'Tier 1',
     title: 'Tier 1 Analyst',
     description: 'Alert triage, ticket search, stages containment requests (cannot authorize execution).',
-    apiKey: import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-alice-longer-secure-key',
+    apiKey: import.meta.env.VITE_API_KEY_ANALYST ?? import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-analyst-default',
     canApprove: false,
     clearanceLevel: 'TIER_1',
   },
@@ -55,7 +55,7 @@ export const PERSONAS: Persona[] = [
     badge: 'Lead',
     title: 'Security Lead',
     description: 'Authorizes perimeter containment (IP quarantine, account unlock) and inspects forensic SOPs.',
-    apiKey: import.meta.env.VITE_API_KEY_BOB ?? 'dev-key-bob-longer-secure-key',
+    apiKey: import.meta.env.VITE_API_KEY_ADMIN ?? import.meta.env.VITE_API_KEY_BOB ?? 'dev-key-admin-default',
     canApprove: true,
     clearanceLevel: 'TIER_2',
   },
@@ -69,8 +69,7 @@ export const PERSONAS: Persona[] = [
     description: 'Unrestricted enterprise clearance, policy override, full cryptographic audit trail inspection.',
     apiKey:
       import.meta.env.VITE_API_KEY_ADMIN ??
-      import.meta.env.VITE_API_KEY_ALICE ??
-      'dev-key-alice-longer-secure-key',
+      'dev-key-admin-default',
     canApprove: true,
     clearanceLevel: 'ADMIN',
   },

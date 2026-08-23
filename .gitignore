@@ -246,4 +246,21 @@ data/workspace/*.bak.json
 !data/workspace/README.txt
 /openspec
 
+# Playwright test suite & configuration
+e2e/
+playwright.config.ts
+/package.json
+/package-lock.json
+.github/workflows/playwright.yml
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+playwright/.auth/
+.playwright/
 
+# Local frontend environment overrides
+frontend-react/.env
+frontend-react/.env.local
+frontend-react/.env.*.local
+frontend-react/dist/

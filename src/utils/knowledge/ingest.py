@@ -253,4 +253,13 @@ async def run_ingest_async(client: AsyncQdrantClient, embedder: BGEEmbedder) -> 
         client, embedder, sla_chunks, KnowledgeSource.SLA.value
     )
 
+    try:
+        from src.utils.cache import SemanticCache
+
+        cache = SemanticCache(client=client)
+        await cache.invalidate()
+        log.info("ingest.semantic_cache_invalidated")
+    except Exception as exc:
+        log.warning("ingest.semantic_cache_invalidation_failed", error=str(exc))
+
     return counts
