@@ -52,6 +52,7 @@ jobs:
   backend-test-suite:
     name: 🧪 Backend Automated Tests
     runs-on: ubuntu-latest
+    needs: [backend-lint-and-audit]
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
@@ -98,6 +99,7 @@ jobs:
   frontend-build:
     name: ⚛️ Frontend Build & Typecheck
     runs-on: ubuntu-latest
+    needs: [backend-test-suite]
     defaults:
       run:
         working-directory: frontend-react
@@ -115,7 +117,7 @@ jobs:
       - name: Install NPM Dependencies
         run: npm ci
 
-      - name: Run ESLint
+      - name: Run ESLint & Typecheck
         run: npm run lint
 
       - name: Build Production Vite Bundle
@@ -127,6 +129,7 @@ jobs:
   security-scan:
     name: 🛡️ Security & Vulnerability Scan
     runs-on: ubuntu-latest
+    needs: [frontend-build]
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
@@ -146,7 +149,7 @@ jobs:
   docker-smoke-test:
     name: 🐳 Docker Build & Health Smoke Test
     runs-on: ubuntu-latest
-    needs: [backend-lint-and-audit, frontend-build]
+    needs: [security-scan]
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
