@@ -1,9 +1,3 @@
-"""
-Ticket history loader.
-Reads .json and .csv files from data/knowledge/tickets/.
-Converts tickets into human-readable text representations for semantic search.
-"""
-
 from __future__ import annotations
 
 from typing import Any

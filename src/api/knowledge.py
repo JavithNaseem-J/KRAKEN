@@ -1,19 +1,3 @@
-"""
-Knowledge Service — Qdrant Vector Search Implementation.
-
-Startup lifecycle:
-  1. Load BAAI/bge-small-en embedding model
-  2. Open QdrantClient (remote Cloud or local in-memory fallback)
-  3. Ensure `akea_knowledge` collection exists
-  4. Instantiate KnowledgeRetriever and store in app.state
-
-Endpoints:
-  GET  /health     — liveness probe
-  POST /retrieve   — multi-source semantic search (authenticated)
-  POST /ingest     — trigger re-ingestion (admin, authenticated)
-  GET  /stats      — collection point count
-"""
-
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
@@ -42,11 +26,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
     from src.utils.embedder import get_embedder
 
-    # ── 1. Load embedding model ────────────────────────────────────────────────
+    # 1. Load embedding model
     log.info("knowledge.startup.embedder", model=settings.embedding_model)
     embedder = get_embedder()
 
-    # ── 2. Open Qdrant client & ensure collection ──────────────────────────────
+    # 2. Open Qdrant client & ensure collection
     try:
         from src.utils.cache import create_async_qdrant_client
 

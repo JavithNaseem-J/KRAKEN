@@ -1,10 +1,3 @@
-"""
-Notifier — emits a structured approval notice via structlog.
-
-Kept separate from queue.py so the output format can be
-changed without touching Redis logic.
-"""
-
 from __future__ import annotations
 
 import structlog

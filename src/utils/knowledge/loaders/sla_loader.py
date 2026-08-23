@@ -1,9 +1,3 @@
-"""
-SLA / Escalation rules loader.
-Reads .json files from data/knowledge/sla/.
-Converts severities (P1-P4) and action_risk_mapping into text chunks for semantic search.
-"""
-
 from __future__ import annotations
 
 import json

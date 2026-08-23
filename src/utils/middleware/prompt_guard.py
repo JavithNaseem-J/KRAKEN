@@ -1,8 +1,3 @@
-"""
-PromptGuardMiddleware — Edge gateway security middleware for prompt injection detection
-and PII sanitization.
-"""
-
 from __future__ import annotations
 
 import json

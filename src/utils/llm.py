@@ -1,16 +1,3 @@
-"""
-LLM factory for the orchestrator.
-
-Returns a singleton ChatOpenAI instance configured for any OpenAI-compatible
-provider (Groq, NVIDIA NIM, OpenAI, etc.) via environment variables.
-
-Design:
-  - Provider-agnostic: only base_url + api_key + model change per provider.
-  - temperature=0.0 for deterministic, auditable agent decisions.
-  - Automatic retry with backoff on transient 429 rate limits (max_retries=4).
-  - Model fallback support if primary model fails.
-"""
-
 from __future__ import annotations
 
 from functools import lru_cache

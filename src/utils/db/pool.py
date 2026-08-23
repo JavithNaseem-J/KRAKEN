@@ -1,12 +1,3 @@
-"""
-asyncpg connection pool factory — shared across KRAKEN services.
-
-Handles:
-  - URL normalisation (SQLAlchemy format → asyncpg DSN)
-  - Configurable pool size and timeout
-  - Pure relational connection management without custom C-extensions
-"""
-
 from typing import Any
 
 import asyncpg

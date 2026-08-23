@@ -1,31 +1,3 @@
-"""
-Audit store — append-only writes to PostgreSQL audit_log table.
-
-Table schema (from scripts/init.sql):
-  audit_log(
-    id            SERIAL PRIMARY KEY,
-    timestamp     TIMESTAMPTZ DEFAULT NOW(),
-    session_id    TEXT,
-    user_id       TEXT,
-    action_type   TEXT,           -- "READ" | "WRITE"
-    action_name   TEXT,
-    risk_level    TEXT,           -- "SAFE" | "CRITICAL"
-    hitl_required BOOLEAN,
-    hitl_decision TEXT,           -- "approved" | "rejected" | "timeout" | NULL
-    status        TEXT,           -- "success" | "failure"
-    reasoning     TEXT,
-    payload       JSONB,
-    result        JSONB
-  )
-
-The table has CREATE RULE statements that block UPDATE and DELETE,
-making it append-only at the database level. No application-level flag
-can override this — even if the service has DB write permissions,
-altering past records is rejected by the rule.
-
-The pool is created externally (in lifespan) and passed in.
-"""
-
 from __future__ import annotations
 
 import hashlib

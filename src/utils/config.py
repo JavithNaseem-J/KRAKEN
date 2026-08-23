@@ -15,10 +15,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Environment ───────────────────────────────────────────────────────────
+    # Environment
     environment: Literal["dev", "staging", "prod", "test"] = "dev"
 
-    # ── LLM ───────────────────────────────────────────────────────────────────
+    # LLM
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "llama-3.3-70b-versatile"
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     llm_timeout_seconds: int = 60
 
-    # ── Embeddings (Cloud API or Local HuggingFace) ───────────────────────────
+    # Embeddings (Cloud API or Local HuggingFace)
     embedding_provider: Literal["cloud", "openai", "local"] = "cloud"
     embedding_model: str = "text-embedding-3-small"
     embedding_api_key: str = ""
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     embedding_dim: int = 0
     retrieval_top_k: int = 5
 
-    # ── Databases ────────────────────────────────────────────────────────────
+    # Databases
     # Leave empty to run in degraded/in-memory mode (no persistent storage).
     # Set to a real connection string for production-grade Postgres persistence.
     postgres_url: str = ""
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection_name: str = "kraken_knowledge"
 
-    # ── Observability & Caching ──────────────────────────────────────────────
+    # Observability & Caching
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
@@ -103,11 +103,11 @@ class Settings(BaseSettings):
             )
         return v
 
-    # ── Orchestrator Concurrency ──────────────────────────────────────────────
+    # Orchestrator Concurrency
     orchestrator_max_concurrency: int = 5
     orchestrator_workers: int = 4
 
-    # ── Internal Service URLs (overridden per-container in docker-compose) ───
+    # Internal Service URLs (overridden per-container in docker-compose)
     orchestrator_url: str = "http://localhost:8001"
     knowledge_url: str = "http://localhost:8002"
     action_url: str = "http://localhost:8003"
@@ -122,7 +122,7 @@ class Settings(BaseSettings):
     gateway_rate_limit_requests: int = 60
     gateway_rate_limit_window_seconds: int = 60
 
-    # ── HITL Approval ────────────────────────────────────────────────────────
+    # HITL Approval
     approval_timeout_seconds: int = 900  # 15 minutes
     # External or human-accessible URL of the approval service
     approval_base_url: str = "http://localhost:8004"
@@ -246,7 +246,7 @@ class Settings(BaseSettings):
                 )
         return self
 
-    # ── Observability ────────────────────────────────────────────────────────
+    # Observability
     log_level: str = "INFO"
     log_format: str = "console"  # "console" | "json"
 

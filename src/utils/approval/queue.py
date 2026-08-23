@@ -30,7 +30,7 @@ class ApprovalQueue:
         self._in_memory_map: dict[str, dict[str, Any]] = {}
         self._in_memory_csrf: dict[str, str] = {}
 
-    # ── Public API ────────────────────────────────────────────────────────────
+    # Public API
 
     async def ping(self) -> bool:
         """Ping Redis to verify connection health."""

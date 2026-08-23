@@ -1,8 +1,3 @@
-"""
-AI Agent Platform Entrypoint.
-Boots the FastAPI application server using Uvicorn.
-"""
-
 from __future__ import annotations
 
 import asyncio

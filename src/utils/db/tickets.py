@@ -1,7 +1,3 @@
-"""
-Shared PostgreSQL ticket database DDL and seeding helpers.
-"""
-
 from __future__ import annotations
 
 import json

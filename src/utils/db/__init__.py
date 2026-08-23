@@ -1,7 +1,3 @@
-"""
-Shared database utilities package.
-"""
-
 from src.utils.db.pool import (
     create_async_pool,
     create_pool,

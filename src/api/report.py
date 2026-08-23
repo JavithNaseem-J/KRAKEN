@@ -1,8 +1,3 @@
-"""
-Executive Incident Briefing Generator.
-Generates structured HTML reports for completed sessions/incidents using Jinja2.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime

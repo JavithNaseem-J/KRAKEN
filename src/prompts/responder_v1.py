@@ -1,8 +1,3 @@
-"""
-Responder prompt — version 1.
-Final answer synthesis prompt for Xiarch cybersecurity consultancy.
-"""
-
 from __future__ import annotations
 
 SYSTEM_PROMPT = """You are a senior security operations engineer for Xiarch security consultancy.

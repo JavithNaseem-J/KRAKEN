@@ -22,7 +22,7 @@ _SEED_FILE = _REPO_ROOT / "data" / "knowledge" / "tickets" / "sample_tickets.jso
 
 _tickets_lock = threading.Lock()
 
-# ── PostgreSQL Support ────────────────────────────────────────────────────────
+# PostgreSQL Support
 _pg_pool: Any = None
 
 
@@ -95,7 +95,7 @@ def _load_seed_tickets() -> list[dict[str, Any]]:
     return []
 
 
-# ── File-Based Fallback ───────────────────────────────────────────────────────
+# File-Based Fallback
 def _load_tickets() -> list[dict[str, Any]]:
     """Load tickets from active workspace or fall back to seed file."""
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)

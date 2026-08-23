@@ -1,15 +1,3 @@
-"""
-Reasoner Node — analyses retrieved chunks and produces structured reasoning.
-
-Takes the user message + retrieved knowledge chunks and asks the LLM to:
-  1. Identify which chunks are most relevant.
-  2. Note any gaps or conflicts in the knowledge.
-  3. Summarise what is known and what actions might be appropriate.
-
-Output is stored in state["reasoning"] and fed into the decider.
-This is the only node that "thinks" — the decider only decides.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence

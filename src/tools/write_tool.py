@@ -1,15 +1,3 @@
-"""
-Write Action Handler — writes JSON files to the sandboxed workspace directory.
-
-Safety guarantees (enforced in this order, every time):
-  1. validate_write_target()  — path must resolve inside WORKSPACE_ROOT, extension must be .json
-  2. backup_if_exists()       — snapshot current file before any overwrite
-  3. Atomic write             — write to a .tmp file, then os.replace() to target
-                                so a crash mid-write never leaves a corrupt file
-
-No write can bypass these three steps. They are called directly, not via config flags.
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -49,10 +37,10 @@ def write_json_file(target_path: str, content: dict[str, Any]) -> dict[str, Any]
             details={"received_type": type(content).__name__},
         )
 
-    # ── Step 1: Validate path (raises on traversal or bad extension) ──────────
+    # Step 1: Validate path (raises on traversal or bad extension)
     resolved: Path = validate_write_target(target_path)
 
-    # ── Step 2: Backup existing file ──────────────────────────────────────────
+    # Step 2: Backup existing file
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
     resolved.parent.mkdir(parents=True, exist_ok=True)
 
@@ -60,7 +48,7 @@ def write_json_file(target_path: str, content: dict[str, Any]) -> dict[str, Any]
     if backup_path:
         log.info("write_handler.backup_created", backup=str(backup_path))
 
-    # ── Step 3: Atomic write (tmp → rename) ───────────────────────────────────
+    # Step 3: Atomic write (tmp → rename)
     try:
         bytes_written = atomic_write_json(resolved, content)
     except (OSError, ValueError) as exc:

@@ -1,26 +1,3 @@
-"""
-Memory Service — full implementation.
-
-Startup lifecycle:
-  1. Connect to Redis (short-term memory) — fail-fast if unreachable
-  2. Initialize Qdrant episodic memory client & collection
-  3. Connect to PostgreSQL pool (for relational logs/ticket store)
-  4. Store in app.state
-
-Security:
-  All state-mutating and read endpoints require X-Service-Token.
-  Only the orchestrator and trusted internal services may read/write memory.
-
-Endpoints:
-  GET    /health                        Liveness probe (reflects Redis + Qdrant health)
-  GET    /session/{session_id}          Retrieve short-term conversation history
-  POST   /session/{session_id}          Replace session message history
-  POST   /session/{session_id}/append   Append messages to history
-  DELETE /session/{session_id}          Clear session
-  POST   /long-term                     Store an episodic memory entry in Qdrant
-  POST   /long-term/search              Semantic search over past episodes in Qdrant
-"""
-
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
@@ -50,7 +27,7 @@ log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
-# ── Request / Response models ─────────────────────────────────────────────────
+# Request / Response models
 class SessionUpdate(BaseModel):
     messages: list[dict[str, str]] = Field(..., max_length=100)
 
@@ -60,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     configure_logging(
         log_level=settings.log_level, log_format=settings.log_format, service="memory"
     )
-    # ── Short-term: Redis ──────────────────────────────────────────────────────
+    # Short-term: Redis
     log.info("memory.startup.redis")
     short_term = ShortTermMemory(redis_url=settings.redis_url)
 
@@ -71,7 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.short_term = short_term
     log.info("memory.startup.redis_ready")
 
-    # ── Long-term: Qdrant ─────────────────────────────────────────────────────
+    # Long-term: Qdrant
     log.info("memory.startup.qdrant")
     try:
         qdrant_client = create_async_qdrant_client()
@@ -89,7 +66,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.long_term = None
         app.state.qdrant_client = None
 
-    # ── PostgreSQL connection pool (Relational state & tickets) ───────────────
+    # PostgreSQL connection pool (Relational state & tickets)
     try:
         pool = await create_pool(
             postgres_url=settings.postgres_url,
@@ -106,7 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("memory.startup.complete")
     yield
 
-    # ── Shutdown ───────────────────────────────────────────────────────────────
+    # Shutdown
     await short_term.close()
     if getattr(app.state, "db_pool", None):
         await app.state.db_pool.close()
@@ -124,7 +101,7 @@ app = FastAPI(
 app.add_middleware(TraceIdMiddleware)
 
 
-# ── Ops ───────────────────────────────────────────────────────────────────────
+# Ops
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, Any]:
     """
@@ -139,7 +116,7 @@ async def health() -> dict[str, Any]:
     }
 
 
-# ── Short-term memory ─────────────────────────────────────────────────────────
+# Short-term memory
 @app.get("/session/{session_id}", tags=["short-term"])
 async def get_session(
     session_id: str,
@@ -182,7 +159,7 @@ async def clear_session(
     return {"session_id": session_id, "status": "cleared"}
 
 
-# ── Long-term memory ──────────────────────────────────────────────────────────
+# Long-term memory
 @app.post("/long-term", tags=["long-term"])
 async def store_episode(
     body: EpisodeStoreRequest,

@@ -1,19 +1,3 @@
-"""
-Long-term episodic memory using Qdrant.
-
-Stores past agent interactions as embedded vectors in Qdrant collection
-`kraken_episodic_memory` so the agent can retrieve semantically similar past
-experiences for a given user at the start of each run.
-
-Collection:
-  kraken_episodic_memory (id, vector, payload: {session_id, user_id, timestamp, content, metadata})
-  embedding dim = 384 (BAAI/bge-small-en)
-
-Operations:
-  store()  → upsert vector into Qdrant with payload
-  search() → cosine similarity search filtered by user_id payload
-"""
-
 from __future__ import annotations
 
 import asyncio

@@ -1,10 +1,3 @@
-"""
-Async knowledge ingestion helper.
-
-Provides service-internal chunk upsert logic for Qdrant Cloud / in-memory collections.
-Used directly by POST /ingest and knowledge administration flows.
-"""
-
 from __future__ import annotations
 
 import uuid

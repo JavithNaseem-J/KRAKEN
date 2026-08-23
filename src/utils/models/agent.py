@@ -1,8 +1,3 @@
-"""
-Agent-level data contracts.
-Request/response shapes for the orchestrator's FastAPI layer.
-"""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -11,7 +6,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-# ── FastAPI contracts ─────────────────────────────────────────────────────────
+# FastAPI contracts
 class QueryRequest(BaseModel):
     """Inbound payload from the API gateway to the orchestrator."""
 

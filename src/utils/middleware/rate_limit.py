@@ -1,7 +1,3 @@
-"""
-In-memory IP rate limiter middleware for sensitive endpoints.
-"""
-
 from __future__ import annotations
 
 import time

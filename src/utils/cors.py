@@ -1,7 +1,3 @@
-"""
-Shared CORS configuration helper for FastAPI services.
-"""
-
 from __future__ import annotations
 
 from typing import Any

@@ -1,11 +1,3 @@
-"""
-Memory Writer Node — fire-and-forget async task for persisting session and episodic memory.
-
-Uses asyncio.create_task so the main graph execution is not blocked while
-memory writes are in flight. The shared async httpx client from app.state.http
-is used rather than creating a second standalone client and thread pool.
-"""
-
 import asyncio
 import textwrap
 
@@ -35,7 +27,7 @@ async def _persist_memory_task(
     try:
         from src.utils.http_client import post_with_retry
 
-        # ── 1. Update short-term session memory ───────────────────────────
+        # 1. Update short-term session memory
         await post_with_retry(
             http,
             f"{settings.memory_url}/session/{session_id}",
@@ -43,7 +35,7 @@ async def _persist_memory_task(
             headers=service_headers(trace_id=session_id),
         )
 
-        # ── 2. Store episodic memory (summarised interaction) ─────────────
+        # 2. Store episodic memory (summarised interaction)
         short_answer = textwrap.shorten(final_answer, width=500, placeholder="...")
         episode_content = (
             f"User asked: {user_message}\nAction taken: {action_name}\nAnswer: {short_answer}"

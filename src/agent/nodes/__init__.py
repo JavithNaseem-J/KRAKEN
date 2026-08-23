@@ -1,7 +1,3 @@
-"""
-Agent graph nodes package.
-"""
-
 from __future__ import annotations
 
 from .decider import decider_node

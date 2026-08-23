@@ -1,8 +1,3 @@
-"""
-Reasoner prompt — version 1.
-Security reasoning analysis prompt for Xiarch cybersecurity consultancy.
-"""
-
 from __future__ import annotations
 
 SYSTEM_PROMPT = """You are a security reasoning analyst for Xiarch, a cybersecurity consultancy.

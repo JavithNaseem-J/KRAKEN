@@ -1,7 +1,3 @@
-"""
-LangGraph state schema for the AI agent.
-"""
-
 from __future__ import annotations
 
 import operator

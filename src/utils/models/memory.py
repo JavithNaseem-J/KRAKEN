@@ -1,8 +1,3 @@
-"""
-Memory-layer data contracts.
-Defines models for episodic and session memory request/response shapes.
-"""
-
 from __future__ import annotations
 
 from typing import Any

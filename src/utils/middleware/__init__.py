@@ -1,7 +1,3 @@
-"""
-Shared FastAPI middleware package.
-"""
-
 from src.utils.middleware.prompt_guard import (
     PromptGuardMiddleware,
     check_prompt_injection,

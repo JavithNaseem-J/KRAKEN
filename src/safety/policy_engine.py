@@ -1,11 +1,3 @@
-"""
-Declarative Policy-as-Code Engine (OPA/Rego-Style Architecture).
-
-Decouples enterprise security clearance, Role-Based Access Control (RBAC),
-Four-Eyes dual-authorization rules, and dynamic data leakage protection
-from application business logic.
-"""
-
 from __future__ import annotations
 
 import re
@@ -96,7 +88,7 @@ class ActionPolicyRule(BaseModel):
     audit_tags: list[str]
 
 
-# ── Declarative Policy Rules Matrix ───────────────────────────────────────────
+# Declarative Policy Rules Matrix
 DEFAULT_ACTION_POLICIES: dict[str, ActionPolicyRule] = {
     "create_ticket": ActionPolicyRule(
         action_name="create_ticket",
@@ -172,7 +164,7 @@ DEFAULT_ACTION_POLICIES: dict[str, ActionPolicyRule] = {
     ),
 }
 
-# ── Dynamic Least-Privilege Knowledge Redaction Rules ─────────────────────────
+# Dynamic Least-Privilege Knowledge Redaction Rules
 SENSITIVE_KNOWLEDGE_PATTERNS: list[tuple[re.Pattern, str, ClearanceLevel]] = [
     (
         re.compile(r"SOP-02\s*:\s*.*?(?=\n\n|\Z)", re.DOTALL | re.IGNORECASE),

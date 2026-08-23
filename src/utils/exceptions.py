@@ -1,9 +1,3 @@
-"""
-Shared exception hierarchy for KRAKEN services.
-All custom exceptions inherit from KRAKENBaseException so callers can
-catch the base class without knowing the exact subtype.
-"""
-
 from __future__ import annotations
 
 
@@ -22,7 +16,7 @@ class KRAKENBaseException(Exception):  # noqa: N818
 AKEABaseException = KRAKENBaseException
 
 
-# ── Action / Write Safety ─────────────────────────────────────────────────────
+# Action / Write Safety
 class ActionExecutionError(KRAKENBaseException):
     """Raised when an action fails during execution."""
 

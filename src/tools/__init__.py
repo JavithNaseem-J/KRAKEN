@@ -1,7 +1,3 @@
-"""
-Action tools package.
-"""
-
 from __future__ import annotations
 
 from . import ticket, write_tool

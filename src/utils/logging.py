@@ -1,14 +1,3 @@
-"""
-Structlog configuration — call configure_logging() once per process in lifespan().
-
-Produces:
-  - JSON output in production (LOG_FORMAT=json)
-  - Colored console output in development (LOG_FORMAT=console, the default)
-
-All microservices call this in their lifespan to get consistent structured logs
-with timestamp, log level, service name, and caller info.
-"""
-
 import logging
 import sys
 from typing import Any

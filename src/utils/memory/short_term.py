@@ -1,18 +1,3 @@
-"""
-Short-term session memory using Redis.
-
-Stores the conversation message history for each session.
-Messages are a list of {role, content} dicts — the same format used
-in the LangGraph AgentState `messages` field.
-
-Key design:
-  - Key:  kraken:session:{session_id}  →  JSON list of messages
-  - TTL:  SESSION_TTL_SECONDS (24 hours default) — renewed on every write
-  - Append semantics: update_session() replaces entire list;
-    append_messages() is atomic via a Redis WATCH transaction loop to
-    prevent lost-update race conditions under concurrent requests.
-"""
-
 from __future__ import annotations
 
 import json

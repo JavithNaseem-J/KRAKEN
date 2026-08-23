@@ -1,7 +1,3 @@
-"""
-Starlette/FastAPI Trace ID middleware for cross-service request correlation.
-"""
-
 from __future__ import annotations
 
 import uuid

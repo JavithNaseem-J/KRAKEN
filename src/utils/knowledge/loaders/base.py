@@ -1,8 +1,3 @@
-"""
-Base loader module providing container-safe data path resolution
-and generic file loading logic for knowledge sources.
-"""
-
 from __future__ import annotations
 
 import csv

@@ -1,8 +1,3 @@
-"""
-Shared HTTP client factory, inter-service authentication header helper, and the
-single internal-request helper through which all inter-subsystem traffic flows.
-"""
-
 from __future__ import annotations
 
 from typing import Any

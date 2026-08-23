@@ -1,11 +1,3 @@
-"""
-Audit client — fire-and-forget HTTP call to the audit service.
-
-Used by services after execution (e.g. action service, orchestrator).
-Failures are logged but never propagated — execution results must not be
-blocked by an audit write failure.
-"""
-
 from __future__ import annotations
 
 from typing import Any

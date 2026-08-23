@@ -1,18 +1,3 @@
-"""
-Approval Service — full implementation with Redis queue and background timeout checker.
-
-Lifecycle:
-  startup  → connect to Redis, create ApprovalQueue, start timeout checker task
-  shutdown → cancel checker task, close Redis connection
-
-Endpoints:
-  POST /pending                         Called by executor node — enqueues action for approval
-  GET  /approve/{approval_id}           Renders the human-facing approval web UI
-  POST /approve/{approval_id}/decision  Processes approve/reject form submission
-  GET  /health                          Liveness probe
-  GET  /queue/stats                     Ops visibility — count of pending approvals
-"""
-
 from __future__ import annotations
 
 import os
@@ -55,7 +40,7 @@ templates = Jinja2Templates(
 )
 
 
-# ── Request Models ────────────────────────────────────────────────────────────
+# Request Models
 class PendingApprovalRequest(BaseModel):
     action_name: str
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -63,7 +48,7 @@ class PendingApprovalRequest(BaseModel):
     session_id: str
 
 
-# ── Helper: Notify Orchestrator Callback with Retry/Backoff ───────────────────
+# Helper: Notify Orchestrator Callback with Retry/Backoff
 async def _notify_orchestrator_callback(
     client: httpx.AsyncClient,
     approval_id: str,
@@ -119,7 +104,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     configure_logging(
         log_level=settings.log_level, log_format=settings.log_format, service="approval"
     )
-    # ── Connect to Redis ───────────────────────────────────────────────────────
+    # Connect to Redis
     log.info("approval.startup", redis_url=settings.redis_url)
     queue = ApprovalQueue(
         redis_url=settings.redis_url,
@@ -132,12 +117,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     app.state.queue = queue
 
-    # ── Shared HTTP client for callbacks ──────────────────────────────────────
+    # Shared HTTP client for callbacks
     app.state.http = create_async_http_client()
 
     yield
 
-    # ── Shutdown ───────────────────────────────────────────────────────────────
+    # Shutdown
     await queue.close()
     await app.state.http.aclose()
     log.info("approval.shutdown")
@@ -152,7 +137,7 @@ app = FastAPI(
 app.add_middleware(TraceIdMiddleware)
 app.add_middleware(RateLimitMiddleware, path_prefix="/approve/", max_requests=60, window_seconds=60)
 
-# ── CORS (React frontend origins) ─────────────────────────────────────────────
+# CORS (React frontend origins)
 # Required so the React SPA can fetch approval details/CSRF token and submit
 # inline approval decisions directly from the browser.
 app.add_middleware(

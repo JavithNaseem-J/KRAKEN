@@ -1,9 +1,3 @@
-"""
-Shared authentication dependencies for AKEA services.
-
-Enforces timing-attack safe service token validation across all microservice endpoints.
-"""
-
 from __future__ import annotations
 
 import secrets

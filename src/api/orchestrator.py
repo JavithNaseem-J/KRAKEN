@@ -48,7 +48,7 @@ log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
-# ── Typed request schema for the callback endpoint ────────────────────────────
+# Typed request schema for the callback endpoint
 class ApprovalCallbackRequest(BaseModel):
     approval_id: str = Field(..., description="UUID issued by executor when HITL fired.")
     decision: Literal["approve", "reject"] = Field(
@@ -65,7 +65,7 @@ class ApprovalCallbackRequest(BaseModel):
     )
 
 
-# ── Reaper background task ────────────────────────────────────────────────────
+# Reaper background task
 async def _reaper_loop(app: FastAPI) -> None:
     """
     Periodically prunes stale LangGraph checkpoints to prevent DB bloat.
@@ -154,7 +154,7 @@ def prune_stale_checkpoints(pool: ConnectionPool | None) -> dict[str, int]:
     return deleted_counts
 
 
-# ── Lifespan ──────────────────────────────────────────────────────────────────
+# Lifespan
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     configure_logging(
@@ -254,7 +254,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("orchestrator.shutdown")
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
+# App
 
 app = FastAPI(
     title="KRAKEN Orchestrator",
@@ -301,7 +301,7 @@ def _graph_config(
     return cfg
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
+# Health
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, Any]:
     """Liveness probe. Checks connectivity to the Postgres saver pool."""
@@ -423,7 +423,7 @@ async def _get_graph(
             # Non-connection error — let the caller deal with it.
             raise
 
-    # ── Connection is dead: rebuild graph with MemorySaver fallback ───────────
+    # Connection is dead: rebuild graph with MemorySaver fallback
     log.warning("orchestrator.checkpointer_reconnect", session_id=session_id)
     try:
         # Try to teardown the old saver context cleanly
@@ -460,7 +460,7 @@ async def _get_graph(
     return graph, config
 
 
-# ── /run ──────────────────────────────────────────────────────────────────────
+# /run
 @app.post("/run", tags=["agent"])
 async def run(body: QueryRequest) -> Any:
     """
@@ -482,7 +482,7 @@ async def run(body: QueryRequest) -> Any:
         log.error("orchestrator.graph_init_failed", error=str(exc))
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    # ── Check if session is already completed or currently paused ─────────────
+    # Check if session is already completed or currently paused
     snapshot = await graph.aget_state(config)
     clean_msg = body.message.strip().lower() if body.message else ""
     if not clean_msg or clean_msg in ("", ".", "check status", "check approval status"):
@@ -499,7 +499,7 @@ async def run(body: QueryRequest) -> Any:
                 "message": "A CRITICAL triage action requires human approval. Check the approval service.",
             }
 
-    # ── If session is stuck in a HITL interrupt, clear it without invoking
+    # If session is stuck in a HITL interrupt, clear it without invoking
     # responder_node on the stale query state.
     if snapshot.next:
         await _clear_stale_interrupt(graph, config, body.session_id)
@@ -507,7 +507,7 @@ async def run(body: QueryRequest) -> Any:
 
     http_client: httpx.AsyncClient | None = getattr(app.state, "http", None)
 
-    # ── SemanticCache Lookup ──────────────────────────────────────────────────
+    # SemanticCache Lookup
     query_vector: list[float] | None = None
     cache: SemanticCache | None = getattr(app.state, "semantic_cache", None)
     if cache and body.message and http_client:
@@ -552,7 +552,7 @@ async def run(body: QueryRequest) -> Any:
 
     initial_state = _initial_state(body, session_messages)
 
-    # ── If session is stuck in a HITL interrupt, clear it when a new message arrives
+    # If session is stuck in a HITL interrupt, clear it when a new message arrives
     if body.message:
         try:
             snapshot = await graph.aget_state(config)
@@ -592,7 +592,7 @@ async def run(body: QueryRequest) -> Any:
         if semaphore:
             semaphore.release()
 
-    # ── Check if graph paused for HITL ────────────────────────────────────────
+    # Check if graph paused for HITL
     snapshot = await graph.aget_state(config)
     if snapshot.next:
         interrupt_val = _extract_interrupt(snapshot)
@@ -629,7 +629,7 @@ async def run(body: QueryRequest) -> Any:
     return response
 
 
-# ── /run/stream ───────────────────────────────────────────────────────────────
+# /run/stream
 @app.post("/run/stream", tags=["agent"])
 async def run_stream(body: QueryRequest) -> StreamingResponse:
     """
@@ -663,7 +663,7 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    # ── If session is stuck in a HITL interrupt, clear it without invoking
+    # If session is stuck in a HITL interrupt, clear it without invoking
     # responder_node on the stale query state.
     try:
         snapshot = await graph.aget_state(config)
@@ -819,7 +819,7 @@ async def approval_callback(
         log.warning("orchestrator.callback_not_found", approval_id=body.approval_id)
         raise HTTPException(status_code=404, detail="Approval ID not found.")
 
-    # ── Acquire bounded semaphore — same guard as /run ────────────────────────
+    # Acquire bounded semaphore — same guard as /run
     semaphore: asyncio.Semaphore | None = getattr(app.state, "graph_semaphore", None)
     if semaphore:
         if semaphore.locked():
@@ -883,7 +883,7 @@ async def trigger_prune_checkpoints(
     return {"status": "success", "deleted": deleted}
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+# Helper
 def _extract_interrupt(snapshot: Any) -> dict[str, Any]:
     """Extract the first interrupt value dict from a LangGraph StateSnapshot."""
     for task in getattr(snapshot, "tasks", []):

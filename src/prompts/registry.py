@@ -1,10 +1,3 @@
-"""
-Prompt version registry — maps each agent node to its active prompt module.
-
-To change a prompt: create a new versioned file (e.g. decider_v2.py),
-update the ACTIVE_VERSIONS entry, and restart the service.
-"""
-
 from __future__ import annotations
 
 from functools import lru_cache

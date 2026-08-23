@@ -1,8 +1,3 @@
-"""
-Decider prompt — version 1.
-Security triage decision template prompt for Xiarch cybersecurity consultancy.
-"""
-
 from __future__ import annotations
 
 SYSTEM_PROMPT_TEMPLATE = """You are the lead security triage decider for Xiarch, a cybersecurity consultancy.

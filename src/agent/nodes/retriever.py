@@ -1,12 +1,3 @@
-"""
-Retriever Node — calls the knowledge service and fetches episodic memories.
-
-Retry strategy: tenacity with exponential backoff and async sleep —
-no thread-blocking waits during backoff.
-  - 3 attempts, 0.5s → 1s → 2s
-  - On exhaustion: returns graceful error state, empty chunks
-"""
-
 from __future__ import annotations
 
 from typing import Any
@@ -74,7 +65,7 @@ async def retriever_node(state: GraphState) -> dict:
     chunks: list[dict[str, Any]] = []
 
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # ── Retrieve knowledge chunks ──────────────────────────────────────────
+        # Retrieve knowledge chunks
         try:
             chunks = await _fetch_knowledge(client, request_payload, session_id)
         except Exception as exc:
@@ -84,7 +75,7 @@ async def retriever_node(state: GraphState) -> dict:
                 "error": "Knowledge retrieval is temporarily unavailable, please try again.",
             }
 
-        # ── Query long-term episodic memory if user_id present ─────────────────
+        # Query long-term episodic memory if user_id present
         user_id = state.get("user_id", "")
         if user_id:
             try:

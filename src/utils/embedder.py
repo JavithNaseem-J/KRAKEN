@@ -1,10 +1,3 @@
-"""
-Unified Embedder — supports Cloud API embeddings (OpenAI / Cloud endpoints)
-and local HuggingFace models.
-
-Provides vector embedding services for Knowledge and Memory microservices.
-"""
-
 from __future__ import annotations
 
 import threading

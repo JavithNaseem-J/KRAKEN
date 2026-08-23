@@ -1,11 +1,3 @@
-"""
-Action registry — centralized action definitions and risk classification.
-
-RISK CLASSIFICATION RULES (enforced here, not in the LLM):
-  READ  → SAFE     → no HITL
-  WRITE → CRITICAL → HITL always required, no exceptions
-"""
-
 from __future__ import annotations
 
 from src.utils.models.action import ActionDefinition, ActionType, RiskLevel

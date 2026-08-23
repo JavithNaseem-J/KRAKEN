@@ -1,9 +1,3 @@
-"""
-Knowledge-layer data contracts.
-Defines the three knowledge sources, chunk representation,
-and the retrieval request/response shapes.
-"""
-
 from __future__ import annotations
 
 from enum import StrEnum

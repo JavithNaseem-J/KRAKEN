@@ -1,11 +1,3 @@
-"""
-FAQ / Policy knowledge base loader.
-
-Reads all .pdf, .md, and .txt files from data/knowledge/faq/.
-Splits each document into overlapping chunks suitable for semantic search.
-Returns a list of structured chunk dicts.
-"""
-
 from __future__ import annotations
 
 import hashlib

@@ -1,9 +1,3 @@
-"""
-Action-layer data contracts.
-Defines the two action types (READ / WRITE), risk levels, and
-the request/response shapes used between the orchestrator and action service.
-"""
-
 from __future__ import annotations
 
 from enum import StrEnum

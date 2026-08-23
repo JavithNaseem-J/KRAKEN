@@ -1,8 +1,3 @@
-"""
-Idempotent Database Schema Bootstrap helper for cloud deployments.
-Pure relational schema for audit logging and ticket records.
-"""
-
 from __future__ import annotations
 
 from typing import Any

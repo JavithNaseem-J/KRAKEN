@@ -121,7 +121,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── Auth & Security middleware ────────────────────────────────────────────────
+# Auth & Security middleware
 app.add_middleware(TraceIdMiddleware)
 app.add_middleware(PromptGuardMiddleware)
 app.add_middleware(
@@ -129,7 +129,7 @@ app.add_middleware(
     api_keys=API_KEYS_MAP,
 )
 
-# ── CORS (React frontend origins) ─────────────────────────────────────────────
+# CORS (React frontend origins)
 # Starlette runs middleware in reverse add order, so CORS is added LAST to run
 # FIRST — preflight OPTIONS requests must be answered before auth rejects them.
 app.add_middleware(
@@ -144,7 +144,7 @@ async def metrics() -> PlainTextResponse:
     return PlainTextResponse(content=metrics_text("gateway"))
 
 
-# ── Dependency: Request Body Size Limiter ─────────────────────────────────────
+# Dependency: Request Body Size Limiter
 async def _limit_request_body_size(request: Request) -> None:
     """
     Prevents large payloads (DoS) by checking Content-Length header
@@ -165,7 +165,7 @@ async def _limit_request_body_size(request: Request) -> None:
         )
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# Helpers
 def _rate_limit_headers(remaining: int, retry_after: int) -> dict[str, str]:
     return {
         "X-RateLimit-Limit": str(settings.gateway_rate_limit_requests),
@@ -273,7 +273,7 @@ async def _proxy(
         )
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# Routes
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, str]:
     """Gateway liveness check (does not leak internal network details)."""
@@ -336,7 +336,7 @@ async def root() -> dict[str, Any]:
     }
 
 
-# ── Operator-Privilege Intent Gate ───────────────────────────────────────────
+# Operator-Privilege Intent Gate
 # Keywords that signal a state-mutating / high-privilege operation intent.
 # If a message contains these keywords the request MUST carry
 # the X-Operator-Role: operator header, otherwise it is denied before the LLM
@@ -406,7 +406,7 @@ async def run(request: Request) -> JSONResponse:
             body["message"] = sanitized
             message = sanitized
 
-    # ── Operator Privilege Intent Gate ────────────────────────────────────────
+    # Operator Privilege Intent Gate
     # Check if the message contains high-privilege operational intent keywords.
     # If so, require the X-Operator-Role: operator header before forwarding.
     # This prevents unauthenticated users from triggering HITL cards that
@@ -579,7 +579,7 @@ async def run_stream(request: Request) -> Any:
     )
 
 
-# ── HITL approval proxy routes (single-port browser flow) ─────────────────────
+# HITL approval proxy routes (single-port browser flow)
 @app.get("/approve/{approval_id}/details", tags=["hitl"])
 async def approval_details_proxy(request: Request, approval_id: str) -> JSONResponse:
     """Proxy approval details + CSRF token to the in-process approval app."""
@@ -722,7 +722,7 @@ async def export_report(request: Request) -> Response:
     )
 
 
-# ── Audit proxy routes ────────────────────────────────────────────────────────
+# Audit proxy routes
 @app.get("/v1/audit/events/{trace_id}", tags=["audit"])
 @app.get("/v1/audit/history/{trace_id}", tags=["audit"])
 async def audit_history_proxy(request: Request, trace_id: str) -> JSONResponse:

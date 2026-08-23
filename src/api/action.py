@@ -41,7 +41,7 @@ log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
-# ── Dependency: Enforce Service Token Auth ────────────────────────────────────
+# Dependency: Enforce Service Token Auth
 
 
 @asynccontextmanager
@@ -104,17 +104,17 @@ async def execute(
     Enforces service-token authentication.
     Logs execution result to the audit service asynchronously.
     """
-    # ── 1. Registry lookup ────────────────────────────────────────────────────
+    # 1. Registry lookup
     try:
         action_def = get_action(body.action_name)
     except ActionNotFoundError as exc:
         raise HTTPException(status_code=404, detail=exc.message) from exc
 
-    # ── 1. RBAC check (if required by action definition) ──────────────────────
+    # 1. RBAC check (if required by action definition)
     if action_def.requires_hitl and not body.user_id:
         log.warning("action.missing_user_id", action=body.action_name)
 
-    # ── 2. Dispatch ───────────────────────────────────────────────────────────
+    # 2. Dispatch
     result_data: dict[str, Any] | None = None
     status_str = "failure"
     error_msg: str | None = None
@@ -136,7 +136,7 @@ async def execute(
         error_msg = f"Unexpected error: {exc}"
         log.error("action.unexpected_error", action=body.action_name, error=error_msg)
 
-    # ── 3. Audit log (non-blocking BackgroundTask) ────────────────────────────
+    # 3. Audit log (non-blocking BackgroundTask)
     client = get_app_http_client(app)
     background_tasks.add_task(
         fire_audit_log,
@@ -154,7 +154,7 @@ async def execute(
         result=result_data,
     )
 
-    # ── 4. Return structured result ───────────────────────────────────────────
+    # 4. Return structured result
     return ActionResult(
         action_name=body.action_name,
         success=status_str == "success",

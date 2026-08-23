@@ -1,16 +1,3 @@
-"""
-Responder Node — composes the final answer and explanation for the user.
-
-Synthesises everything in state into a clear, structured response:
-  - What the agent found (from reasoning)
-  - What action was taken (from action_result)
-  - Why that action was selected (explanation)
-  - If HITL was involved, whether it was approved or rejected
-
-This node always produces a final_answer — even on error, the user gets
-a meaningful message rather than an unhandled exception.
-"""
-
 from __future__ import annotations
 
 import json

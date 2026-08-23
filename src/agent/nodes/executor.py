@@ -1,15 +1,3 @@
-"""
-Executor Node — dispatches the selected action to the action service.
-
-For CRITICAL actions: registers with approval service and uses LangGraph interrupt()
-to pause execution until a human decision arrives.
-
-Retry strategy for HTTP calls: tenacity with exponential backoff and async sleep —
-no thread-blocking waits during backoff.
-  - 3 attempts, 0.5s → 1s → 2s
-  - On exhaustion: returns error dict, does not raise
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -119,7 +107,7 @@ async def executor_node(state: GraphState) -> dict:
 
         results: list[dict[str, Any]] = []
 
-        # ── Concurrent SAFE Action Execution ────────────────────────────────────
+        # Concurrent SAFE Action Execution
         if safe_actions:
             log.info("executor.safe_parallel_dispatch", count=len(safe_actions))
             tasks = [
@@ -140,7 +128,7 @@ async def executor_node(state: GraphState) -> dict:
                 else:
                     results.append({"success": False, "error": str(res)})
 
-        # ── CRITICAL: pause graph until human approves ─────────────────────────
+        # CRITICAL: pause graph until human approves
         if critical_actions:
             crit_act = critical_actions[0]
             c_name = crit_act["action_name"]
