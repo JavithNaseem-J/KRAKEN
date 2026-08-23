@@ -164,6 +164,7 @@ jobs:
             -p 8000:8000 \
             -e ENVIRONMENT=test \
             -e LLM_API_KEY="smoke-test-key" \
+            -e HITL_SERVICE_TOKEN="ci-smoke-test-token-32-characters-long-12345" \
             kraken-prod:latest
 
       - name: Smoke Check Gateway Health Endpoint
