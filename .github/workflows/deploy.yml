@@ -37,6 +37,7 @@ jobs:
           DEPLOY_SHA: ${{ steps.commit.outputs.deploy_sha }}
         run: |
           successful_runs=$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
             --workflow ci.yml \
             --commit "$DEPLOY_SHA" \
             --status success \
