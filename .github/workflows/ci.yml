@@ -78,13 +78,13 @@ jobs:
         env:
           ENVIRONMENT: test
           LLM_API_KEY: "dummy-key-for-unit-tests"
-        run: uv run pytest tests/unit -q --durations=10
+        run: uv run python -m pytest tests/unit -q --durations=10 -p no:cacheprovider --tb=short -ra
 
       - name: Run Integration Tests
         env:
           ENVIRONMENT: test
           LLM_API_KEY: "dummy-key-for-unit-tests"
-        run: uv run pytest tests/integration -m integration -q
+        run: uv run python -m pytest tests/integration -m integration -q -p no:cacheprovider --tb=short -ra
 
   # ============================================================================
   # 3. Frontend Lint, Type Check & Production Bundle Build
