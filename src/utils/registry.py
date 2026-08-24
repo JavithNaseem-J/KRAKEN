@@ -13,6 +13,14 @@ REGISTRY: dict[str, ActionDefinition] = {
         requires_hitl=False,
         parameter_schema={"ticket_id": "str | None", "response_text": "str", "evidence": "str"},
     ),
+    "get_ticket_status": ActionDefinition(
+        name="get_ticket_status",
+        description="Read the current status and metadata for an existing ticket without modifying it.",
+        action_type=ActionType.READ,
+        risk_level=RiskLevel.SAFE,
+        requires_hitl=False,
+        parameter_schema={"ticket_id": "str"},
+    ),
     "escalate": ActionDefinition(
         name="escalate",
         description="Escalate a ticket to senior security consultants or architects due to complexity, critical severity, or customer SLA urgency.",
@@ -141,6 +149,13 @@ ACTION_POLICY_METADATA: dict[str, dict[str, Any]] = {
         "authorizing_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
         "minimum_approver_clearance": "PUBLIC",
         "audit_tags": ["KNOWLEDGE:READ_ONLY"],
+    },
+    "get_ticket_status": {
+        "staging_permitted_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
+        "requires_four_eyes": False,
+        "authorizing_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
+        "minimum_approver_clearance": "PUBLIC",
+        "audit_tags": ["TICKET:READ_ONLY"],
     },
 }
 

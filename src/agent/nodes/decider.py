@@ -10,11 +10,45 @@ from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
 from src.safety.policy_engine import get_policy_engine, should_override_to_auto_respond
 from src.utils.config import get_settings
+from src.utils.constants import TICKET_ID_REGEX
 from src.utils.llm import get_llm
 from src.utils.registry import REGISTRY, get_action
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
+
+_STATUS_QUERY_KEYWORDS: tuple[str, ...] = (
+    "status of",
+    "ticket status",
+    "check status",
+    "what is the status",
+)
+
+
+def _ticket_status_fast_path(user_message: str) -> dict[str, Any] | None:
+    msg_lower = user_message.lower()
+    if not any(keyword in msg_lower for keyword in _STATUS_QUERY_KEYWORDS):
+        return None
+
+    match = TICKET_ID_REGEX.search(user_message)
+    if not match:
+        return None
+
+    ticket_id = match.group(0).upper()
+    payload = {"ticket_id": ticket_id}
+    return {
+        "selected_action": "get_ticket_status",
+        "selected_actions": [
+            {
+                "action_name": "get_ticket_status",
+                "action_payload": payload,
+                "risk_level": "SAFE",
+            }
+        ],
+        "action_payload": payload,
+        "risk_level": "SAFE",
+        "evidence": f"Read-only ticket status lookup requested for {ticket_id}.",
+    }
 
 
 def _get_available_actions_prompt() -> str:
@@ -53,6 +87,15 @@ async def decider_node(state: GraphState) -> dict:
     user_message = state.get("user_message", "")
     operator_role = state.get("operator_role", "end_user")
     reasoning = state.get("reasoning", "No reasoning available.")
+
+    status_fast_path = _ticket_status_fast_path(user_message)
+    if status_fast_path is not None:
+        log.info(
+            "decider.ticket_status_fast_path",
+            session_id=session_id,
+            ticket_id=status_fast_path["action_payload"]["ticket_id"],
+        )
+        return status_fast_path
 
     human_content = f"User request: {user_message}\n\nAnalysis:\n{reasoning}"
 

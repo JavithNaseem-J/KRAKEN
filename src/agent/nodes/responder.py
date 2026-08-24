@@ -29,6 +29,40 @@ def _truncate_result(result: Any) -> str:
     return data_str
 
 
+def _action_result_payload(action_result: Any) -> dict[str, Any] | None:
+    if not isinstance(action_result, dict):
+        return None
+    nested = action_result.get("result")
+    if isinstance(nested, dict):
+        return nested
+    return action_result
+
+
+def _fallback_answer_from_action_result(action_result: Any) -> str:
+    payload = _action_result_payload(action_result)
+    if not payload:
+        return ""
+
+    if payload.get("action") == "get_ticket_status" or (
+        payload.get("ticket_id") and payload.get("status")
+    ):
+        return (
+            f"### Ticket Information: {payload.get('ticket_id')}\n\n"
+            f"- **Subject:** {payload.get('subject') or payload.get('title', 'Untitled')}\n"
+            f"- **Status:** `{payload.get('status', 'UNKNOWN')}`\n"
+            f"- **Priority:** `{payload.get('priority', 'N/A')}`\n"
+            f"- **Category:** {payload.get('category', 'General')}\n"
+            f"- **User:** {payload.get('user_id') or payload.get('user', 'Unknown')}\n"
+            f"- **Updated:** {payload.get('updated_at', 'Unknown')}\n"
+            f"- **Description:** {payload.get('description', 'No description.')}"
+        )
+
+    if payload.get("message"):
+        return str(payload["message"])
+
+    return ""
+
+
 async def responder_node(state: GraphState) -> dict:
     """
     Produce the final answer for the user.
@@ -44,6 +78,22 @@ async def responder_node(state: GraphState) -> dict:
     approval_status = state.get("approval_status")
     evidence = state.get("evidence")
     error = state.get("error")
+
+    early_answer = (
+        _fallback_answer_from_action_result(action_result)
+        if selected_action == "get_ticket_status"
+        else ""
+    )
+    if early_answer:
+        explanation = "Action 'get_ticket_status' was selected."
+        if evidence:
+            explanation += f" Evidence: {evidence}."
+        log.info("responder.done", session_id=session_id)
+        return {
+            "final_answer": early_answer,
+            "action_explanation": explanation,
+            "messages": [{"role": "assistant", "content": early_answer}],
+        }
 
     # Build context for the LLM
     context_parts = [f"User request: {user_message}", f"\nReasoning:\n{reasoning}"]
@@ -89,7 +139,10 @@ async def responder_node(state: GraphState) -> dict:
     except Exception as exc:
         log.error("responder.llm_error", error=str(exc))
         err_msg = str(exc)
-        if (
+        fallback_answer = _fallback_answer_from_action_result(action_result)
+        if fallback_answer:
+            final_answer = fallback_answer
+        elif (
             "llm_api_key must be configured" in err_msg
             or "API key" in err_msg
             or "api_key" in err_msg
@@ -105,21 +158,9 @@ async def responder_node(state: GraphState) -> dict:
             )
 
     if not final_answer or not final_answer.strip():
-        if isinstance(action_result, dict) and action_result.get("ticket_id"):
-            t = action_result
-            final_answer = (
-                f"### Ticket Information: {t.get('ticket_id')}\n\n"
-                f"- **Title:** {t.get('title')}\n"
-                f"- **Status:** `{t.get('status', 'open')}`\n"
-                f"- **Priority:** `{t.get('priority', 'N/A')}`\n"
-                f"- **Category:** {t.get('category', 'General')}\n"
-                f"- **Assignee:** {t.get('assignee', 'Unassigned')}\n"
-                f"- **Description:** {t.get('description', 'No description.')}"
-            )
-            if t.get("resolution"):
-                final_answer += f"\n- **Resolution:** {t.get('resolution')}"
-        elif isinstance(action_result, dict) and action_result.get("message"):
-            final_answer = str(action_result["message"])
+        fallback_answer = _fallback_answer_from_action_result(action_result)
+        if fallback_answer:
+            final_answer = fallback_answer
         elif reasoning:
             final_answer = reasoning
         else:

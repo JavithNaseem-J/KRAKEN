@@ -289,6 +289,8 @@ tests/unit/agent/*
 !tests/unit/agent/test_graph_nodes.py
 !tests/unit/agent/test_orchestrator.py
 !tests/unit/agent/test_prompt_registry.py
+!tests/unit/agent/test_reasoner.py
+!tests/unit/agent/test_responder.py
 !tests/unit/agent/test_truthful_responses.py
 !tests/unit/api/
 tests/unit/api/*

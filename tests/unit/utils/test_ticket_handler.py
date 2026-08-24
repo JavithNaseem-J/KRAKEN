@@ -14,6 +14,7 @@ from src.tools.ticket import (
     execute_auto_respond,
     execute_close,
     execute_escalate,
+    execute_get_ticket_status,
     execute_request_info,
     quarantine_ip_handler,
     unlock_account_handler,
@@ -69,6 +70,18 @@ class TestTicketHandlers:
         res = execute_auto_respond(None, "General info answer", "FAQ Section 1")
         assert res["response"] == "General info answer"
         assert "ticket_id" not in res
+
+    def test_get_ticket_status_reads_ticket_without_mutation(self, patch_workspace: Path) -> None:
+        res = execute_get_ticket_status("TK-001")
+
+        assert res["success"] is True
+        assert res["action"] == "get_ticket_status"
+        assert res["ticket_id"] == "TK-001"
+        assert res["status"] == "open"
+        assert res["subject"] == "Critical RCE"
+
+        saved = json.loads((patch_workspace / "tickets.json").read_text())
+        assert saved == _SAMPLE_TICKETS
 
     def test_escalate_updates_ticket(self, patch_workspace: Path) -> None:
         res = execute_escalate("TK-002", "Requires Tier 2 review", "SLA policy rule SLA-002")

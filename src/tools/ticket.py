@@ -280,6 +280,31 @@ def execute_auto_respond(
     return result_meta
 
 
+def execute_get_ticket_status(ticket_id: str) -> dict[str, Any]:
+    """Return a read-only ticket status summary from the active or seed ticket data."""
+    if not ticket_id or not ticket_id.strip():
+        raise ActionExecutionError("ticket_id is required.")
+
+    ticket = _find_ticket(_load_seed_tickets(), ticket_id)
+    if not ticket:
+        raise ActionExecutionError(f"Ticket '{ticket_id}' not found in active database.")
+
+    resolved_id = str(ticket.get("ticket_id") or ticket.get("id") or ticket_id).strip()
+    return {
+        "success": True,
+        "action": "get_ticket_status",
+        "ticket_id": resolved_id,
+        "status": ticket.get("status", "UNKNOWN"),
+        "priority": ticket.get("priority", "UNKNOWN"),
+        "subject": ticket.get("subject") or ticket.get("title", ""),
+        "category": ticket.get("category", ""),
+        "user_id": ticket.get("user_id") or ticket.get("user", ""),
+        "description": ticket.get("description", ""),
+        "created_at": ticket.get("created_at", ""),
+        "updated_at": ticket.get("updated_at", ""),
+    }
+
+
 def execute_escalate(ticket_id: str, reason: str, evidence: str) -> dict[str, Any]:
     """Escalate a ticket to senior security staff, citing evidence."""
     if not ticket_id or not ticket_id.strip():

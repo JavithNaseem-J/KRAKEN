@@ -8,11 +8,25 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
+from src.utils.constants import TICKET_ID_REGEX
 from src.utils.llm import get_llm
 
 log = structlog.get_logger(__name__)
 
 _MAX_USER_MESSAGE_LEN = 4_000
+_STATUS_QUERY_KEYWORDS: tuple[str, ...] = (
+    "status of",
+    "ticket status",
+    "check status",
+    "what is the status",
+)
+
+
+def _is_ticket_status_query(user_message: str) -> bool:
+    msg_lower = user_message.lower()
+    return any(keyword in msg_lower for keyword in _STATUS_QUERY_KEYWORDS) and bool(
+        TICKET_ID_REGEX.search(user_message)
+    )
 
 
 def _format_chunks(
@@ -58,6 +72,20 @@ async def reasoner_node(state: GraphState) -> dict:
             "reasoner.user_message_truncated", session_id=session_id, original_len=len(user_message)
         )
         user_message = user_message[:_MAX_USER_MESSAGE_LEN] + "\n... [Truncated for token budget]"
+
+    if _is_ticket_status_query(user_message):
+        ticket_id = TICKET_ID_REGEX.search(user_message)
+        resolved_ticket_id = ticket_id.group(0).upper() if ticket_id else "the requested ticket"
+        reasoning = (
+            f"The user is asking for the current status of {resolved_ticket_id}. "
+            "This is a read-only ticket lookup and does not require LLM reasoning."
+        )
+        log.info(
+            "reasoner.ticket_status_fast_path",
+            session_id=session_id,
+            ticket_id=resolved_ticket_id,
+        )
+        return {"reasoning": reasoning, "insufficient_knowledge": False}
 
     retrieved_chunks = state.get("retrieved_chunks", [])
     # pyrefly: ignore [bad-argument-type]

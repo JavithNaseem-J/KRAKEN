@@ -13,6 +13,7 @@ from src.tools.ticket import (
     execute_close,
     execute_create_ticket,
     execute_escalate,
+    execute_get_ticket_status,
     execute_request_info,
     quarantine_ip_handler,
     unlock_account_handler,
@@ -167,6 +168,7 @@ HANDLER_MAP: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "auto_respond": lambda p: execute_auto_respond(
         p.get("ticket_id"), p.get("response_text", ""), p.get("evidence", "")
     ),
+    "get_ticket_status": lambda p: execute_get_ticket_status(p.get("ticket_id", "")),
     "escalate": lambda p: execute_escalate(
         p.get("ticket_id", ""), p.get("reason", ""), p.get("evidence", "")
     ),

@@ -43,6 +43,7 @@ def test_list_actions(client):
     response = client.get("/registry")
     assert response.status_code == status.HTTP_200_OK
     assert "auto_respond" in response.json()
+    assert "get_ticket_status" in response.json()
     assert "write_json_file" in response.json()
 
 
@@ -113,6 +114,32 @@ def test_execute_auto_respond_success(mock_handler, client):
     assert res["success"] is True
     assert res["result"] == {"success": True, "details": "done"}
     mock_handler.assert_called_once_with(None, "hello", "citing facts")
+
+
+@patch("src.api.action.execute_get_ticket_status")
+def test_execute_get_ticket_status_success(mock_handler, client):
+    mock_handler.return_value = {
+        "success": True,
+        "ticket_id": "TCK-1001",
+        "status": "OPEN",
+    }
+    response = client.post(
+        "/execute",
+        json={
+            "action_name": "get_ticket_status",
+            "session_id": "s1",
+            "user_id": "u1",
+            "payload": {"ticket_id": "TCK-1001"},
+            "reasoning": "read-only status lookup",
+        },
+        headers=_HEADERS,
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    res = response.json()
+    assert res["success"] is True
+    assert res["result"]["status"] == "OPEN"
+    mock_handler.assert_called_once_with("TCK-1001")
 
 
 def test_execute_write_json_success(client):
