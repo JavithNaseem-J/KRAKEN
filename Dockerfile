@@ -1,3 +1,11 @@
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /frontend
+COPY frontend-react/package.json frontend-react/package-lock.json ./
+RUN npm ci
+COPY frontend-react/ ./
+RUN npm run build
+
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
@@ -22,8 +30,7 @@ FROM python:3.12-slim AS runner
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/app" \
-    PORT=8000 \
-    HITL_SERVICE_TOKEN="kraken-default-docker-token-min-32-characters-ok"
+    PORT=8000
 
 RUN groupadd -r kraken && useradd -r -g kraken -s /sbin/nologin kraken
 
@@ -35,6 +42,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 COPY --chown=kraken:kraken src/ /app/src/
 COPY --chown=kraken:kraken data/ /app/data/
 COPY --chown=kraken:kraken main.py /app/main.py
+COPY --from=frontend-builder --chown=kraken:kraken /frontend/dist/ /app/frontend-react/dist/
 
 RUN mkdir -p /app/data/workspace && chown -R kraken:kraken /app
 

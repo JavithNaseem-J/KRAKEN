@@ -6,6 +6,7 @@ All tests run with zero network calls and mocked HTTP / LangGraph interrupts.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.agent.nodes.executor import executor_node
@@ -13,9 +14,7 @@ from src.agent.nodes.executor import executor_node
 
 class TestExecutorNode:
     @patch("src.agent.nodes.executor._call_action_service")
-    def test_safe_actions_dispatched_concurrently(
-        self, mock_call_action: AsyncMock
-    ) -> None:
+    def test_safe_actions_dispatched_concurrently(self, mock_call_action: AsyncMock) -> None:
         mock_call_action.return_value = {"success": True, "result": "done"}
 
         state = {
@@ -60,6 +59,13 @@ class TestExecutorNode:
         result = asyncio.run(executor_node(state))
 
         mock_register.assert_awaited_once()
+        expected_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                'kraken:s1::create_ticket:{"user_name": "Alice"}',
+            )
+        )
+        assert mock_register.await_args.kwargs["approval_id"] == expected_id
         mock_interrupt.assert_called_once_with(
             {
                 "approval_id": "appr-123",
@@ -143,9 +149,7 @@ class TestExecutorNode:
         assert result["approval_status"] is None
 
     @patch("src.agent.nodes.executor._register_approval")
-    def test_approval_registration_failure_returns_error(
-        self, mock_register: AsyncMock
-    ) -> None:
+    def test_approval_registration_failure_returns_error(self, mock_register: AsyncMock) -> None:
         mock_register.side_effect = RuntimeError("Approval service unreachable")
 
         state = {

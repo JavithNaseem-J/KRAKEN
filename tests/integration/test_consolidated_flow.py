@@ -18,7 +18,6 @@ Run with:  pytest tests/integration -m integration
 from __future__ import annotations
 
 import json
-import time
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import patch
@@ -31,7 +30,6 @@ from langchain_core.messages import AIMessage
 
 API_KEY = "itest-demo-key-0123456789abcdef"
 AUTH = {"X-API-Key": API_KEY}
-OPERATOR = {**AUTH, "X-Operator-Role": "operator"}
 
 
 # ── Fake LLM (mocked at get_llm) ──────────────────────────────────────────────
@@ -120,22 +118,16 @@ def client() -> Iterator[TestClient]:
         yield c
 
 
-def _poll_to_completion(client: TestClient, session_id: str, timeout: float = 25.0) -> dict:
-    """Poll the status endpoint until the session reaches a final QueryResponse."""
-    deadline = time.time() + timeout
-    last: dict[str, Any] = {}
-    while time.time() < deadline:
-        resp = client.post(
-            "/v1/run",
-            json={"message": "", "session_id": session_id, "user_id": "demo-user-1"},
-            headers=AUTH,
-        )
-        assert resp.status_code == 200, resp.text
-        last = resp.json()
-        if "answer" in last:
-            return last
-        time.sleep(0.5)
-    raise AssertionError(f"Session {session_id} did not complete in time; last payload: {last}")
+def _start_demo_as(client: TestClient, persona: str) -> dict[str, Any]:
+    session_response = client.post("/v1/demo/session")
+    assert session_response.status_code == 201, session_response.text
+    session = session_response.json()
+    transition = client.post(
+        "/v1/demo/persona",
+        json={"persona": persona, "csrf_token": session["csrf_token"]},
+    )
+    assert transition.status_code == 200, transition.text
+    return session
 
 
 @pytest.mark.integration
@@ -146,18 +138,18 @@ class TestConsolidatedFlow:
         assert health.json()["status"] == "ok"
 
         ready = client.get("/ready", headers=AUTH)
-        assert ready.status_code == 200, ready.text
+        assert ready.status_code == 503, ready.text
         body = ready.json()
-        assert body["status"] == "ready"
-        assert set(body["services"]) == {
-            "orchestrator",
-            "knowledge",
-            "action",
-            "approval",
-            "memory",
-            "audit",
+        assert body["status"] == "degraded"
+        assert set(body["capabilities"]) == {
+            "groq",
+            "qdrant_storage",
+            "qdrant_inference",
+            "redis",
+            "postgres",
+            "semantic_cache",
+            "hitl_checkpoints",
         }
-        assert all(v == "ok" for v in body["services"].values()), body["services"]
 
     def test_run_happy_path_returns_query_response(self, client: TestClient) -> None:
         SCRIPT.set_safe()
@@ -179,20 +171,16 @@ class TestConsolidatedFlow:
 
     def test_hitl_approve_path_resumes_graph(self, client: TestClient) -> None:
         SCRIPT.set_critical()
-        action_result = {
-            "ticket_id": "TCK-1001",
-            "status_updated_to": "escalated",
-            "success": True,
-        }
-        with patch("src.api.action.execute_escalate", return_value=action_result) as handler:
+        session = _start_demo_as(client, "tier1_analyst")
+        demo_headers = {"X-CSRF-Token": session["csrf_token"]}
+        with patch("src.api.action.execute_escalate") as handler:
             resp = client.post(
                 "/v1/run",
                 json={
                     "message": "Please escalate ticket TCK-1001, critical RCE confirmed.",
-                    "session_id": "itest-hitl-approve",
-                    "user_id": "demo-user-1",
+                    "session_id": "browser-value-is-not-trusted",
                 },
-                headers=OPERATOR,
+                headers=demo_headers,
             )
             assert resp.status_code == 200, resp.text
             paused = resp.json()
@@ -207,29 +195,43 @@ class TestConsolidatedFlow:
             assert payload["payload"]["ticket_id"] == "TCK-1001"
             assert payload["csrf_token"]
 
+            transition = client.post(
+                "/v1/demo/persona",
+                json={
+                    "persona": "incident_commander",
+                    "csrf_token": session["csrf_token"],
+                },
+            )
+            assert transition.status_code == 200, transition.text
+
             decision = client.post(
                 f"/approve/{approval_id}/decision",
-                data={"decision": "approve", "csrf_token": payload["csrf_token"]},
+                data={
+                    "decision": "approve",
+                    "csrf_token": payload["csrf_token"],
+                    "demo_csrf_token": session["csrf_token"],
+                },
+                headers={"Accept": "application/json"},
             )
             assert decision.status_code == 200, decision.text
-
-            time.sleep(1.0)
-            final = _poll_to_completion(client, "itest-hitl-approve")
+            final = decision.json()["agent_response"]
             assert final["action_result"]["success"] is True
             assert final["action_result"]["result"]["ticket_id"] == "TCK-1001"
-            assert handler.called
+            handler.assert_not_called()
+        client.cookies.clear()
 
     def test_hitl_reject_path_cancels_action(self, client: TestClient) -> None:
         SCRIPT.set_critical()
+        session = _start_demo_as(client, "tier1_analyst")
+        demo_headers = {"X-CSRF-Token": session["csrf_token"]}
         with patch("src.api.action.execute_escalate") as handler:
             resp = client.post(
                 "/v1/run",
                 json={
                     "message": "Escalate ticket TCK-1001 immediately.",
-                    "session_id": "itest-hitl-reject",
-                    "user_id": "demo-user-1",
+                    "session_id": "browser-value-is-not-trusted",
                 },
-                headers=OPERATOR,
+                headers=demo_headers,
             )
             assert resp.status_code == 200, resp.text
             paused = resp.json()
@@ -240,16 +242,29 @@ class TestConsolidatedFlow:
             assert details.status_code == 200, details.text
             csrf = details.json()["csrf_token"]
 
+            transition = client.post(
+                "/v1/demo/persona",
+                json={
+                    "persona": "incident_commander",
+                    "csrf_token": session["csrf_token"],
+                },
+            )
+            assert transition.status_code == 200, transition.text
+
             decision = client.post(
                 f"/approve/{approval_id}/decision",
-                data={"decision": "reject", "csrf_token": csrf},
+                data={
+                    "decision": "reject",
+                    "csrf_token": csrf,
+                    "demo_csrf_token": session["csrf_token"],
+                },
+                headers={"Accept": "application/json"},
             )
             assert decision.status_code == 200, decision.text
-
-            time.sleep(1.0)
-            final = _poll_to_completion(client, "itest-hitl-reject")
+            final = decision.json()["agent_response"]
             assert final["action_result"]["cancelled"] is True
             handler.assert_not_called()
+        client.cookies.clear()
 
     def test_run_stream_ends_with_done_event(self, client: TestClient) -> None:
         SCRIPT.set_safe()

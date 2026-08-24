@@ -11,7 +11,7 @@ from src.prompts.registry import get_prompt
 from src.safety.policy_engine import get_policy_engine, should_override_to_auto_respond
 from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
-from src.utils.llm import get_llm
+from src.utils.llm import get_llm, invoke_llm
 from src.utils.registry import REGISTRY, get_action
 
 log = structlog.get_logger(__name__)
@@ -106,11 +106,12 @@ async def decider_node(state: GraphState) -> dict:
         )
 
         structured_llm = get_llm().with_structured_output(DecisionOutput, method="json_mode")
-        decision: DecisionOutput = await structured_llm.ainvoke(
+        decision: DecisionOutput = await invoke_llm(
+            structured_llm,
             [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=human_content),
-            ]
+            ],
         )
 
         action_name = decision.selected_action.strip() if decision.selected_action else ""
@@ -165,6 +166,15 @@ async def decider_node(state: GraphState) -> dict:
                 act_payload = getattr(act, "action_payload", {})
                 if not isinstance(act_payload, dict):
                     act_payload = {}
+
+            action_override, _ = should_override_to_auto_respond(user_message, act_name)
+            if action_override:
+                log.warning(
+                    "decider.unrequested_write_action_removed",
+                    session_id=session_id,
+                    action=act_name,
+                )
+                continue
 
             if act_name in REGISTRY:
                 act_def = get_action(act_name)
@@ -236,11 +246,11 @@ async def decider_node(state: GraphState) -> dict:
         }
 
     except Exception as exc:
-        log.error("decider.error", session_id=session_id, error=str(exc))
+        log.error("decider.error", session_id=session_id, error=exc.__class__.__name__)
         return {
             "selected_action": None,
             "action_payload": None,
             "risk_level": None,
             "evidence": None,
-            "error": f"Triage decision failed: {exc}",
+            "error": "llm_provider_unavailable",
         }

@@ -11,7 +11,6 @@ import structlog
 
 from src.utils.cache import create_async_qdrant_client
 from src.utils.config import get_settings
-from src.utils.embedder import BGEEmbedder
 from src.utils.knowledge.ingest import run_ingest_async
 
 structlog.configure(
@@ -29,16 +28,20 @@ async def main_async() -> None:
     print("=" * 56)
     print(f"  Qdrant URL     : {settings.qdrant_url or ':memory:'}")
     print(f"  Collection     : {settings.qdrant_collection_name}")
-    print(f"  Embedding model: {settings.embedding_model}")
+    print(f"  Embedding model: {settings.qdrant_inference_model}")
     print()
 
     t0 = time.perf_counter()
 
-    log.info("ingest.loading_embedder", model=settings.embedding_model)
-    embedder = BGEEmbedder(
-        model_name=settings.embedding_model,
-        device=settings.embedding_device,
-    )
+    embedder = None
+    if not (settings.qdrant_url and settings.qdrant_cloud_inference_enabled):
+        from src.utils.embedder import BGEEmbedder
+
+        log.info("ingest.loading_embedder", model=settings.embedding_model)
+        embedder = BGEEmbedder(
+            model_name=settings.embedding_model,
+            device=settings.embedding_device,
+        )
 
     client = create_async_qdrant_client()
 

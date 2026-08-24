@@ -213,14 +213,14 @@ def test_upload_knowledge_uses_internal_request(client, monkeypatch):
     internal_request = AsyncMock(return_value=mock_response)
     monkeypatch.setattr("src.api.gateway.internal_request", internal_request)
 
+    session = client.post("/v1/demo/session").json()
     response = client.post(
         "/v1/knowledge/upload",
         files={"file": ("faq.md", b"hello", "text/markdown")},
         data={"allowed_roles": "public"},
-        headers={"X-API-Key": "dev-key-analyst-default"},
+        headers={"X-CSRF-Token": session["csrf_token"]},
     )
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"ok": True}
     assert internal_request.await_args.kwargs["files"]["file"][0] == "faq.md"
-

@@ -21,6 +21,7 @@ async def _persist_memory_task(
     action_name: str,
     risk_level: str | None,
     approval_status: str | None,
+    store_episodic: bool = True,
 ) -> None:
     """Async background task that persists session and episodic memory via the memory service."""
     log.info("memory_writer.background_start", session_id=session_id)
@@ -34,6 +35,10 @@ async def _persist_memory_task(
             {"messages": messages},
             headers=service_headers(trace_id=session_id),
         )
+
+        if not store_episodic:
+            log.info("memory_writer.demo_episodic_skipped", session_id=session_id)
+            return
 
         # 2. Store episodic memory (summarised interaction)
         short_answer = textwrap.shorten(final_answer, width=500, placeholder="...")
@@ -91,6 +96,7 @@ async def memory_writer_node(state: GraphState) -> dict:
                 action_name,
                 risk_level,
                 approval,
+                store_episodic=not bool(state.get("demo_session_id")),
             )
 
     try:

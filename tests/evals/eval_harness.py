@@ -80,7 +80,8 @@ def run_case(
             answer=answer,
         )
         overall = round(
-            (eval_result.faithfulness + eval_result.context_recall + eval_result.answer_relevance) / 3.0,
+            (eval_result.faithfulness + eval_result.context_recall + eval_result.answer_relevance)
+            / 3.0,
             3,
         )
     except Exception:

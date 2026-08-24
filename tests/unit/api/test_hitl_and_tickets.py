@@ -43,6 +43,3 @@ def test_unlock_account_handler():
     assert res["lockout_cleared"] is False
     assert "DRY_RUN_ONLY" in res["verification_status"]
     assert "no Microsoft Graph API mutation was sent" in res["message"]
-
-
-

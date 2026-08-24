@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+frontend-react/node_modules
+frontend-react/dist
+openspec
+tests
+e2e
+data/workspace
+logs
+.env
+*.log
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache

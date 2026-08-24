@@ -1,21 +1,37 @@
 from __future__ import annotations
 
+import asyncio
 import re
+import secrets
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlencode
 
 import httpx
 import structlog
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 from pydantic import ValidationError
 
 from src.utils.auth import APIKeyMiddleware, parse_api_keys
 from src.utils.config import get_settings
 from src.utils.cors import cors_middleware_kwargs
+from src.utils.demo_sessions import (
+    DemoSession,
+    DemoSessionError,
+    DemoSessionExpiredError,
+    DemoSessionManager,
+)
 from src.utils.http_client import (
     create_async_http_client,
     get_in_process_app_for_url,
@@ -33,6 +49,15 @@ from src.utils.middleware.prompt_guard import (
 from src.utils.middleware.rate_limit import RateLimiterDatabaseError, SlidingWindowRateLimiter
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.agent import QueryRequest
+from src.utils.models.demo import (
+    CapabilityState,
+    CapabilityStatus,
+    CsrfProof,
+    DemoSessionResetResponse,
+    PersonaTransitionRequest,
+    PersonaTransitionResponse,
+    ReadinessResponse,
+)
 from src.utils.registry import get_privileged_action_terms
 
 log = structlog.get_logger(__name__)
@@ -41,6 +66,7 @@ settings = get_settings()
 # Max allowed request body size: 1 MB (1024 * 1024 bytes)
 MAX_BODY_SIZE = 1_048_576
 API_KEYS_MAP = parse_api_keys(settings.gateway_api_keys)
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend-react" / "dist"
 
 
 @asynccontextmanager
@@ -51,12 +77,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("gateway.startup")
 
     app.state.api_keys = API_KEYS_MAP
+    app.state.demo_sessions = DemoSessionManager(settings)
 
     # 2. Initialize rate limiter
     limiter = SlidingWindowRateLimiter(
         redis_url=settings.redis_url,
-        max_requests=settings.gateway_rate_limit_requests,
-        window_seconds=settings.gateway_rate_limit_window_seconds,
+        max_requests=settings.demo_query_limit,
+        window_seconds=settings.demo_query_window_seconds,
     )
     app.state.limiter = limiter
 
@@ -111,6 +138,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             log.warning("gateway.subapp_shutdown_failed", subsystem=name, error=str(exc))
 
     await app.state.limiter.close()
+    await app.state.demo_sessions.close()
     await app.state.http.aclose()
     log.info("gateway.shutdown")
 
@@ -170,23 +198,62 @@ async def _limit_request_body_size(request: Request) -> None:
 # Helpers
 def _rate_limit_headers(remaining: int, retry_after: int) -> dict[str, str]:
     return {
-        "X-RateLimit-Limit": str(settings.gateway_rate_limit_requests),
+        "X-RateLimit-Limit": str(settings.demo_query_limit),
         "X-RateLimit-Remaining": str(remaining),
-        "X-RateLimit-Window": f"{settings.gateway_rate_limit_window_seconds}s",
+        "X-RateLimit-Window": f"{settings.demo_query_window_seconds}s",
         **({"Retry-After": str(retry_after)} if retry_after > 0 else {}),
     }
 
 
 async def _check_rate_limit(request: Request) -> tuple[bool, dict[str, str]]:
-    user_id = getattr(request.state, "user_id", "anonymous")
+    client_ip = request.client.host if request.client else "unknown"
     try:
-        allowed, remaining, retry_after = await request.app.state.limiter.check(user_id)
+        allowed, remaining, retry_after = await request.app.state.limiter.check(client_ip)
         headers = _rate_limit_headers(remaining, retry_after)
         return allowed, headers
     except RateLimiterDatabaseError as exc:
-        log.warning("gateway.rate_limit_degraded_fail_open", user_id=user_id, error=str(exc))
-        headers = _rate_limit_headers(settings.gateway_rate_limit_requests, 0)
-        return True, headers
+        manager = _demo_manager(request)
+        allowed, remaining, retry_after = manager.check_query_limit(client_ip)
+        log.warning(
+            "gateway.rate_limit_fallback", client_ip=client_ip, error=exc.__class__.__name__
+        )
+        return allowed, _rate_limit_headers(remaining, retry_after)
+
+
+def _demo_manager(request: Request) -> DemoSessionManager:
+    manager = getattr(request.app.state, "demo_sessions", None)
+    if manager is None:
+        manager = DemoSessionManager(settings)
+        request.app.state.demo_sessions = manager
+    return manager
+
+
+async def _resolve_demo_session(request: Request, *, required: bool = False) -> DemoSession | None:
+    cookie = request.cookies.get(settings.demo_session_cookie_name)
+    if not cookie and not required:
+        return None
+    try:
+        manager = _demo_manager(request)
+        try:
+            return manager.resolve(cookie)
+        except DemoSessionError:
+            return await manager.restore(cookie)
+    except DemoSessionExpiredError as exc:
+        raise HTTPException(status_code=401, detail="Demo session expired.") from exc
+    except DemoSessionError as exc:
+        raise HTTPException(status_code=401, detail="Invalid demo session.") from exc
+
+
+def _set_demo_cookie(response: Response, cookie_value: str) -> None:
+    response.set_cookie(
+        key=settings.demo_session_cookie_name,
+        value=cookie_value,
+        max_age=settings.demo_session_ttl_seconds,
+        httponly=True,
+        secure=settings.demo_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
 
 
 async def _proxy(
@@ -217,8 +284,8 @@ async def _proxy(
     if headers:
         forward_headers.update(headers)
 
-    # Inject user_id into JSON body for the upstream orchestrator state
-    body["user_id"] = user_id
+    # Preserve the server-validated demo actor prepared for agent requests.
+    body.setdefault("user_id", user_id)
 
     try:
         is_mock_http = type(getattr(request.app.state, "http", None)).__name__ in (
@@ -245,11 +312,10 @@ async def _proxy(
         try:
             resp_data = resp.json()
         except ValueError:
-            raw = resp.text[:300] if resp.text else "Empty response"
-            log.error("gateway.upstream_non_json", status_code=resp.status_code, body=raw)
+            log.error("gateway.upstream_non_json", status_code=resp.status_code)
             return JSONResponse(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                content={"error": f"Upstream service error ({resp.status_code}): {raw}"},
+                content={"error": "Upstream service returned an invalid response."},
                 headers={"X-Request-Id": request_id},
             )
 
@@ -267,7 +333,7 @@ async def _proxy(
             headers={"X-Request-Id": request_id},
         )
     except Exception as exc:
-        log.error("gateway.proxy_error", error=str(exc))
+        log.error("gateway.proxy_error", error=exc.__class__.__name__)
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
             content={"error": "Upstream service unavailable."},
@@ -282,60 +348,218 @@ async def health() -> dict[str, str]:
     return simple_health_response("gateway")
 
 
-@app.get("/ready", tags=["ops"])
-async def ready_check(request: Request) -> JSONResponse:
-    """
-    Aggregated readiness probe — checks health of all downstream subsystems.
-    Subsystem health checks are short-circuited in-process (no TCP listeners).
-    """
-    services = {
-        "orchestrator": settings.orchestrator_url,
-        "knowledge": settings.knowledge_url,
-        "action": settings.action_url,
-        "approval": settings.approval_url,
-        "memory": settings.memory_url,
-        "audit": settings.audit_url,
-    }
+@app.post("/v1/demo/session", status_code=status.HTTP_201_CREATED, tags=["demo"])
+async def create_demo_session(request: Request) -> JSONResponse:
+    """Issue a clean anonymous demo identity without exposing server credentials."""
+    manager = _demo_manager(request)
+    session, cookie = manager.create()
+    await manager.persist(session)
+    response = JSONResponse(
+        status_code=status.HTTP_201_CREATED,
+        content=manager.response(session).model_dump(mode="json"),
+    )
+    _set_demo_cookie(response, cookie)
+    return response
 
-    degraded_at_boot = set(getattr(request.app.state, "subapps_degraded", []))
 
-    results: dict[str, str] = {}
-    all_ready = True
+@app.get("/v1/demo/sessions/{session_id}", tags=["demo"])
+async def get_demo_session(request: Request, session_id: str) -> JSONResponse:
+    session = await _resolve_demo_session(request, required=True)
+    assert session is not None
+    if not secrets.compare_digest(session.session_id, session_id):
+        raise HTTPException(status_code=404, detail="Demo session not found.")
+    return JSONResponse(content=_demo_manager(request).response(session).model_dump(mode="json"))
 
-    for name, base_url in services.items():
-        if name in degraded_at_boot:
-            results[name] = "degraded (startup failed)"
-            all_ready = False
-            continue
-        try:
-            # A 200 from the subsystem's own /health proves its lifespan ran
-            # and it is serving (backing services fail open by design).
-            resp = await internal_request("GET", f"{base_url}/health", timeout_seconds=5.0)
-            if resp.status_code == 200:
-                results[name] = "ok"
-            else:
-                results[name] = f"degraded ({resp.status_code})"
-                all_ready = False
-        except Exception as exc:
-            results[name] = f"unreachable ({exc.__class__.__name__})"
-            all_ready = False
 
-    status_code = status.HTTP_200_OK if all_ready else status.HTTP_503_SERVICE_UNAVAILABLE
-    return JSONResponse(
-        status_code=status_code,
-        content={"status": "ready" if all_ready else "degraded", "services": results},
+@app.post("/v1/demo/persona", tags=["demo"])
+async def transition_demo_persona(
+    request: Request, body: PersonaTransitionRequest
+) -> PersonaTransitionResponse:
+    session = await _resolve_demo_session(request, required=True)
+    assert session is not None
+    manager = _demo_manager(request)
+    try:
+        manager.require_csrf(session, body.csrf_token)
+    except DemoSessionError as exc:
+        raise HTTPException(status_code=403, detail="Invalid CSRF proof.") from exc
+    manager.transition(session, body.persona)
+    await manager.persist(session)
+    clearance = {
+        "end_user": "PUBLIC",
+        "tier1_analyst": "TIER_1",
+        "incident_commander": "TIER_2",
+        "admin": "ADMIN",
+    }[session.persona.value]
+    return PersonaTransitionResponse(
+        persona=session.persona,
+        actor_id=session.actor_id,
+        clearance_level=clearance,
+        can_approve=session.persona.value in {"incident_commander", "admin"},
     )
 
 
-@app.get("/", tags=["ops"])
-async def root() -> dict[str, Any]:
-    return {
-        "service": "gateway",
-        "description": "KRAKEN Edge API Gateway",
-        "documentation": "/docs",
-        "health": "/health",
-        "frontend": "http://localhost:5173",
+@app.post("/v1/demo/session/reset", tags=["demo"])
+async def reset_demo_session(request: Request, body: CsrfProof) -> JSONResponse:
+    manager = _demo_manager(request)
+    old_session = await _resolve_demo_session(request, required=True)
+    assert old_session is not None
+    try:
+        manager.require_csrf(old_session, body.csrf_token)
+    except DemoSessionError as exc:
+        raise HTTPException(status_code=403, detail="Invalid CSRF proof.") from exc
+    await manager.revoke_remote(old_session)
+    session, cookie = manager.create()
+    await manager.persist(session)
+    payload = DemoSessionResetResponse(
+        **manager.response(session).model_dump(), replaced_session=True
+    )
+    response = JSONResponse(content=payload.model_dump(mode="json"))
+    _set_demo_cookie(response, cookie)
+    return response
+
+
+async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
+    timeout = settings.capability_probe_timeout_seconds
+
+    async def groq() -> CapabilityStatus:
+        if not settings.llm_api_key:
+            return CapabilityStatus(state=CapabilityState.DEGRADED, detail="not configured")
+        try:
+            client: httpx.AsyncClient = request.app.state.http
+            response = await asyncio.wait_for(
+                client.get(
+                    f"{settings.llm_base_url.rstrip('/')}/models",
+                    headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+                ),
+                timeout=timeout,
+            )
+            if response.status_code == 200:
+                return CapabilityStatus(state=CapabilityState.READY)
+        except Exception:
+            pass
+        return CapabilityStatus(state=CapabilityState.DEGRADED, detail="provider unavailable")
+
+    async def qdrant_storage() -> CapabilityStatus:
+        if not settings.qdrant_url or not settings.qdrant_api_key:
+            return CapabilityStatus(state=CapabilityState.DEGRADED, detail="not configured")
+        try:
+            from src.utils.cache import create_async_qdrant_client
+
+            client = create_async_qdrant_client()
+            await asyncio.wait_for(client.get_collections(), timeout=timeout)
+            await client.close()
+            return CapabilityStatus(state=CapabilityState.READY)
+        except Exception:
+            return CapabilityStatus(state=CapabilityState.DEGRADED, detail="provider unavailable")
+
+    async def redis() -> CapabilityStatus:
+        if not settings.redis_url:
+            return CapabilityStatus(state=CapabilityState.DEGRADED, detail="not configured")
+        try:
+            from src.utils.http_client import create_async_redis_client
+
+            client = create_async_redis_client(settings.redis_url, socket_connect_timeout=timeout)
+            await asyncio.wait_for(client.ping(), timeout=timeout)
+            await client.aclose()
+            return CapabilityStatus(state=CapabilityState.READY)
+        except Exception:
+            return CapabilityStatus(state=CapabilityState.DEGRADED, detail="provider unavailable")
+
+    async def postgres() -> CapabilityStatus:
+        if not settings.postgres_sync_url:
+            return CapabilityStatus(state=CapabilityState.DEGRADED, detail="not configured")
+        try:
+            from src.api.orchestrator import app as orchestrator_app
+
+            pool = getattr(orchestrator_app.state, "conn_pool", None)
+            if pool is None:
+                raise RuntimeError("pool unavailable")
+
+            def check() -> None:
+                with pool.connection(timeout=timeout) as connection:
+                    connection.execute("SELECT 1")
+
+            await asyncio.wait_for(asyncio.to_thread(check), timeout=timeout)
+            return CapabilityStatus(state=CapabilityState.READY)
+        except Exception:
+            return CapabilityStatus(state=CapabilityState.DEGRADED, detail="provider unavailable")
+
+    groq_state, qdrant_state, redis_state, postgres_state = await asyncio.gather(
+        groq(), qdrant_storage(), redis(), postgres()
+    )
+    inference_state = CapabilityStatus(
+        state=(
+            CapabilityState.READY
+            if qdrant_state.state == CapabilityState.READY
+            and settings.qdrant_cloud_inference_enabled
+            and bool(settings.qdrant_inference_model)
+            else CapabilityState.DEGRADED
+        ),
+        detail=(
+            None
+            if qdrant_state.state == CapabilityState.READY
+            and settings.qdrant_cloud_inference_enabled
+            and bool(settings.qdrant_inference_model)
+            else "storage or inference configuration unavailable"
+        ),
+    )
+    from src.api.orchestrator import app as orchestrator_app
+
+    hitl_checkpoint_state = CapabilityStatus(
+        state=(
+            CapabilityState.READY
+            if postgres_state.state == CapabilityState.READY
+            and bool(getattr(orchestrator_app.state, "checkpointer_ready", False))
+            else CapabilityState.DEGRADED
+        ),
+        detail=(
+            None
+            if bool(getattr(orchestrator_app.state, "checkpointer_ready", False))
+            else "managed checkpointer unavailable"
+        ),
+    )
+    capabilities = {
+        "groq": groq_state,
+        "qdrant_storage": qdrant_state,
+        "qdrant_inference": inference_state,
+        "redis": redis_state,
+        "postgres": postgres_state,
+        "semantic_cache": CapabilityStatus(
+            state=(
+                CapabilityState.READY
+                if settings.semantic_cache_enabled and qdrant_state.state == CapabilityState.READY
+                else CapabilityState.DEGRADED
+            )
+        ),
+        "hitl_checkpoints": hitl_checkpoint_state,
     }
+    overall = (
+        CapabilityState.READY
+        if all(item.state == CapabilityState.READY for item in capabilities.values())
+        else CapabilityState.DEGRADED
+    )
+    return ReadinessResponse(status=overall, capabilities=capabilities)
+
+
+@app.get("/ready", tags=["ops"])
+async def ready_check(request: Request) -> JSONResponse:
+    readiness = await _probe_runtime_capabilities(request)
+    status_code = 200 if readiness.status == CapabilityState.READY else 503
+    return JSONResponse(status_code=status_code, content=readiness.model_dump(mode="json"))
+
+
+@app.get("/", tags=["frontend"])
+async def root() -> Response:
+    index = FRONTEND_DIST / "index.html"
+    if index.is_file():
+        return FileResponse(index)
+    return JSONResponse(
+        {
+            "service": "gateway",
+            "status": "frontend_not_built",
+            "health": "/health",
+        }
+    )
 
 
 def _compile_privileged_action_pattern() -> re.Pattern[str]:
@@ -384,18 +608,35 @@ async def _prepare_agent_request(
             ),
         )
 
-    user_id = getattr(request.state, "user_id", "anonymous")
-    body.setdefault("session_id", str(uuid.uuid4()))
+    demo_session = await _resolve_demo_session(request)
+    if demo_session is not None:
+        try:
+            _demo_manager(request).require_csrf(demo_session, request.headers.get("X-CSRF-Token"))
+        except DemoSessionError:
+            return (
+                None,
+                rl_headers,
+                JSONResponse(status_code=403, content={"error": "Invalid CSRF proof."}),
+            )
+        user_id = demo_session.actor_id
+        operator_role = demo_session.persona.value
+        body["session_id"] = demo_session.session_id
+    else:
+        user_id = getattr(request.state, "user_id", "anonymous")
+        operator_role = request.headers.get("X-Operator-Role", "end_user").strip().lower()
+        body.setdefault("session_id", str(uuid.uuid4()))
     body["user_id"] = user_id
     metadata = body.setdefault("metadata", {})
     if isinstance(metadata, dict):
-        metadata["operator_role"] = (
-            request.headers.get("X-Operator-Role", "end_user").strip().lower()
-        )
+        metadata["execution_id"] = uuid.uuid4().hex
+        metadata["operator_role"] = operator_role
+        if demo_session is not None:
+            metadata["demo_session_id"] = demo_session.session_id
+            metadata["actor_id"] = demo_session.actor_id
+            metadata["has_private_uploads"] = bool(demo_session.upload_ids)
 
     message = body.get("message", "")
     if isinstance(message, str) and message:
-        operator_role = request.headers.get("X-Operator-Role")
         guard_result = guard_message(message, operator_role)
         if guard_result.blocked:
             log.warning("gateway.prompt_injection_blocked", path=request.url.path)
@@ -544,6 +785,38 @@ async def run_stream(request: Request) -> Any:
     )
 
 
+@app.get("/v1/demo/status", tags=["demo"])
+async def demo_run_status(request: Request) -> JSONResponse:
+    """Return session-owned execution state without re-running the agent."""
+    session = await _resolve_demo_session(request, required=True)
+    assert session is not None
+    request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
+    try:
+        response = await internal_request(
+            "GET",
+            f"{settings.orchestrator_url}/status/{session.session_id}",
+            headers=service_headers(trace_id=request_id),
+        )
+        return JSONResponse(
+            content=response.json(),
+            status_code=response.status_code,
+            headers={"X-Request-Id": request_id},
+        )
+    except httpx.HTTPStatusError as exc:
+        return JSONResponse(
+            status_code=exc.response.status_code,
+            content={"error": "Execution status is unavailable."},
+            headers={"X-Request-Id": request_id},
+        )
+    except Exception as exc:
+        log.error("gateway.status_proxy_failed", error=exc.__class__.__name__)
+        return JSONResponse(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            content={"error": "Execution status is temporarily unavailable."},
+            headers={"X-Request-Id": request_id},
+        )
+
+
 # HITL approval proxy routes (single-port browser flow)
 @app.get("/approve/{approval_id}/details", tags=["hitl"])
 async def approval_details_proxy(request: Request, approval_id: str) -> JSONResponse:
@@ -552,8 +825,13 @@ async def approval_details_proxy(request: Request, approval_id: str) -> JSONResp
     url = f"{settings.approval_url}/approve/{approval_id}/details"
     try:
         resp = await internal_request("GET", url, headers={"X-Request-Id": request_id})
+        content = resp.json()
+        session = await _resolve_demo_session(request, required=True)
+        assert session is not None
+        if content.get("session_id") != session.session_id:
+            return JSONResponse(status_code=404, content={"detail": "Approval request not found."})
         return JSONResponse(
-            content=resp.json(),
+            content=content,
             status_code=resp.status_code,
             headers={"X-Request-Id": request_id},
         )
@@ -580,7 +858,23 @@ async def approval_details_proxy(request: Request, approval_id: str) -> JSONResp
 async def approval_decision_proxy(request: Request, approval_id: str) -> Response:
     """Proxy the approve/reject form submission to the in-process approval app."""
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
-    body = await request.body()
+    session = await _resolve_demo_session(request, required=True)
+    assert session is not None
+    form = await request.form()
+    try:
+        _demo_manager(request).require_csrf(session, str(form.get("demo_csrf_token") or ""))
+    except DemoSessionError as exc:
+        raise HTTPException(status_code=403, detail="Invalid CSRF proof.") from exc
+
+    body = urlencode(
+        {
+            "decision": str(form.get("decision") or ""),
+            "csrf_token": str(form.get("csrf_token") or ""),
+            "approver_role": session.persona.value,
+            "approver_id": session.actor_id,
+            "expected_session_id": session.session_id,
+        }
+    ).encode("ascii")
     if len(body) > MAX_BODY_SIZE:
         return JSONResponse(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
@@ -594,7 +888,11 @@ async def approval_decision_proxy(request: Request, approval_id: str) -> Respons
             "POST",
             url,
             content=body,
-            headers={"Content-Type": content_type, "X-Request-Id": request_id},
+            headers={
+                "Content-Type": content_type,
+                "Accept": "application/json",
+                "X-Request-Id": request_id,
+            },
         )
         return Response(
             content=resp.content,
@@ -624,13 +922,54 @@ async def upload_knowledge(
     file: Annotated[UploadFile, File(...)],
     allowed_roles: Annotated[str, Form()] = "public",
 ) -> JSONResponse:
-    """Proxy multipart file upload to Knowledge Service."""
+    """Validate and ingest a private, expiring demo document."""
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
+    session = await _resolve_demo_session(request, required=True)
+    assert session is not None
+    try:
+        _demo_manager(request).require_csrf(session, request.headers.get("X-CSRF-Token"))
+    except DemoSessionError as exc:
+        raise HTTPException(status_code=403, detail="Invalid CSRF proof.") from exc
+
+    filename = file.filename or "upload"
+    suffix = Path(filename).suffix.lower()
+    if suffix not in {".pdf", ".txt", ".md", ".markdown"}:
+        return JSONResponse(
+            status_code=415,
+            content={"error": "Only PDF, TXT, and Markdown files are accepted."},
+        )
+    if len(session.upload_ids) >= settings.demo_upload_max_files:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "This demo session already has three active uploads."},
+        )
     headers = service_headers(trace_id=request_id)
     try:
-        content_bytes = await file.read()
+        content_bytes = await file.read(settings.demo_upload_max_bytes + 1)
+        if len(content_bytes) > settings.demo_upload_max_bytes:
+            return JSONResponse(
+                status_code=413,
+                content={"error": "Upload exceeds the 2 MB Demo Mode limit."},
+            )
+        if suffix == ".pdf" and not content_bytes.startswith(b"%PDF-"):
+            return JSONResponse(status_code=415, content={"error": "Invalid PDF file."})
+        if suffix != ".pdf":
+            if b"\x00" in content_bytes:
+                return JSONResponse(status_code=415, content={"error": "Invalid text file."})
+            try:
+                content_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                return JSONResponse(
+                    status_code=415, content={"error": "Text uploads must use UTF-8."}
+                )
+        if not content_bytes.strip():
+            return JSONResponse(status_code=422, content={"error": "The uploaded file is empty."})
         files = {"file": (file.filename, content_bytes, file.content_type)}
-        data = {"allowed_roles": allowed_roles}
+        data = {
+            "allowed_roles": allowed_roles,
+            "demo_session_id": session.session_id,
+            "expires_at": str(session.expires_at),
+        }
         resp = await internal_request(
             "POST",
             f"{settings.knowledge_url}/upload",
@@ -639,8 +978,11 @@ async def upload_knowledge(
             headers=headers,
             timeout_seconds=60.0,
         )
+        result = resp.json()
+        session.upload_ids.add(uuid.uuid4().hex)
+        await _demo_manager(request).persist(session)
         return JSONResponse(
-            content=resp.json(),
+            content=result,
             status_code=resp.status_code,
             headers={"X-Request-Id": request_id},
         )
@@ -655,10 +997,10 @@ async def upload_knowledge(
             headers={"X-Request-Id": request_id},
         )
     except Exception as exc:
-        log.error("gateway.upload_proxy_failed", error=str(exc))
+        log.error("gateway.upload_proxy_failed", error=exc.__class__.__name__)
         return JSONResponse(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            content={"error": f"Upload failed: {exc}"},
+            content={"error": "Upload processing is temporarily unavailable."},
             headers={"X-Request-Id": request_id},
         )
 
@@ -729,3 +1071,17 @@ async def audit_history_proxy(request: Request, trace_id: str) -> JSONResponse:
             content={"error": "Audit service unavailable."},
             headers={"X-Request-Id": request_id},
         )
+
+
+@app.get("/{browser_path:path}", include_in_schema=False)
+async def spa_fallback(browser_path: str) -> Response:
+    """Serve compiled assets and React deep links after every API route is registered."""
+    if browser_path.split("/", 1)[0] in {"v1", "approve", "health", "ready", "metrics"}:
+        raise HTTPException(status_code=404, detail="Not found.")
+    if not FRONTEND_DIST.is_dir():
+        raise HTTPException(status_code=404, detail="Frontend is not built.")
+
+    candidate = (FRONTEND_DIST / browser_path).resolve()
+    if FRONTEND_DIST.resolve() in candidate.parents and candidate.is_file():
+        return FileResponse(candidate)
+    return FileResponse(FRONTEND_DIST / "index.html")

@@ -26,6 +26,9 @@ def _make_settings(**overrides) -> Settings:
         "postgres_url": "postgresql+asyncpg://u:p@db.example.com:5432/akea",
         "postgres_sync_url": "postgresql://u:p@db.example.com:5432/akea",
         "redis_url": "rediss://cache.example.com:6379",
+        "qdrant_url": "https://qdrant.example.com",
+        "qdrant_api_key": "qdrant-test-key",
+        "llm_api_key": "groq-test-key",
         "orchestrator_url": "https://orchestrator.example.com",
         "knowledge_url": "https://knowledge.example.com",
         "action_url": "https://action.example.com",
@@ -33,6 +36,9 @@ def _make_settings(**overrides) -> Settings:
         "memory_url": "https://memory.example.com",
         "audit_url": "https://audit.example.com",
         "hitl_service_token": _STRONG_TOKEN,
+        "gateway_api_keys": "server-only-test-key:tier1_analyst",
+        "demo_session_secret": "demo-session-secret-0123456789abcdef",
+        "demo_cookie_secure": True,
     }
     base.update(overrides)
     return Settings.model_validate(base)
@@ -103,8 +109,4 @@ class TestStrongTokenAccepted:
 
     def test_default_secret_rejected_in_prod_environment(self):
         with pytest.raises(ValidationError, match="cannot use default development tokens"):
-            _make_settings(
-                gateway_api_keys="dev-secret-key",
-                environment="prod"
-            )
-
+            _make_settings(gateway_api_keys="dev-secret-key", environment="prod")

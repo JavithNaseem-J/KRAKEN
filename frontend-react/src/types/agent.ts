@@ -42,12 +42,21 @@ export interface PendingApproval {
   message: string;
 }
 
+export interface RunningExecution {
+  status: 'running';
+  session_id: string;
+}
+
 /** Union of all possible POST /v1/run response shapes. */
-export type RunResponse = QueryResponse | PendingApproval;
+export type RunResponse = QueryResponse | PendingApproval | RunningExecution;
 
 /** Type guard: does this /v1/run response represent a pending HITL approval? */
 export function isPendingApproval(res: RunResponse): res is PendingApproval {
   return (res as PendingApproval).status === 'pending_approval';
+}
+
+export function isRunningExecution(res: RunResponse): res is RunningExecution {
+  return (res as RunningExecution).status === 'running';
 }
 
 /** Parsed details of a pending approval (fetched from the Approval Service). */
@@ -105,5 +114,4 @@ export interface UserRole {
   user_id: string;
   label: string;
   title: string;
-  api_key: string;
 }

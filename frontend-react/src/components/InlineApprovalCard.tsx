@@ -118,8 +118,6 @@ export function InlineApprovalCard({
         approvalId,
         decision,
         details.csrf_token,
-        activePersona.role,
-        activePersona.id,
       );
       onResolved(approvalId, decision, res.agent_response);
     } catch (e) {

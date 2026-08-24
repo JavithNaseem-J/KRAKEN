@@ -1,86 +1,159 @@
-name: KRAKEN Deployment Pipeline
+name: KRAKEN Production Deployment
 
 on:
   workflow_run:
     workflows: ["KRAKEN CI/CD Pipeline"]
-    types:
-      - completed
-    branches:
-      - main
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: kraken-deployment
+  group: kraken-production
   cancel-in-progress: false
 
+env:
+  PYTHON_VERSION: "3.12"
+
 jobs:
-  # ============================================================================
-  # 1. Docker Hub Build and Push
-  # ============================================================================
-  dockerhub-push:
-    name: Build and Push Docker Image to Docker Hub
+  verify-ci:
+    name: Verify Exact Commit Passed CI
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      deploy_sha: ${{ steps.commit.outputs.deploy_sha }}
     steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+      - id: commit
+        name: Resolve deployment commit
+        env:
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+      - name: Require successful CI for manual deployment
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ steps.commit.outputs.deploy_sha }}
+        run: |
+          successful_runs=$(gh run list \
+            --workflow ci.yml \
+            --commit "$DEPLOY_SHA" \
+            --status success \
+            --limit 20 \
+            --json databaseId \
+            --jq 'length')
+          test "$successful_runs" -gt 0
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+  provider-predeploy:
+    name: Protected Provider Predeploy
+    needs: [verify-ci]
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      QDRANT_URL: ${{ secrets.QDRANT_URL }}
+      QDRANT_API_KEY: ${{ secrets.QDRANT_API_KEY }}
+      REDIS_URL: ${{ secrets.REDIS_URL }}
+      POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+      POSTGRES_SYNC_URL: ${{ secrets.POSTGRES_SYNC_URL }}
+      DEMO_SESSION_SECRET: ${{ secrets.DEMO_SESSION_SECRET }}
+      HITL_SERVICE_TOKEN: ${{ secrets.HITL_SERVICE_TOKEN }}
+      GATEWAY_API_KEYS: ${{ secrets.GATEWAY_API_KEYS }}
+      ORCHESTRATOR_URL: http://orchestrator.internal
+      KNOWLEDGE_URL: http://knowledge.internal
+      ACTION_URL: http://action.internal
+      APPROVAL_URL: http://approval.internal
+      MEMORY_URL: http://memory.internal
+      AUDIT_URL: http://audit.internal
+    steps:
+      - uses: actions/checkout@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract Docker Metadata (Tags & Labels)
-        id: meta
-        uses: docker/metadata-action@v5
+          ref: ${{ needs.verify-ci.outputs.deploy_sha }}
+      - uses: astral-sh/setup-uv@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/kraken
-          tags: |
-            type=raw,value=latest
-            type=sha,prefix=sha-,format=short
-
-      - name: Build and Push Image
-        uses: docker/build-push-action@v5
+          version: "latest"
+          enable-cache: true
+      - uses: actions/setup-python@v5
         with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --no-dev
+      - name: Verify Groq, Qdrant Inference, Redis, and Postgres
+        env:
+          ENVIRONMENT: prod
+          DEMO_COOKIE_SECURE: "true"
+        run: uv run python scripts/provider_predeploy.py
 
-  # ============================================================================
-  # 2. Render Cloud Deployment
-  # ============================================================================
+      - name: Start provider-backed local application
+        env:
+          ENVIRONMENT: test
+          PORT: "8010"
+          DEMO_QUERY_LIMIT: "1000"
+          DEMO_COOKIE_SECURE: "false"
+        run: |
+          uv run python main.py > /tmp/kraken-predeploy.log 2>&1 &
+          echo $! > /tmp/kraken-predeploy.pid
+          for attempt in {1..40}; do
+            if curl --fail --silent http://127.0.0.1:8010/ready | grep -q '"status":"ready"'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Provider-backed local application did not become ready."
+          exit 1
+
+      - name: Run eight workflows before deployment
+        run: uv run python scripts/acceptance.py --base-url http://127.0.0.1:8010
+
+      - name: Stop provider-backed local application
+        if: always()
+        run: |
+          if [ -f /tmp/kraken-predeploy.pid ]; then
+            kill "$(cat /tmp/kraken-predeploy.pid)" || true
+          fi
+
   render-deploy:
-    name: Trigger Render Service Deployment
+    name: Trigger Unified Render Service
+    needs: [provider-predeploy]
     runs-on: ubuntu-latest
-    needs: [dockerhub-push]
     steps:
-      - name: Trigger Backend Render Deploy Hook
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
-          echo "Triggering Render Backend Deployment Hook..."
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
-          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-            echo "Render Backend deployment hook triggered successfully (HTTP $HTTP_STATUS)."
-          else
-            echo "Failed to trigger Render deploy hook (HTTP $HTTP_STATUS)."
-            exit 1
-          fi
+          test -n "$RENDER_DEPLOY_HOOK_URL"
+          curl --fail --silent --show-error --request POST "$RENDER_DEPLOY_HOOK_URL"
 
-      - name: Trigger Frontend Render Deploy Hook (Optional)
-        if: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK != '' }}
+  live-smoke:
+    name: Bounded Live Acceptance Smoke
+    needs: [render-deploy]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: uv sync --frozen --no-dev
+      - name: Wait for new revision readiness
+        env:
+          LIVE_URL: ${{ secrets.RENDER_LIVE_URL }}
         run: |
-          echo "Triggering Render Frontend Deployment Hook..."
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}")
-          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-            echo "Render Frontend deployment hook triggered successfully (HTTP $HTTP_STATUS)."
-          else
-            echo "Warning: Render Frontend hook returned HTTP $HTTP_STATUS."
-          fi
+          for attempt in {1..40}; do
+            if curl --fail --silent "$LIVE_URL/health" | grep -q 'gateway' && \
+               curl --fail --silent "$LIVE_URL/ready" | grep -q '"status":"ready"'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Live readiness failed. Mark this revision unhealthy and roll back to the previous known-good Render deploy."
+          exit 1
+      - name: Run eight public workflow contracts
+        env:
+          LIVE_URL: ${{ secrets.RENDER_LIVE_URL }}
+        run: uv run python scripts/acceptance.py --base-url "$LIVE_URL"

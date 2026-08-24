@@ -7,6 +7,7 @@ import structlog
 
 from src.utils.config import get_settings
 from src.utils.http_client import internal_request, service_headers
+from src.utils.logging import summarize_audit_data
 from src.utils.models.audit import AuditLogRequest
 
 log = structlog.get_logger(__name__)
@@ -39,9 +40,9 @@ async def fire_audit_log(
         risk_level=risk_level,
         hitl_required=hitl_required,
         status=status,
-        reasoning=reasoning,
-        payload=payload,
-        result=result,
+        reasoning=None,
+        payload=summarize_audit_data(payload),
+        result=summarize_audit_data(result),
         hitl_decision=hitl_decision,
     )
     try:
@@ -55,4 +56,4 @@ async def fire_audit_log(
         )
     except Exception as exc:
         # Audit failure must not affect action result
-        log.error("audit_client.failed", error=str(exc), action=action_name)
+        log.error("audit_client.failed", error=exc.__class__.__name__, action=action_name)

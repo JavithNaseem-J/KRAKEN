@@ -92,7 +92,7 @@ def test_execute_missing_evidence(client):
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
     assert res["success"] is False
-    assert "evidence" in res["error"]
+    assert res["error"] == "Action execution failed."
 
 
 @patch("src.api.action.execute_auto_respond")
@@ -176,7 +176,7 @@ def test_execute_write_json_path_traversal(client):
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
     assert res["success"] is False
-    assert "outside the allowed workspace" in res["error"]
+    assert res["error"] == "Action rejected by safety policy."
 
 
 def test_execute_write_json_invalid_extension(client):
@@ -194,7 +194,7 @@ def test_execute_write_json_invalid_extension(client):
     assert response.status_code == status.HTTP_200_OK
     res = response.json()
     assert res["success"] is False
-    assert "extension '.sh' is not allowed" in res["error"]
+    assert res["error"] == "Action rejected by safety policy."
 
 
 @patch("src.api.action.execute_escalate")

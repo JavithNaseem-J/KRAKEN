@@ -49,6 +49,4 @@ def test_report_export_returns_html_media_contract() -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
-    assert 'filename="kraken-incident-test-ses.html"' in response.headers[
-        "content-disposition"
-    ]
+    assert 'filename="kraken-incident-test-ses.html"' in response.headers["content-disposition"]

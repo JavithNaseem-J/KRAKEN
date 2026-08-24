@@ -5,13 +5,17 @@ Patches ShortTermMemory and LongTermMemory so no real Redis or Postgres is neede
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
+from qdrant_client.models import Document
 
 from src.api.memory import app
+from src.utils.memory.long_term import LongTermMemory
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
@@ -20,6 +24,25 @@ _MSGS = [
     {"role": "user", "content": "Hello"},
     {"role": "assistant", "content": "Hi there"},
 ]
+
+
+def test_cloud_long_term_memory_does_not_load_local_embedder() -> None:
+    cloud_settings = SimpleNamespace(
+        qdrant_url="https://qdrant.example",
+        qdrant_cloud_inference_enabled=True,
+        qdrant_inference_model="sentence-transformers/all-MiniLM-L6-v2",
+        qdrant_inference_dim=384,
+        embedding_dim=384,
+    )
+    with (
+        patch("src.utils.memory.long_term.settings", cloud_settings),
+        patch("src.utils.embedder.get_embedder") as get_local_embedder,
+    ):
+        memory = LongTermMemory(client=AsyncMock())
+        vector = asyncio.run(memory._embed_async("private episodic query"))
+
+    assert isinstance(vector, Document)
+    get_local_embedder.assert_not_called()
 
 
 @pytest.fixture

@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
 from src.utils.constants import TICKET_ID_REGEX
-from src.utils.llm import get_llm
+from src.utils.llm import get_llm, invoke_llm
 
 log = structlog.get_logger(__name__)
 
@@ -91,7 +91,18 @@ async def reasoner_node(state: GraphState) -> dict:
     # pyrefly: ignore [bad-argument-type]
     chunks_text, has_valid_chunks = _format_chunks(retrieved_chunks, threshold=0.40)
 
-    if not has_valid_chunks and retrieved_chunks:
+    operational_intent = any(
+        term in user_message.lower()
+        for term in (
+            "create ticket",
+            "open ticket",
+            "close ticket",
+            "escalate",
+            "unlock",
+            "quarantine",
+        )
+    )
+    if not has_valid_chunks and not operational_intent:
         log.warning("reasoner.insufficient_knowledge", session_id=session_id)
         refusal_reasoning = (
             "RELEVANT INFORMATION:\n"
@@ -107,24 +118,25 @@ async def reasoner_node(state: GraphState) -> dict:
 
     try:
         llm = get_llm()
-        response = await llm.ainvoke(
+        response = await invoke_llm(
+            llm,
             [
                 SystemMessage(content=get_prompt("reasoner")),
                 HumanMessage(content=human_content),
-            ]
+            ],
         )
         reasoning = response.content.strip()
         log.info("reasoner.done", session_id=session_id, chars=len(reasoning))
         return {"reasoning": reasoning, "insufficient_knowledge": not has_valid_chunks}
 
     except Exception as exc:
-        log.error("reasoner.error", session_id=session_id, error=str(exc))
+        log.error("reasoner.error", session_id=session_id, error=exc.__class__.__name__)
         fallback = (
-            f"Reasoning unavailable due to LLM error: {exc}. "
-            f"Retrieved {len(retrieved_chunks)} chunks."
+            "Reasoning is unavailable because the AI provider could not complete the request. "
+            f"Retrieved evidence count: {len(retrieved_chunks)}."
         )
         return {
             "reasoning": fallback,
-            "error": str(exc),
+            "error": "llm_provider_unavailable",
             "insufficient_knowledge": not has_valid_chunks,
         }

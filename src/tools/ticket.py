@@ -529,5 +529,3 @@ def unlock_account_handler(
             f"was sent and lockout counters were not reset (Simulated Tx: {tx_id})."
         ),
     }
-
-

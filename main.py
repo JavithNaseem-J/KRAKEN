@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 
 if sys.platform == "win32":
@@ -10,13 +11,16 @@ if sys.platform == "win32":
 
 import uvicorn
 
-from src.utils.config import get_settings
-
 if __name__ == "__main__":
-    settings = get_settings()
-    uvicorn.run(
+    config = uvicorn.Config(
         "src.api.gateway:app",
         host="0.0.0.0",
-        port=8000,
-        reload=settings.environment == "dev",
+        port=int(os.getenv("PORT", "8000")),
+        reload=os.getenv("UVICORN_RELOAD", "false").lower() == "true",
     )
+    server = uvicorn.Server(config)
+    if sys.platform == "win32" and not config.should_reload:
+        with asyncio.Runner(loop_factory=asyncio.SelectorEventLoop) as runner:
+            runner.run(server.serve())
+    else:
+        server.run()

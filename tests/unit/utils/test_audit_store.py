@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
@@ -86,6 +87,29 @@ class TestLogAction:
             )
         )
         assert conn.fetchrow.call_count == 2
+
+    async def test_payload_is_reduced_to_redacted_metadata(self) -> None:
+        store, conn = _make_store()
+        conn.fetchrow = AsyncMock(side_effect=[None, {"id": 6}])
+
+        await store.log_action(
+            AuditLogRequest(
+                session_id="s1",
+                user_id="u1",
+                action_type="WRITE",
+                action_name="create_ticket",
+                risk_level="SAFE",
+                hitl_required=False,
+                status="success",
+                reasoning="Contact visitor@example.com",
+                payload={"description": "private content", "user_name": "Visitor"},
+            )
+        )
+
+        insert_args = conn.fetchrow.call_args_list[1].args
+        assert insert_args[9] is None
+        assert json.loads(insert_args[10]) == {"fields": ["description", "user_name"]}
+        conn.execute.assert_awaited_once()
 
 
 class TestGetSessionHistory:

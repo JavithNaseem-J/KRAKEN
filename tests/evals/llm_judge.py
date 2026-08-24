@@ -24,15 +24,18 @@ class EvaluationResult(BaseModel):
     """Structured output from the LLM judge."""
 
     faithfulness: float = Field(
-        ge=0.0, le=1.0,
+        ge=0.0,
+        le=1.0,
         description="0.0-1.0: How well the answer stays within the retrieved chunks (no hallucination)",
     )
     context_recall: float = Field(
-        ge=0.0, le=1.0,
+        ge=0.0,
+        le=1.0,
         description="0.0-1.0: How many relevant facts from the chunks are reflected in the answer",
     )
     answer_relevance: float = Field(
-        ge=0.0, le=1.0,
+        ge=0.0,
+        le=1.0,
         description="0.0-1.0: How well the answer addresses the user query",
     )
     reasoning: str = Field(
@@ -101,18 +104,25 @@ def evaluate_rag_response(
     Returns:
         EvaluationResult with faithfulness, context_recall, answer_relevance scores.
     """
-    chunks_text = "\n\n".join(
-        f"[Chunk {i+1}] {c.get('content', c.get('text', str(c)))}"
-        for i, c in enumerate(chunks)
-    ) or "(no chunks retrieved)"
+    chunks_text = (
+        "\n\n".join(
+            f"[Chunk {i + 1}] {c.get('content', c.get('text', str(c)))}"
+            for i, c in enumerate(chunks)
+        )
+        or "(no chunks retrieved)"
+    )
 
     llm = _get_judge_llm()
-    result = llm.invoke([
-        SystemMessage(content=_JUDGE_SYSTEM_PROMPT),
-        HumanMessage(content=_JUDGE_USER_TEMPLATE.format(
-            query=query,
-            chunks=chunks_text,
-            answer=answer,
-        )),
-    ])
+    result = llm.invoke(
+        [
+            SystemMessage(content=_JUDGE_SYSTEM_PROMPT),
+            HumanMessage(
+                content=_JUDGE_USER_TEMPLATE.format(
+                    query=query,
+                    chunks=chunks_text,
+                    answer=answer,
+                )
+            ),
+        ]
+    )
     return result

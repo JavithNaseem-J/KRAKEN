@@ -6,13 +6,20 @@ import { ReasoningInspectorDrawer } from './components/ReasoningInspectorDrawer'
 import { SessionSidebar } from './components/SessionSidebar';
 import RuixenMoonChat from './components/ui/ruixen-moon-chat';
 import { useApprovalPoller } from './hooks/useApprovalPoller';
-import { runAgentQuery, streamAgentQuery, type AgentStreamEvent } from './services/api';
+import {
+  ApiRequestError,
+  pollSessionStatus,
+  streamAgentQuery,
+  type AgentStreamEvent,
+} from './services/api';
 import { usePersona } from './context/PersonaContext';
 import {
   isPendingApproval,
+  isRunningExecution,
   type ChatMessage as ChatMessageType,
   type ChatSession,
   type QueryResponse,
+  type RunResponse,
   type UserRole,
 } from './types/agent';
 
@@ -153,9 +160,8 @@ export default function App() {
   // Background polling while pending approval
   useApprovalPoller({
     pendingSessionId,
-    apiKey: activePersona.apiKey,
     onUpdate: (res) => {
-      if (!isPendingApproval(res)) {
+      if (!isPendingApproval(res) && !isRunningExecution(res)) {
         handleCompletedResponse(res.session_id, res);
       }
     },
@@ -198,14 +204,11 @@ export default function App() {
       const finalRes = await streamAgentQuery(
         text,
         sessionId,
-        activePersona.apiKey,
         (event) => setStreamingSteps((prev) => [...prev, event]),
-        activePersona.role,
-        activePersona.id,
       );
       setStreamingSteps([]);
 
-      if (finalRes) {
+      if (finalRes && !isRunningExecution(finalRes)) {
         if (isPendingApproval(finalRes)) {
           appendMessage(sessionId, {
             id: crypto.randomUUID(),
@@ -220,14 +223,19 @@ export default function App() {
           appendMessage(sessionId, queryResponseToMessage(finalRes));
         }
       } else {
-        // SSE ended without a response payload — fall back to poll
-        const res = await runAgentQuery(
-          '',
-          sessionId,
-          activePersona.apiKey,
-          activePersona.role,
-          activePersona.id,
-        );
+        // SSE ended without a terminal payload. Poll state without re-running actions.
+        let res: RunResponse = await pollSessionStatus(sessionId);
+        for (let attempt = 0; attempt < 4 && isRunningExecution(res); attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+          res = await pollSessionStatus(sessionId);
+        }
+        if (isRunningExecution(res)) {
+          throw new ApiRequestError(
+            'The response stream was interrupted. Your query is preserved; please retry.',
+            503,
+            'stream_interrupted',
+          );
+        }
         if (isPendingApproval(res)) {
           appendMessage(sessionId, {
             id: crypto.randomUUID(),
@@ -252,7 +260,19 @@ export default function App() {
     } catch (e: unknown) {
       setStreamingSteps([]);
       let errorMsg = 'The agent encountered an error processing your request. Please try again.';
-      if (axios.isAxiosError(e)) {
+      if (e instanceof ApiRequestError) {
+        if (e.status === 429) {
+          errorMsg = 'Demo query limit reached. Please retry after the rate-limit window resets.';
+        } else if (e.status === 400) {
+          errorMsg = 'The security gateway rejected this prompt. Rephrase it as a legitimate support request.';
+        } else if (e.status === 403) {
+          errorMsg = 'This simulated persona does not have permission for that operation.';
+        } else if (e.status === 503 || e.status === 504) {
+          errorMsg = 'The AI or retrieval provider is temporarily unavailable. Your query remains in this chat.';
+        } else {
+          errorMsg = e.message;
+        }
+      } else if (axios.isAxiosError(e)) {
         const status = e.response?.status;
         const data = e.response?.data as { error?: string; detail?: string } | undefined;
         const serverError = data?.error || data?.detail;
@@ -363,7 +383,6 @@ export default function App() {
       user_id: activePersona.id,
       label: activePersona.label,
       title: activePersona.title,
-      api_key: activePersona.apiKey,
     }),
     [activePersona],
   );

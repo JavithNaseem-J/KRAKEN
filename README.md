@@ -14,7 +14,8 @@ For a detailed topology and sequence diagrams of the HITL workflow, see the [Sys
 - **LangGraph State Machine**: ReAct agent orchestrator with state persistence, checkpointer recovery, and concurrency limits.
 - **Human-in-the-Loop (HITL) Security**: Automated risk-classification that pauses CRITICAL actions for human review via CSRF-protected Web UI and API endpoints.
 - **Append-Only Cryptographic Audit Trail**: Every executed action is signed into a SHA-256 hash-chain stored in PostgreSQL with keyset-paginated verification.
-- **Unified Qdrant Vector Engine**: Dense embeddings (BAAI/bge-small-en), knowledge base RAG, semantic caching, and user-isolated episodic memory.
+- **Unified Qdrant Vector Engine**: Qdrant Cloud Inference, grounded knowledge RAG, versioned semantic caching, and session-private uploads.
+- **Public Demo Isolation**: Signed one-hour anonymous sessions, server-validated personas, synthetic ticket overlays, query/write quotas, and no browser credentials.
 - **Production Observability**: Prometheus `/metrics` endpoints and Langfuse LLM monitoring.
 
 ---
@@ -42,7 +43,7 @@ uv sync --all-extras
 
 # 3. Configure environment variables
 cp .env.example .env
-# Edit .env to set LLM_API_KEY (e.g. gsk_...) and HITL_SERVICE_TOKEN (>= 32 chars)
+# Set Groq, Qdrant, Redis, Postgres, HITL, and demo-session secrets.
 
 # 4. Start the application
 python main.py
@@ -61,7 +62,7 @@ python scripts/ingest_knowledge.py
 python tests/evals/eval_harness.py --base-url http://localhost:8000
 ```
 
-Once running, access the React web frontend chat UI at [http://localhost:5173](http://localhost:5173) or the gateway API at [http://localhost:8000](http://localhost:8000).
+The production Docker image serves the React UI and API together at [http://localhost:8000](http://localhost:8000). A separate Vite server on port 5173 is optional during frontend development.
 
 ---
 
@@ -71,8 +72,8 @@ Once running, access the React web frontend chat UI at [http://localhost:5173](h
 |-----------|------------------|-------------|
 | **Gateway** | `:8000` (`src.api.gateway:app`) | Edge API Gateway, API Key Auth, Sliding-Window Rate Limiter, Prompt Guard |
 | **Orchestrator** | In-Process / `/run` | LangGraph ReAct Agent with checkpoint persistence and HITL interrupt |
-| **Knowledge** | In-Process / `/retrieve` | Vector Store RAG engine (Qdrant + BAAI/bge-small-en embeddings) |
-| **Action** | In-Process / `/execute` | Ticket Management & Safe Workspace Execution Sandbox |
+| **Knowledge** | In-Process / `/retrieve` | Qdrant Cloud Inference RAG with shared and session-private scopes |
+| **Action** | In-Process / `/execute` | Session-isolated synthetic ticket and containment adapters |
 | **Approval** | In-Process & `:8000/approve/*` | Human-in-the-Loop (HITL) Approval Queue, Details & Decision endpoints |
 | **Memory** | In-Process / `/session` | Short-term Redis Session Memory & Long-term Qdrant Episodic Memory |
 | **Audit** | In-Process / `/log` | Cryptographically chained, append-only PostgreSQL Audit Log |

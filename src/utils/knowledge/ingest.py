@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from qdrant_client.models import PointStruct
+from qdrant_client.models import Document, FieldCondition, Filter, PointIdsList, PointStruct, Range
 
 from src.utils.config import get_settings
 from src.utils.models.knowledge import KnowledgeChunkPayload, KnowledgeSource
@@ -18,9 +19,33 @@ log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
+async def cleanup_expired_private_points(client: AsyncQdrantClient) -> int:
+    """Idempotently delete expired session-private vectors."""
+    try:
+        points, _ = await client.scroll(
+            collection_name=settings.qdrant_collection_name,
+            scroll_filter=Filter(
+                must=[FieldCondition(key="expires_at", range=Range(lte=time.time()))]
+            ),
+            limit=256,
+            with_payload=False,
+            with_vectors=False,
+        )
+        if not points:
+            return 0
+        await client.delete(
+            collection_name=settings.qdrant_collection_name,
+            points_selector=PointIdsList(points=[point.id for point in points]),
+        )
+        return len(points)
+    except Exception as exc:
+        log.debug("ingest.expired_cleanup_skipped", error=exc.__class__.__name__)
+        return 0
+
+
 async def upsert_chunks_async(
     client: AsyncQdrantClient,
-    embedder: BGEEmbedder,
+    embedder: BGEEmbedder | None,
     chunks: list[dict[str, Any]],
     source_name: str,
     default_allowed_roles: list[str] | None = None,
@@ -31,7 +56,16 @@ async def upsert_chunks_async(
         return 0
 
     doc_texts = [c.get("document") or c.get("content", "") for c in chunks]
-    vectors = embedder.embed_documents(doc_texts)
+    if settings.qdrant_url and settings.qdrant_cloud_inference_enabled:
+        vectors: list[Any] = [
+            Document(text=text, model=settings.qdrant_inference_model) for text in doc_texts
+        ]
+        embedding_model = settings.qdrant_inference_model
+    else:
+        if embedder is None:
+            raise RuntimeError("A local embedder is required when cloud inference is disabled.")
+        vectors = embedder.embed_documents(doc_texts)
+        embedding_model = settings.embedding_model
 
     roles = default_allowed_roles or ["public"]
 
@@ -56,6 +90,7 @@ async def upsert_chunks_async(
         )
 
         chunk_roles = c.get("allowed_roles") or meta.get("allowed_roles") or roles
+        scope = str(c.get("scope") or meta.get("demo_session_id") or "shared")
 
         payload_obj = KnowledgeChunkPayload(
             content=c["document"],
@@ -65,6 +100,11 @@ async def upsert_chunks_async(
             title=str(meta.get("title") or meta.get("subject") or ""),
             category=str(meta.get("category") or "general"),
             allowed_roles=chunk_roles,
+            embedding_model=embedding_model,
+            collection_version=settings.knowledge_collection_version,
+            scope=scope,
+            expires_at=c.get("expires_at") or meta.get("expires_at"),
+            untrusted_evidence=bool(c.get("untrusted_evidence", False)),
             metadata=meta,
         )
 
@@ -85,7 +125,7 @@ async def upsert_chunks_async(
 
 
 def extract_text_from_file_bytes(filename: str, file_bytes: bytes) -> str:
-    """Extract plain text from uploaded PDF, Docx, Markdown, or plain text bytes."""
+    """Extract validated PDF, Markdown, or UTF-8 plain text."""
     ext = filename.split(".")[-1].lower() if "." in filename else ""
 
     if ext == "pdf":
@@ -99,30 +139,21 @@ def extract_text_from_file_bytes(filename: str, file_bytes: bytes) -> str:
             if text.strip():
                 return text
         except Exception as exc:
-            log.warning("ingest.pdf_extraction_fallback", error=str(exc))
-        return file_bytes.decode("utf-8", errors="ignore")
+            raise ValueError("Invalid or unreadable PDF.") from exc
 
-    elif ext == "docx":
-        try:
-            import io
-
-            import docx
-
-            doc = docx.Document(io.BytesIO(file_bytes))
-            return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
-        except Exception as exc:
-            log.warning("ingest.docx_extraction_fallback", error=str(exc))
-        return file_bytes.decode("utf-8", errors="ignore")
-
-    return file_bytes.decode("utf-8", errors="ignore")
+    if ext not in {"txt", "md", "markdown"}:
+        raise ValueError("Unsupported upload type.")
+    return file_bytes.decode("utf-8", errors="strict")
 
 
 async def ingest_uploaded_file_async(
     client: AsyncQdrantClient,
-    embedder: BGEEmbedder,
+    embedder: BGEEmbedder | None,
     filename: str,
     file_bytes: bytes,
     allowed_roles: list[str] | None = None,
+    demo_session_id: str | None = None,
+    expires_at: float | None = None,
 ) -> int:
     """
     Parse an uploaded document file, split into semantic chunks, embed,
@@ -130,7 +161,7 @@ async def ingest_uploaded_file_async(
     """
     raw_text = extract_text_from_file_bytes(filename, file_bytes)
     if not raw_text.strip():
-        log.warning("ingest.uploaded_file_empty", filename=filename)
+        log.warning("ingest.uploaded_file_empty")
         return 0
 
     roles = allowed_roles or ["public"]
@@ -157,6 +188,9 @@ async def ingest_uploaded_file_async(
                 "id": cid,
                 "document": text_str,
                 "allowed_roles": roles,
+                "scope": demo_session_id or "shared",
+                "expires_at": expires_at,
+                "untrusted_evidence": True,
                 "metadata": {
                     "file": filename,
                     "document_id": doc_id,
@@ -164,6 +198,11 @@ async def ingest_uploaded_file_async(
                     "category": "user_uploaded",
                     "chunk_index": idx,
                     "allowed_roles": roles,
+                    "demo_session_id": demo_session_id,
+                    "expires_at": expires_at,
+                    "untrusted_evidence": True,
+                    "embedding_model": settings.qdrant_inference_model,
+                    "collection_version": settings.knowledge_collection_version,
                 },
             }
         )
@@ -185,7 +224,11 @@ async def ensure_collection(
     """Ensure the Qdrant collection exists with the specified vector dimension."""
     from qdrant_client.models import Distance, PayloadSchemaType, VectorParams
 
-    dim = vector_size or settings.embedding_dim
+    dim = vector_size or (
+        settings.qdrant_inference_dim
+        if settings.qdrant_url and settings.qdrant_cloud_inference_enabled
+        else settings.embedding_dim
+    )
     if not await client.collection_exists(collection_name):
         await client.create_collection(
             collection_name=collection_name,
@@ -206,32 +249,41 @@ async def ensure_collection(
                 configured_dim=dim,
             )
 
-    try:
-        await client.create_payload_index(
-            collection_name=collection_name,
-            field_name="source",
-            field_schema=PayloadSchemaType.KEYWORD,
-        )
-        await client.create_payload_index(
-            collection_name=collection_name,
-            field_name="metadata.ticket_id",
-            field_schema=PayloadSchemaType.KEYWORD,
-        )
-    except Exception as exc:
-        log.debug("qdrant.payload_index_exists_or_error", error=str(exc))
+    payload_indexes = {
+        "source": PayloadSchemaType.KEYWORD,
+        "scope": PayloadSchemaType.KEYWORD,
+        "allowed_roles": PayloadSchemaType.KEYWORD,
+        "embedding_model": PayloadSchemaType.KEYWORD,
+        "collection_version": PayloadSchemaType.KEYWORD,
+        "metadata.ticket_id": PayloadSchemaType.KEYWORD,
+        "expires_at": PayloadSchemaType.FLOAT,
+    }
+    for field_name, field_schema in payload_indexes.items():
+        try:
+            await client.create_payload_index(
+                collection_name=collection_name,
+                field_name=field_name,
+                field_schema=field_schema,
+            )
+        except Exception as exc:
+            log.debug(
+                "qdrant.payload_index_skipped",
+                field=field_name,
+                error=exc.__class__.__name__,
+            )
 
     return True
 
 
-async def run_ingest_async(client: AsyncQdrantClient, embedder: BGEEmbedder) -> dict[str, int]:
+async def run_ingest_async(
+    client: AsyncQdrantClient, embedder: BGEEmbedder | None
+) -> dict[str, int]:
     """Execute full knowledge loading and ingestion for all three sources."""
     from .loaders.faq_loader import load_faq_chunks
     from .loaders.sla_loader import load_sla_chunks
     from .loaders.ticket_loader import load_ticket_chunks
 
-    await ensure_collection(
-        client, settings.qdrant_collection_name, vector_size=settings.embedding_dim
-    )
+    await ensure_collection(client, settings.qdrant_collection_name)
 
     counts: dict[str, int] = {}
 

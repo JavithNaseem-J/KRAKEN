@@ -12,7 +12,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from src.agent.nodes.memory_writer import memory_writer_node
+from src.agent.nodes.memory_writer import _persist_memory_task, memory_writer_node
 from src.agent.nodes.retriever import retriever_node
 from src.api.orchestrator import app
 
@@ -45,6 +45,23 @@ class TestRetrieverNode:
         args, kwargs = mock_client.post.call_args
         assert "X-Service-Token" in kwargs["headers"]
 
+    @patch("src.agent.nodes.retriever.internal_request")
+    @patch("src.agent.nodes.retriever._fetch_knowledge", new_callable=AsyncMock)
+    async def test_demo_session_skips_shared_episodic_memory(
+        self, mock_fetch: AsyncMock, mock_internal: AsyncMock
+    ) -> None:
+        mock_fetch.return_value = []
+        state = {
+            "session_id": "demo-session",
+            "demo_session_id": "demo-session",
+            "user_id": "alice",
+            "user_message": "What happened earlier?",
+        }
+
+        await retriever_node(state)
+
+        mock_internal.assert_not_awaited()
+
 
 # ── Memory Writer Node Tests ──────────────────────────────────────────────────
 class TestMemoryWriterNode:
@@ -58,6 +75,24 @@ class TestMemoryWriterNode:
         }
         res = await memory_writer_node(state)
         assert res == {}
+
+    @patch("src.utils.http_client.post_with_retry", new_callable=AsyncMock)
+    async def test_demo_session_persists_only_short_term_memory(self, mock_post: AsyncMock) -> None:
+        await _persist_memory_task(
+            AsyncMock(),
+            "demo-session",
+            "alice",
+            [],
+            "Question",
+            "Answer",
+            "auto_respond",
+            None,
+            None,
+            store_episodic=False,
+        )
+
+        assert mock_post.await_count == 1
+        assert "/session/demo-session" in mock_post.await_args.args[1]
 
 
 # ── API Endpoint Tests ────────────────────────────────────────────────────────
@@ -127,6 +162,3 @@ class TestOrchestratorAPI:
         counts = prune_stale_checkpoints(mock_pool)
         assert "checkpoints" in counts
         assert "checkpoint_writes" in counts
-
-
-

@@ -42,10 +42,13 @@ templates = Jinja2Templates(
 
 # Request Models
 class PendingApprovalRequest(BaseModel):
+    approval_id: str | None = None
     action_name: str
     payload: dict[str, Any] = Field(default_factory=dict)
     reasoning: str = ""
     session_id: str
+    initiator_id: str = ""
+    initiator_role: str = "end_user"
 
 
 # Helper: Notify Orchestrator Callback with Retry/Backoff
@@ -204,6 +207,9 @@ async def create_pending(
         payload=req.payload,
         reasoning=req.reasoning,
         session_id=req.session_id,
+        initiator_id=req.initiator_id,
+        initiator_role=req.initiator_role,
+        approval_id=req.approval_id,
     )
 
     approval_url = print_approval_notice(
@@ -239,6 +245,8 @@ async def approval_details(approval_id: str) -> dict[str, Any]:
         "session_id": entry.get("session_id", ""),
         "status": entry.get("status", "PENDING"),
         "created_at": entry.get("created_at"),
+        "initiator_id": entry.get("initiator_id", ""),
+        "initiator_role": entry.get("initiator_role", "end_user"),
         "csrf_token": csrf_token,
     }
 
@@ -282,6 +290,7 @@ async def submit_decision(
     csrf_token: str = Form(...),
     approver_role: str | None = Form(None),
     approver_id: str | None = Form(None),
+    expected_session_id: str | None = Form(None),
 ) -> HTMLResponse | JSONResponse:
     """
     Process the approve/reject form. Resolves the queue entry,
@@ -301,7 +310,22 @@ async def submit_decision(
 
     # Retrieve entry to validate action clearance before resolving
     entry_peek = await queue.get(approval_id)
+    if expected_session_id and (
+        entry_peek is None
+        or not secrets.compare_digest(str(entry_peek.get("session_id", "")), expected_session_id)
+    ):
+        raise HTTPException(status_code=404, detail="Approval request not found.")
     action_name = entry_peek.get("action_name", "") if entry_peek else ""
+    initiator_id = entry_peek.get("initiator_id", "") if entry_peek else ""
+    if (
+        decision == "approve"
+        and initiator_id
+        and secrets.compare_digest(initiator_id, approver_id or "")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="The initiating actor cannot approve the same critical action.",
+        )
 
     # Declarative Policy-as-Code Four-Eyes clearance evaluation
     policy_eval = get_policy_engine().evaluate_approval_decision(

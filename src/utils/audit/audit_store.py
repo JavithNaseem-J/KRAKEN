@@ -7,6 +7,7 @@ from typing import Any
 import asyncpg
 import structlog
 
+from src.utils.logging import summarize_audit_data
 from src.utils.models.audit import AuditLogRequest
 
 log = structlog.get_logger(__name__)
@@ -28,6 +29,13 @@ class AuditStore:
         Insert one audit record with SHA-256 hash chain link. Returns the new row id (UUID/string).
         Raises on DB failure — caller decides how to handle.
         """
+        entry = entry.model_copy(
+            update={
+                "reasoning": None,
+                "payload": summarize_audit_data(entry.payload),
+                "result": summarize_audit_data(entry.result),
+            }
+        )
         payload_str = json.dumps(entry.payload or {}, sort_keys=True)
         result_str = json.dumps(entry.result or {}, sort_keys=True)
 
@@ -35,6 +43,7 @@ class AuditStore:
             self._pool.acquire() as conn,
             conn.transaction(isolation="serializable"),
         ):
+            await conn.execute("DELETE FROM audit_log WHERE expires_at <= NOW()")
             # 1. Fetch previous entry_hash to form hash chain
             prev_row = await conn.fetchrow(
                 "SELECT entry_hash FROM audit_log WHERE entry_hash IS NOT NULL ORDER BY timestamp DESC, id DESC LIMIT 1"
@@ -153,7 +162,7 @@ class AuditStore:
         Recompute SHA-256 hash chains using keyset pagination (500 records/page).
         Returns {"valid": True, "count": N} or {"valid": False, "broken_at_id": id, ...}.
         """
-        previous_hash = _GENESIS_HASH
+        previous_hash: str | None = None
         total_count = 0
         last_timestamp = None
         last_id = None
@@ -189,6 +198,8 @@ class AuditStore:
 
                 for row in rows:
                     total_count += 1
+                    if previous_hash is None:
+                        previous_hash = row["previous_hash"] or _GENESIS_HASH
                     payload_data = row["payload"]
                     if isinstance(payload_data, str):
                         try:

@@ -58,6 +58,24 @@ class Settings(BaseSettings):
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
     semantic_cache_enabled: bool = True
+    qdrant_cloud_inference_enabled: bool = True
+    qdrant_inference_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    qdrant_inference_dim: int = 384
+    knowledge_collection_version: str = "v2"
+
+    # Public portfolio demo
+    demo_session_secret: str = "dev-demo-session-secret-change-before-prod"
+    demo_session_ttl_seconds: int = 3600
+    demo_audit_ttl_seconds: int = 604800
+    demo_query_limit: int = 20
+    demo_query_window_seconds: int = 3600
+    demo_write_limit: int = 5
+    demo_upload_max_bytes: int = 2_097_152
+    demo_upload_max_files: int = 3
+    demo_session_cookie_name: str = "kraken_demo_session"
+    demo_cookie_secure: bool = False
+    capability_probe_timeout_seconds: float = 3.0
+    provider_circuit_breaker_seconds: float = 30.0
 
     @model_validator(mode="before")
     @classmethod
@@ -81,7 +99,7 @@ class Settings(BaseSettings):
                 )
             if not values.get("embedding_api_key"):
                 values["embedding_api_key"] = (
-                    os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY") or llm_key.strip()
+                    os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
                 )
             if not values.get("embedding_dim"):
                 model_name = str(values.get("embedding_model", "text-embedding-3-small")).lower()
@@ -234,10 +252,34 @@ class Settings(BaseSettings):
                 "dev-gateway-key-change-in-production",
                 "dev-hitl-token-change-in-production-min32chars",
             }
-            if self.gateway_api_keys in default_secrets:
+            if self.gateway_api_keys in default_secrets or "dev-key-" in self.gateway_api_keys:
                 raise ValueError(
                     f"Production environment (ENVIRONMENT={self.environment!r}) cannot use default development tokens or secrets. "
                     "Please set secure custom secrets in .env before running in production."
+                )
+            if self.demo_session_secret == "dev-demo-session-secret-change-before-prod":
+                raise ValueError(
+                    "Production cannot use the shipped demo_session_secret. "
+                    "Set a unique DEMO_SESSION_SECRET of at least 32 characters."
+                )
+            if len(self.demo_session_secret) < 32:
+                raise ValueError(
+                    "demo_session_secret must be at least 32 characters in production."
+                )
+            if not self.demo_cookie_secure:
+                raise ValueError("demo_cookie_secure must be enabled in production.")
+
+            required_providers = {
+                "llm_api_key": self.llm_api_key,
+                "qdrant_url": self.qdrant_url,
+                "qdrant_api_key": self.qdrant_api_key,
+                "redis_url": self.redis_url,
+                "postgres_url": self.postgres_url,
+            }
+            missing = sorted(name for name, value in required_providers.items() if not value)
+            if missing:
+                raise ValueError(
+                    "Production public demo requires configured providers: " + ", ".join(missing)
                 )
         return self
 

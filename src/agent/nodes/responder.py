@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
-from src.utils.llm import get_llm
+from src.utils.llm import get_llm, invoke_llm
 
 log = structlog.get_logger(__name__)
 
@@ -79,6 +79,17 @@ async def responder_node(state: GraphState) -> dict:
     evidence = state.get("evidence")
     error = state.get("error")
 
+    if state.get("insufficient_knowledge") and selected_action in (None, "auto_respond"):
+        final_answer = (
+            "KRAKEN does not have enough permitted internal evidence to answer this request. "
+            "No operational action was performed."
+        )
+        return {
+            "final_answer": final_answer,
+            "action_explanation": "Grounded refusal: insufficient permitted evidence.",
+            "messages": [{"role": "assistant", "content": final_answer}],
+        }
+
     early_answer = (
         _fallback_answer_from_action_result(action_result)
         if selected_action == "get_ticket_status"
@@ -129,32 +140,23 @@ async def responder_node(state: GraphState) -> dict:
 
     try:
         llm = get_llm()
-        response = await llm.ainvoke(
+        response = await invoke_llm(
+            llm,
             [
                 SystemMessage(content=system_prompt_to_use),
                 HumanMessage(content=human_content),
-            ]
+            ],
         )
         final_answer = response.content.strip()
     except Exception as exc:
-        log.error("responder.llm_error", error=str(exc))
-        err_msg = str(exc)
+        log.error("responder.llm_error", error=exc.__class__.__name__)
         fallback_answer = _fallback_answer_from_action_result(action_result)
         if fallback_answer:
             final_answer = fallback_answer
-        elif (
-            "llm_api_key must be configured" in err_msg
-            or "API key" in err_msg
-            or "api_key" in err_msg
-        ):
-            final_answer = (
-                "⚠️ **LLM Service Unconfigured**: `LLM_API_KEY` is missing in backend environment variables. "
-                "Please add `LLM_API_KEY` (or `GROQ_API_KEY` / `OPENAI_API_KEY`) in your Render Dashboard environment variables."
-            )
         else:
             final_answer = (
-                f"I encountered an issue composing a response: {err_msg}. "
-                "Please check your LLM provider credentials or try again."
+                "The AI provider is temporarily unavailable, so KRAKEN cannot compose a "
+                "grounded answer right now. No operational action was performed. Please retry shortly."
             )
 
     if not final_answer or not final_answer.strip():

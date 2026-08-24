@@ -7,13 +7,19 @@ from typing import Any
 
 import structlog
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import (
+    Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PayloadSchemaType,
+    PointStruct,
+    VectorParams,
+)
 
 from src.utils.config import get_settings
 
 log = structlog.get_logger(__name__)
-settings = get_settings()
-
 SEMANTIC_CACHE_COLLECTION = "kraken_semantic_cache"
 SIMILARITY_THRESHOLD = 0.92
 
@@ -22,8 +28,12 @@ def create_async_qdrant_client() -> AsyncQdrantClient:
     """Factory returning a configured AsyncQdrantClient (remote Cloud or in-memory fallback)."""
     settings = get_settings()
     if settings.qdrant_url:
-        log.info("qdrant.remote_client", url=settings.qdrant_url)
-        return AsyncQdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
+        log.info("qdrant.remote_client")
+        return AsyncQdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+            cloud_inference=settings.qdrant_cloud_inference_enabled,
+        )
     log.info("qdrant.in_memory_client")
     return AsyncQdrantClient(location=":memory:")
 
@@ -56,18 +66,21 @@ class SemanticCache:
     async def init(self) -> None:
         """Ensure the cache collection exists. Must be awaited during service startup."""
         settings = get_settings()
+        vector_dim = (
+            settings.qdrant_inference_dim
+            if settings.qdrant_url and settings.qdrant_cloud_inference_enabled
+            else settings.embedding_dim
+        )
         try:
             if not await self._client.collection_exists(SEMANTIC_CACHE_COLLECTION):
                 await self._client.create_collection(
                     collection_name=SEMANTIC_CACHE_COLLECTION,
-                    vectors_config=VectorParams(
-                        size=settings.embedding_dim, distance=Distance.COSINE
-                    ),
+                    vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE),
                 )
                 log.info(
                     "semantic_cache.collection_created",
                     collection=SEMANTIC_CACHE_COLLECTION,
-                    size=settings.embedding_dim,
+                    size=vector_dim,
                 )
             else:
                 info = await self._client.get_collection(collection_name=SEMANTIC_CACHE_COLLECTION)
@@ -75,24 +88,48 @@ class SemanticCache:
                 existing_size = getattr(vectors, "size", None)
                 if isinstance(vectors, dict):
                     existing_size = vectors.get("size")
-                if existing_size and existing_size != settings.embedding_dim:
+                if existing_size and existing_size != vector_dim:
                     log.error(
                         "semantic_cache.dimension_mismatch",
                         existing_dim=existing_size,
-                        configured_dim=settings.embedding_dim,
+                        configured_dim=vector_dim,
+                    )
+            for field_name in ("embedding_model", "knowledge_version", "role", "scope"):
+                try:
+                    await self._client.create_payload_index(
+                        collection_name=SEMANTIC_CACHE_COLLECTION,
+                        field_name=field_name,
+                        field_schema=PayloadSchemaType.KEYWORD,
+                    )
+                except Exception as exc:
+                    log.debug(
+                        "semantic_cache.payload_index_skipped",
+                        field=field_name,
+                        error=exc.__class__.__name__,
                     )
         except Exception as exc:
             log.warning("semantic_cache.init_failed", error=str(exc))
 
-    async def get(self, query_vector: list[float]) -> dict[str, Any] | None:
+    async def get(
+        self, query_vector: Any, context: dict[str, str] | None = None
+    ) -> dict[str, Any] | None:
         """Search for semantically similar cached response. Non-blocking; fails open."""
-        if not settings.semantic_cache_enabled:
+        if not get_settings().semantic_cache_enabled:
             return None
 
         try:
+            query_filter = None
+            if context:
+                query_filter = Filter(
+                    must=[
+                        FieldCondition(key=key, match=MatchValue(value=value))
+                        for key, value in context.items()
+                    ]
+                )
             result = await self._client.query_points(
                 collection_name=SEMANTIC_CACHE_COLLECTION,
                 query=query_vector,
+                query_filter=query_filter,
                 limit=1,
                 with_payload=True,
             )
@@ -106,7 +143,6 @@ class SemanticCache:
                 log.info(
                     "semantic_cache.hit",
                     score=hits[0].score,
-                    query=payload.get("query", "")[:50],
                 )
                 return payload.get("response")
         except Exception as exc:
@@ -114,10 +150,14 @@ class SemanticCache:
         return None
 
     async def put(
-        self, query_vector: list[float], query_text: str, response: dict[str, Any]
+        self,
+        query_vector: Any,
+        query_text: str,
+        response: dict[str, Any],
+        context: dict[str, str] | None = None,
     ) -> None:
         """Store query vector and response in semantic cache. Non-blocking; fails open."""
-        if not settings.semantic_cache_enabled:
+        if not get_settings().semantic_cache_enabled:
             return
 
         try:
@@ -136,11 +176,12 @@ class SemanticCache:
                             "query": query_text,
                             "response": response,
                             "created_at": time.time(),
+                            **(context or {}),
                         },
                     )
                 ],
             )
-            log.info("semantic_cache.stored", query=query_text[:50])
+            log.info("semantic_cache.stored")
         except Exception as exc:
             log.warning("semantic_cache.put_error", error=str(exc))
 

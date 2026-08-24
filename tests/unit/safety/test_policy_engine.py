@@ -3,6 +3,7 @@ from src.safety.policy_engine import (
     ROLE_CLEARANCE_MAP,
     ClearanceLevel,
     get_policy_engine,
+    should_override_to_auto_respond,
 )
 from src.utils.registry import ACTION_POLICY_METADATA, REGISTRY
 
@@ -22,7 +23,7 @@ def test_action_staging_evaluation():
     # End user can stage ticket creation
     dec = engine.evaluate_action_staging("create_ticket", "end_user")
     assert dec.allowed is True
-    assert dec.requires_four_eyes is True
+    assert dec.requires_four_eyes is False
 
     # End user CANNOT stage perimeter IP quarantine
     dec = engine.evaluate_action_staging("quarantine_ip", "end_user")
@@ -50,12 +51,36 @@ def test_action_registry_and_policy_metadata_are_one_to_one():
         assert policy.description == REGISTRY[name].description
 
 
+def test_write_actions_require_explicit_user_intent() -> None:
+    assert should_override_to_auto_respond("Summarize this uploaded note.", "quarantine_ip") == (
+        True,
+        False,
+    )
+    assert should_override_to_auto_respond("Quarantine IP 203.0.113.10.", "quarantine_ip") == (
+        False,
+        False,
+    )
+    assert should_override_to_auto_respond("Please escalate this issue.", "escalate") == (
+        True,
+        False,
+    )
+    assert should_override_to_auto_respond("Please escalate ticket TCK-1001.", "escalate") == (
+        False,
+        False,
+    )
+    assert should_override_to_auto_respond(
+        "Create an IT ticket for a VPN issue.", "create_ticket"
+    ) == (False, False)
+
+
 def test_four_eyes_clearance_evaluation():
     """Verify Four-Eyes dual-authorization approval evaluation."""
     engine = get_policy_engine()
 
     # Tier 1 analyst cannot authorize critical operational actions
-    eval_tier1 = engine.evaluate_approval_decision("quarantine_ip", "tier1_analyst", decision="approve")
+    eval_tier1 = engine.evaluate_approval_decision(
+        "quarantine_ip", "tier1_analyst", decision="approve"
+    )
     assert eval_tier1.allowed is False
     assert eval_tier1.status_code == 403
     assert "Clearance Violation" in eval_tier1.reason
@@ -66,7 +91,9 @@ def test_four_eyes_clearance_evaluation():
     assert eval_user.status_code == 403
 
     # Incident Commander can authorize IP quarantine and account unlock
-    eval_ic = engine.evaluate_approval_decision("quarantine_ip", "incident_commander", decision="approve")
+    eval_ic = engine.evaluate_approval_decision(
+        "quarantine_ip", "incident_commander", decision="approve"
+    )
     assert eval_ic.allowed is True
     assert eval_ic.status_code == 200
 
@@ -76,7 +103,9 @@ def test_four_eyes_clearance_evaluation():
     assert eval_admin.status_code == 200
 
     # Rejections are always allowed regardless of role
-    eval_reject = engine.evaluate_approval_decision("quarantine_ip", "tier1_analyst", decision="reject")
+    eval_reject = engine.evaluate_approval_decision(
+        "quarantine_ip", "tier1_analyst", decision="reject"
+    )
     assert eval_reject.allowed is True
 
 

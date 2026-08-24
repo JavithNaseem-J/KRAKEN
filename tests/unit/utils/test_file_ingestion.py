@@ -1,3 +1,5 @@
+import pytest
+
 from src.utils.knowledge.ingest import extract_text_from_file_bytes
 
 
@@ -8,7 +10,7 @@ def test_extract_text_from_txt_and_md():
     assert "INC-9002" in extracted
 
 
-def test_extract_text_fallback():
+def test_disallowed_extension_is_rejected():
     raw_bytes = b"Plain text log entry: Unauthorized root access attempt."
-    extracted = extract_text_from_file_bytes("server.log", raw_bytes)
-    assert "Unauthorized root access attempt" in extracted
+    with pytest.raises(ValueError, match="Unsupported"):
+        extract_text_from_file_bytes("server.log", raw_bytes)

@@ -22,6 +22,7 @@ from src.tools.write_tool import write_json_file
 from src.utils.audit.client import fire_audit_log
 from src.utils.auth import verify_service_token
 from src.utils.config import get_settings
+from src.utils.demo_tickets import DemoTicketRepository, demo_ticket_repository
 from src.utils.exceptions import (
     ActionExecutionError,
     ActionNotFoundError,
@@ -121,21 +122,30 @@ async def execute(
     error_msg: str | None = None
 
     try:
-        result_data = await asyncio.to_thread(_dispatch, body.action_name, body.payload)
+        if body.demo_session_id:
+            result_data = await asyncio.to_thread(
+                _dispatch_demo,
+                body.action_name,
+                body.payload,
+                body.demo_session_id,
+                demo_ticket_repository,
+            )
+        else:
+            result_data = await asyncio.to_thread(_dispatch, body.action_name, body.payload)
         status_str = "success"
         log.info("action.success", action=body.action_name, session_id=body.session_id)
 
     except (PathTraversalError, InvalidExtensionError) as exc:
-        error_msg = str(exc)
-        log.error("action.safety_violation", action=body.action_name, error=error_msg)
+        error_msg = "Action rejected by safety policy."
+        log.error("action.safety_violation", action=body.action_name, error=exc.__class__.__name__)
 
     except ActionExecutionError as exc:
-        error_msg = exc.message
-        log.error("action.execution_error", action=body.action_name, error=error_msg)
+        error_msg = "Action execution failed."
+        log.error("action.execution_error", action=body.action_name, error=exc.__class__.__name__)
 
     except Exception as exc:
-        error_msg = f"Unexpected error: {exc}"
-        log.error("action.unexpected_error", action=body.action_name, error=error_msg)
+        error_msg = "Action execution failed."
+        log.error("action.unexpected_error", action=body.action_name, error=exc.__class__.__name__)
 
     # 3. Audit log (non-blocking BackgroundTask)
     client = get_app_http_client(app)
@@ -226,3 +236,69 @@ def _dispatch(action_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not handler:
         raise ActionExecutionError(f"No handler registered for action '{action_name}'.")
     return handler(payload)
+
+
+def _dispatch_demo(
+    action_name: str,
+    payload: dict[str, Any],
+    session_id: str,
+    repository: DemoTicketRepository,
+) -> dict[str, Any]:
+    """Execute only synthetic, session-scoped public-demo adapters."""
+    validate_action_payload(action_name, payload)
+    if action_name == "write_json_file":
+        raise ActionExecutionError("Filesystem actions are unavailable in Demo Mode.")
+    if action_name == "create_ticket":
+        return repository.create(session_id, payload)
+    if action_name == "get_ticket_status":
+        ticket = repository.get(session_id, str(payload.get("ticket_id", "")))
+        return {
+            "success": True,
+            "action": action_name,
+            "simulated": True,
+            **ticket,
+        }
+    if action_name == "close":
+        return repository.mutate(
+            session_id,
+            str(payload.get("ticket_id", "")),
+            status="closed",
+            updates={"closure_reason": str(payload.get("reason", ""))},
+        )
+    if action_name == "escalate":
+        return repository.mutate(
+            session_id,
+            str(payload.get("ticket_id", "")),
+            status="escalated",
+            updates={"escalation_reason": str(payload.get("reason", ""))},
+        )
+    if action_name == "request_info":
+        return repository.mutate(
+            session_id,
+            str(payload.get("ticket_id", "")),
+            status="pending",
+            updates={"info_requested": str(payload.get("info_requested", ""))},
+        )
+    if action_name == "quarantine_ip":
+        repository.consume_write(session_id)
+        return quarantine_ip_handler(
+            ip=str(payload.get("ip", "")),
+            reason=str(payload.get("reason", "")),
+            evidence=str(payload.get("evidence", "")),
+        )
+    if action_name == "unlock_account":
+        repository.consume_write(session_id)
+        return unlock_account_handler(
+            user_email=str(payload.get("user_email") or payload.get("user") or ""),
+            reason=str(payload.get("reason", "")),
+            evidence=str(payload.get("evidence", "")),
+        )
+    if action_name == "auto_respond":
+        return {
+            "success": True,
+            "action": "auto_respond",
+            "simulated": True,
+            "response": str(payload.get("response_text", "")),
+            "evidence_cited": str(payload.get("evidence", "")),
+        }
+    raise ActionExecutionError(f"Action '{action_name}' is unavailable in Demo Mode.")

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
-from qdrant_client.models import FieldCondition, Filter, MatchAny
+from qdrant_client.models import Document, FieldCondition, Filter, MatchAny
 
 from src.safety.policy_engine import get_policy_engine
+from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
 from src.utils.models.knowledge import (
     KnowledgeChunk,
@@ -22,6 +24,7 @@ if TYPE_CHECKING:
     from src.utils.embedder import BGEEmbedder
 
 log = structlog.get_logger(__name__)
+settings = get_settings()
 
 _STOP_WORDS: frozenset[str] = frozenset(
     {
@@ -224,7 +227,6 @@ class KnowledgeRetriever:
         """
         log.info(
             "retriever.start",
-            query=request.query,
             sources=request.sources,
             top_k=request.top_k,
         )
@@ -235,11 +237,22 @@ class KnowledgeRetriever:
                 FieldCondition(
                     key="source",
                     match=MatchAny(any=source_values),
-                )
+                ),
+                FieldCondition(
+                    key="scope",
+                    match=MatchAny(any=["shared", request.session_id]),
+                ),
+                FieldCondition(
+                    key="allowed_roles",
+                    match=MatchAny(any=["public", request.user_role]),
+                ),
             ]
         )
 
-        query_vector = await asyncio.to_thread(self._embedder.embed_query, request.query)
+        if settings.qdrant_url and settings.qdrant_cloud_inference_enabled:
+            query_vector: Any = Document(text=request.query, model=settings.qdrant_inference_model)
+        else:
+            query_vector = await asyncio.to_thread(self._embedder.embed_query, request.query)
 
         hits: list[Any] = []
         client = cast(Any, self._client)
@@ -264,28 +277,27 @@ class KnowledgeRetriever:
                     limit=limit_fetch,
                 )
         except Exception as exc:
-            log.warning("retriever.query_filter_failed_fallback_unfiltered", error=str(exc))
-            try:
-                if hasattr(client, "query_points"):
-                    res = await client.query_points(
-                        collection_name=self.collection_name,
-                        query=query_vector,
-                        limit=limit_fetch,
-                        with_payload=True,
-                    )
-                    hits = getattr(res, "points", [])
-                else:
-                    hits = await client.search(
-                        collection_name=self.collection_name,
-                        query_vector=query_vector,
-                        limit=limit_fetch,
-                    )
-            except Exception as exc2:
-                log.error("retriever.unfiltered_query_error", error=str(exc2))
-                hits = []
+            log.error("retriever.filtered_query_error", error=exc.__class__.__name__)
+            raise
 
         # If explicit ticket IDs (e.g. TCK-1001 or T-1001) are in query, expand variants (e.g. TCK-1001, T-1001)
         ticket_ids_in_query = TICKET_ID_REGEX.findall(request.query)
+        t_lowers: list[str] = []
+        for ticket_id in ticket_ids_in_query:
+            t_lowers.append(ticket_id.lower())
+            match = re.search(r"(\d+)", ticket_id)
+            if match:
+                number = match.group(1)
+                t_lowers.extend(
+                    [
+                        f"tck-{number}",
+                        f"t-{number}",
+                        f"tk-{number}",
+                        f"tck{number}",
+                        f"t{number}",
+                        number,
+                    ]
+                )
         if ticket_ids_in_query:
             try:
                 expanded_ids = set(ticket_ids_in_query)
@@ -324,7 +336,36 @@ class KnowledgeRetriever:
                         hits.insert(0, p)
                         existing_ids.add(p.id)
             except Exception as scroll_exc:
-                log.warning("retriever.ticket_id_scroll_failed", error=str(scroll_exc))
+                log.warning(
+                    "retriever.ticket_id_scroll_failed", error=scroll_exc.__class__.__name__
+                )
+
+        # Defense in depth before any rank fusion: role, private scope, expiry,
+        # and explicit-ticket boundaries must never depend on post-ranking code.
+        permitted_hits: list[Any] = []
+        user_role = (request.user_role or "public").lower().strip()
+        now = time.time()
+        for hit in hits:
+            payload = hit.payload or {}
+            scope = str(payload.get("scope") or "shared")
+            if scope not in {"shared", request.session_id}:
+                continue
+            expiry = payload.get("expires_at")
+            if expiry is not None and float(expiry) <= now:
+                continue
+            raw_roles = payload.get("allowed_roles") or ["public"]
+            roles = [str(role).lower().strip() for role in raw_roles]
+            if "public" not in roles and user_role not in roles and user_role != "admin":
+                continue
+            if ticket_ids_in_query and str(payload.get("source", "")).lower() == "tickets":
+                content = str(payload.get("content", "")).lower()
+                ticket_id = str((payload.get("metadata") or {}).get("ticket_id") or "").lower()
+                if not any(
+                    candidate in content or candidate == ticket_id for candidate in t_lowers
+                ):
+                    continue
+            permitted_hits.append(hit)
+        hits = permitted_hits
 
         # RRF Hybrid Fusion
         rrf_candidates = _reciprocal_rank_fusion(hits, request.query, top_k=request.top_k * 2)
@@ -333,17 +374,6 @@ class KnowledgeRetriever:
         reranked_hits = _heuristic_rerank(request.query, rrf_candidates)[: request.top_k]
 
         # Post-filter 1: Ticket Isolation & RBAC Security Clearance
-        t_lowers = []
-        if ticket_ids_in_query:
-            for t in ticket_ids_in_query:
-                t_lowers.append(t.lower())
-                m = re.search(r"(\d+)", t)
-                if m:
-                    num = m.group(1)
-                    t_lowers.extend(
-                        [f"tck-{num}", f"t-{num}", f"tk-{num}", f"tck{num}", f"t{num}", num]
-                    )
-
         q_lower = request.query.lower()
         is_ticket_discovery_query = any(
             kw in q_lower
@@ -369,7 +399,6 @@ class KnowledgeRetriever:
             )
         )
 
-        user_role = (request.user_role or "public").lower().strip()
         sanitized_hits = []
 
         for hit, score in reranked_hits:

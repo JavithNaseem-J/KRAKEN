@@ -93,9 +93,17 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         # Ops probes and the browser-facing HITL approval flow (protected by
         # unguessable approval_id + CSRF token) bypass API-key auth.
-        if path in ("/health", "/ready", "/metrics", "/docs", "/openapi.json") or path.startswith(
-            "/approve/"
+        if (
+            path in ("/", "/health", "/ready", "/metrics", "/docs", "/openapi.json")
+            or path.startswith(("/approve/", "/assets/", "/v1/demo/session"))
+            or path in ("/favicon.ico", "/robots.txt")
         ):
+            return await call_next(request)
+        if not path.startswith(("/v1/", "/approve/")):
+            return await call_next(request)
+
+        settings = get_settings()
+        if path.startswith("/v1/") and request.cookies.get(settings.demo_session_cookie_name):
             return await call_next(request)
 
         api_key = request.headers.get("X-API-Key")
@@ -111,7 +119,6 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        settings = get_settings()
         current_keys = parse_api_keys(settings.gateway_api_keys)
         valid_keys = {**self.api_keys_map, **current_keys} if self.api_keys_map else current_keys
 

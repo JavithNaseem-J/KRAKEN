@@ -6,7 +6,6 @@ import httpx
 import structlog
 
 from src.agent.state import GraphState
-from src.utils.auth import resolve_user_role
 from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
 from src.utils.http_client import internal_request, post_with_retry, service_headers
@@ -52,7 +51,7 @@ async def retriever_node(state: GraphState) -> dict:
     else:
         target_sources = [KnowledgeSource.FAQ, KnowledgeSource.SLA]
 
-    user_role = resolve_user_role(state.get("user_id") or "public")
+    user_role = state.get("operator_role") or "end_user"
 
     request_payload = RetrievalRequest(
         query=user_message,
@@ -75,9 +74,10 @@ async def retriever_node(state: GraphState) -> dict:
                 "error": "Knowledge retrieval is temporarily unavailable, please try again.",
             }
 
-        # Query long-term episodic memory if user_id present
+        # Public demo history is session-scoped in short-term memory. Shared
+        # persona IDs must never expose episodic memory from another visitor.
         user_id = state.get("user_id", "")
-        if user_id:
+        if user_id and not state.get("demo_session_id"):
             try:
                 mem_resp = await internal_request(
                     "POST",

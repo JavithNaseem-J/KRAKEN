@@ -1,15 +1,8 @@
-# render.yaml — Render.com 100% FREE TIER Blueprint for KRAKEN
-#
-# Usage:
-#   1. Push this repository to GitHub.
-#   2. Log in to Render.com (https://dashboard.render.com).
-#   3. Click "New +" -> "Blueprint" and select your repository.
-#   4. Render provisions kraken.onrender.com (Frontend) & kraken-backend.onrender.com (API) 100% FREE!
+# One same-origin Render service serves React and FastAPI from the production image.
 
 services:
-  # ── KRAKEN Unified Backend API (https://kraken-backend.onrender.com) ───────
   - type: web
-    name: kraken-backend
+    name: kraken
     env: docker
     plan: free
     dockerfilePath: Dockerfile
@@ -19,10 +12,42 @@ services:
       - key: PORT
         value: 10000
       - key: ENVIRONMENT
-        value: dev
+        value: prod
       - key: LOG_FORMAT
         value: json
+      - key: DEMO_COOKIE_SECURE
+        value: true
+      - key: QDRANT_CLOUD_INFERENCE_ENABLED
+        value: true
+      - key: QDRANT_INFERENCE_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
+      - key: QDRANT_INFERENCE_DIM
+        value: 384
+      - key: KNOWLEDGE_COLLECTION_VERSION
+        value: v2
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://kraken-pme9.onrender.com
+      - key: ORCHESTRATOR_URL
+        value: http://orchestrator.internal
+      - key: KNOWLEDGE_URL
+        value: http://knowledge.internal
+      - key: ACTION_URL
+        value: http://action.internal
+      - key: APPROVAL_URL
+        value: http://approval.internal
+      - key: APPROVAL_BASE_URL
+        value: https://kraken-pme9.onrender.com
+      - key: MEMORY_URL
+        value: http://memory.internal
+      - key: AUDIT_URL
+        value: http://audit.internal
       - key: LLM_API_KEY
+        sync: false
+      - key: DEMO_SESSION_SECRET
+        sync: false
+      - key: HITL_SERVICE_TOKEN
+        sync: false
+      - key: GATEWAY_API_KEYS
         sync: false
       - key: POSTGRES_URL
         sync: false
@@ -34,25 +59,3 @@ services:
         sync: false
       - key: QDRANT_API_KEY
         sync: false
-
-  # ── KRAKEN React Web Frontend (https://kraken.onrender.com) ──────────────────
-  - type: web
-    name: kraken
-    env: static
-    rootDir: frontend-react
-    buildCommand: npm ci && npm run build
-    staticPublishPath: dist
-    routes:
-      # Note: Update destination URL below if your Render backend service receives a different subdomain
-      - type: rewrite
-        source: /api/*
-        destination: https://kraken-backend.onrender.com/*
-      - type: rewrite
-        source: /*
-        destination: /index.html
-    envVars:
-      - key: VITE_API_URL
-        fromService:
-          type: web
-          name: kraken-backend
-          property: host

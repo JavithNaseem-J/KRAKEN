@@ -57,8 +57,8 @@ REGISTRY: dict[str, ActionDefinition] = {
         name="create_ticket",
         description="Create a new IT or security support ticket in the ticketing system.",
         action_type=ActionType.WRITE,
-        risk_level=RiskLevel.CRITICAL,
-        requires_hitl=True,
+        risk_level=RiskLevel.SAFE,
+        requires_hitl=False,
         parameter_schema={
             "user_name": "str",
             "category": "str",
@@ -96,10 +96,10 @@ REGISTRY: dict[str, ActionDefinition] = {
 ACTION_POLICY_METADATA: dict[str, dict[str, Any]] = {
     "create_ticket": {
         "staging_permitted_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
-        "requires_four_eyes": True,
-        "authorizing_roles": ["incident_commander", "admin"],
-        "minimum_approver_clearance": "TIER_2",
-        "audit_tags": ["RBAC:TICKET_CREATION", "GOVERNANCE:FOUR_EYES"],
+        "requires_four_eyes": False,
+        "authorizing_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
+        "minimum_approver_clearance": "PUBLIC",
+        "audit_tags": ["RBAC:TICKET_CREATION", "DEMO:SYNTHETIC_WRITE"],
     },
     "quarantine_ip": {
         "staging_permitted_roles": ["tier1_analyst", "incident_commander", "admin"],

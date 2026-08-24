@@ -21,20 +21,74 @@ _STATUS_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
+_WRITE_ACTION_INTENT_PHRASES: dict[str, tuple[str, ...]] = {
+    "escalate": ("escalate",),
+    "request_info": (
+        "request information",
+        "request more information",
+        "ask for information",
+        "ask for details",
+    ),
+    "close": ("close ticket", "close the ticket", "resolve ticket", "resolve the ticket"),
+    "write_json_file": ("write json", "create json file", "save json"),
+    "create_ticket": (
+        "create ticket",
+        "create a ticket",
+        "create new ticket",
+        "create a new ticket",
+        "open ticket",
+        "open a ticket",
+        "raise ticket",
+        "raise a ticket",
+        "file ticket",
+        "file a ticket",
+        "submit ticket",
+        "submit a ticket",
+    ),
+    "quarantine_ip": (
+        "quarantine ip",
+        "quarantine the ip",
+        "block ip",
+        "block the ip",
+        "isolate ip",
+        "isolate the ip",
+    ),
+    "unlock_account": (
+        "unlock account",
+        "unlock the account",
+        "unlock user",
+        "restore account access",
+    ),
+}
+
 
 def should_override_to_auto_respond(user_message: str, proposed_action: str) -> tuple[bool, bool]:
     """
-    Deterministic safety guard: prevent write actions without explicit ticket ID.
-    Status queries and messages without a ticket ID must not trigger
-    escalate/request_info/close actions.
+    Prevent retrieved evidence from manufacturing write-action intent.
+
+    Every registered write action requires an explicit phrase in the user's own
+    message. Ticket mutations additionally require a ticket ID.
     Returns (should_override, is_status_query).
     """
-    if proposed_action not in ("escalate", "request_info", "close"):
+    intent_phrases = _WRITE_ACTION_INTENT_PHRASES.get(proposed_action)
+    if intent_phrases is None:
         return False, False
-    msg_lower = user_message.lower()
-    is_status_query = any(kw in msg_lower for kw in _STATUS_KEYWORDS)
+
+    normalized_message = re.sub(r"[^a-z0-9]+", " ", user_message.lower()).strip()
+    is_status_query = any(kw in normalized_message for kw in _STATUS_KEYWORDS)
+    has_explicit_intent = any(phrase in normalized_message for phrase in intent_phrases)
+    if proposed_action == "create_ticket":
+        has_explicit_intent = has_explicit_intent or bool(
+            re.search(
+                r"\b(?:create|open|raise|file|submit)\b(?:\s+\w+){0,4}\s+ticket\b",
+                normalized_message,
+            )
+        )
     has_ticket = bool(TICKET_ID_REGEX.search(user_message))
-    should_override = is_status_query or not has_ticket
+    ticket_mutation_without_id = (
+        proposed_action in {"escalate", "request_info", "close"} and not has_ticket
+    )
+    should_override = is_status_query or not has_explicit_intent or ticket_mutation_without_id
     return should_override, is_status_query
 
 
@@ -116,9 +170,7 @@ def build_action_policies() -> dict[str, ActionPolicyRule]:
             staging_permitted_roles=list(metadata["staging_permitted_roles"]),
             requires_four_eyes=bool(metadata["requires_four_eyes"]),
             authorizing_roles=list(metadata["authorizing_roles"]),
-            minimum_approver_clearance=ClearanceLevel(
-                str(metadata["minimum_approver_clearance"])
-            ),
+            minimum_approver_clearance=ClearanceLevel(str(metadata["minimum_approver_clearance"])),
             audit_tags=list(metadata["audit_tags"]),
         )
     return policies

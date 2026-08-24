@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import uuid
 from typing import Any
 
 import httpx
@@ -22,6 +24,9 @@ async def _register_approval(
     payload: dict[str, Any],
     reasoning: str,
     session_id: str,
+    initiator_id: str,
+    initiator_role: str,
+    approval_id: str,
 ) -> str:
     """Call approval service to register pending action. Returns approval_id."""
     resp = await post_with_retry(
@@ -32,6 +37,9 @@ async def _register_approval(
             "payload": payload,
             "reasoning": reasoning,
             "session_id": session_id,
+            "initiator_id": initiator_id,
+            "initiator_role": initiator_role,
+            "approval_id": approval_id,
         },
         headers=service_headers(trace_id=session_id),
     )
@@ -45,6 +53,8 @@ async def _call_action_service(
     session_id: str,
     user_id: str,
     reasoning: str,
+    demo_session_id: str | None = None,
+    demo_actor_id: str | None = None,
 ) -> dict[str, Any]:
     """POST to action service /execute and return the result dict."""
     request = ActionRequest(
@@ -53,6 +63,8 @@ async def _call_action_service(
         session_id=session_id,
         user_id=user_id,
         reasoning=reasoning,
+        demo_session_id=demo_session_id,
+        demo_actor_id=demo_actor_id,
     )
     try:
         resp = await post_with_retry(
@@ -80,6 +92,10 @@ async def executor_node(state: GraphState) -> dict:
     risk_level = state.get("risk_level", "SAFE")
     reasoning = state.get("reasoning", "")
     user_id = state.get("user_id", "system")
+    operator_role = state.get("operator_role", "end_user")
+    demo_session_id = state.get("demo_session_id") or None
+    demo_actor_id = state.get("demo_actor_id") or None
+    execution_id = state.get("execution_id") or f"{session_id}:{state.get('user_message', '')}"
 
     if not selected_actions and primary_action:
         selected_actions = [
@@ -118,6 +134,8 @@ async def executor_node(state: GraphState) -> dict:
                     session_id,
                     user_id,
                     reasoning,
+                    demo_session_id,
+                    demo_actor_id,
                 )
                 for act in safe_actions
             ]
@@ -133,6 +151,12 @@ async def executor_node(state: GraphState) -> dict:
             crit_act = critical_actions[0]
             c_name = crit_act["action_name"]
             c_payload = crit_act.get("action_payload", {})
+            approval_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"kraken:{execution_id}:{c_name}:{json.dumps(c_payload, sort_keys=True)}",
+                )
+            )
             try:
                 approval_id = await _register_approval(
                     client=client,
@@ -140,6 +164,9 @@ async def executor_node(state: GraphState) -> dict:
                     payload=c_payload,
                     reasoning=reasoning,
                     session_id=session_id,
+                    initiator_id=demo_actor_id or user_id,
+                    initiator_role=operator_role,
+                    approval_id=approval_id,
                 )
             except Exception as exc:
                 log.error("executor.approval_register_failed", error=str(exc))
@@ -178,7 +205,14 @@ async def executor_node(state: GraphState) -> dict:
                 }
 
             crit_res = await _call_action_service(
-                client, c_name, c_payload, session_id, user_id, reasoning
+                client,
+                c_name,
+                c_payload,
+                session_id,
+                user_id,
+                reasoning,
+                demo_session_id,
+                demo_actor_id,
             )
             results.append(crit_res)
             return {

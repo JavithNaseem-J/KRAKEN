@@ -9,6 +9,7 @@ import structlog
 from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import (
     Distance,
+    Document,
     FieldCondition,
     Filter,
     MatchValue,
@@ -39,13 +40,25 @@ class LongTermMemory:
         device: str = "cpu",
         collection_name: str = EPISODIC_MEMORY_COLLECTION,
     ) -> None:
-        from src.utils.embedder import get_embedder
-
-        log.info("long_term.init", model=embedding_model, collection=collection_name)
         self._client = client or create_async_qdrant_client()
-        self._embedder = get_embedder()
+        self._cloud_inference = bool(
+            settings.qdrant_url and settings.qdrant_cloud_inference_enabled
+        )
+        self._model_name = (
+            settings.qdrant_inference_model if self._cloud_inference else embedding_model
+        )
+        self._embedder: Any | None = None
+        if not self._cloud_inference:
+            from src.utils.embedder import get_embedder
+
+            self._embedder = get_embedder()
+        log.info("long_term.init", model=self._model_name, collection=collection_name)
         self._collection_name = collection_name
-        self._dim = settings.embedding_dim or 384
+        self._dim = (
+            settings.qdrant_inference_dim
+            if self._cloud_inference
+            else settings.embedding_dim or 384
+        )
         log.info("long_term.ready")
 
     async def init(self) -> None:
@@ -71,8 +84,12 @@ class LongTermMemory:
         except Exception as exc:
             log.warning("long_term.init_warning", error=str(exc))
 
-    async def _embed_async(self, text: str) -> list[float]:
-        """Embed a single string asynchronously, offloading CPU work to thread."""
+    async def _embed_async(self, text: str) -> Any:
+        """Return a cloud inference document or a locally generated vector."""
+        if self._cloud_inference:
+            return Document(text=text, model=self._model_name)
+        if self._embedder is None:
+            raise RuntimeError("Long-term memory embedder is unavailable.")
         return await asyncio.to_thread(self._embedder.embed_query, text)
 
     async def store(
@@ -167,7 +184,6 @@ class LongTermMemory:
 
         log.info(
             "long_term.search",
-            query=query[:60],
             user_id=user_id,
             results=len(results),
         )

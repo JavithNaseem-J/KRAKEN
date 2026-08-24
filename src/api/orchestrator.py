@@ -26,6 +26,12 @@ try:
     from psycopg_pool import ConnectionPool
 except ImportError:
     ConnectionPool = None  # type: ignore[assignment, misc]
+try:
+    from psycopg import AsyncConnection
+    from psycopg.rows import dict_row
+except ImportError:
+    AsyncConnection = None  # type: ignore[assignment, misc]
+    dict_row = None  # type: ignore[assignment]
 from pydantic import BaseModel, Field
 
 from src.agent.agent import build_graph_async
@@ -44,9 +50,29 @@ from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.agent import QueryRequest, QueryResponse
 from src.utils.observability import flush_langfuse, get_langfuse_callback_handler
+from src.utils.semantic_cache_policy import cache_context, cache_query, is_cache_eligible
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
+
+
+async def _open_async_checkpointer() -> tuple[Any, Any]:
+    """Open a PgBouncer-safe LangGraph saver and apply its migrations."""
+    if AsyncPostgresSaver is None or AsyncConnection is None or dict_row is None:
+        raise RuntimeError("Postgres checkpointer dependencies are unavailable.")
+    connection = await AsyncConnection.connect(
+        settings.postgres_sync_url,
+        autocommit=True,
+        prepare_threshold=None,
+        row_factory=dict_row,
+    )
+    try:
+        saver = AsyncPostgresSaver(connection)
+        await saver.setup()
+        return saver, connection
+    except Exception:
+        await connection.close()
+        raise
 
 
 # Typed request schema for the callback endpoint
@@ -121,16 +147,18 @@ def prune_stale_checkpoints(pool: ConnectionPool | None) -> dict[str, int]:
             )
             deleted_counts["checkpoints"] += cur.rowcount
 
-            # 2. Prune checkpoints & writes for inactive sessions older than 7 days
+            # 2. Demo checkpoints are temporary even when no approval row exists.
             cur.execute(
                 """
                 WITH inactive AS (
-                    SELECT session_id
-                    FROM audit_log
-                    WHERE timestamp < NOW() - INTERVAL '7 days'
+                    SELECT thread_id
+                    FROM checkpoints
+                    GROUP BY thread_id
+                    HAVING MAX(NULLIF(checkpoint->>'ts', '')::timestamptz)
+                        < NOW() - INTERVAL '1 hour'
                 )
                 DELETE FROM checkpoint_writes
-                WHERE thread_id IN (SELECT session_id FROM inactive);
+                WHERE thread_id IN (SELECT thread_id FROM inactive);
                 """
             )
             deleted_counts["checkpoint_writes"] += cur.rowcount
@@ -138,12 +166,14 @@ def prune_stale_checkpoints(pool: ConnectionPool | None) -> dict[str, int]:
             cur.execute(
                 """
                 WITH inactive AS (
-                    SELECT session_id
-                    FROM audit_log
-                    WHERE timestamp < NOW() - INTERVAL '7 days'
+                    SELECT thread_id
+                    FROM checkpoints
+                    GROUP BY thread_id
+                    HAVING MAX(NULLIF(checkpoint->>'ts', '')::timestamptz)
+                        < NOW() - INTERVAL '1 hour'
                 )
                 DELETE FROM checkpoints
-                WHERE thread_id IN (SELECT session_id FROM inactive);
+                WHERE thread_id IN (SELECT thread_id FROM inactive);
                 """
             )
             deleted_counts["checkpoints"] += cur.rowcount
@@ -192,20 +222,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.conn_pool = conn_pool
 
     # 4. Build the compiled graph (AsyncPostgresSaver with MemorySaver fallback)
-    saver_cm = None
+    saver_connection = None
+    app.state.checkpointer_ready = False
     if AsyncPostgresSaver is not None and settings.postgres_sync_url:
         try:
-            saver_cm = AsyncPostgresSaver.from_conn_string(settings.postgres_sync_url)
-            saver = await saver_cm.__aenter__()
-            app.state.saver_cm = saver_cm
+            saver, saver_connection = await _open_async_checkpointer()
+            app.state.saver_connection = saver_connection
             app.state.agent_graph = await build_graph_async(saver)
+            app.state.checkpointer_ready = True
             log.info("orchestrator.async_checkpointer_ready")
         except Exception as exc:
-            log.warning("orchestrator.async_checkpointer_failed", error=str(exc))
-            saver_cm = None
+            log.warning("orchestrator.async_checkpointer_failed", error=exc.__class__.__name__)
+            saver_connection = None
 
-    if saver_cm is None:
-        app.state.saver_cm = None
+    if saver_connection is None:
+        app.state.saver_connection = None
         app.state.agent_graph = await build_graph_async(None)
         log.info("orchestrator.memory_checkpointer_ready")
 
@@ -241,9 +272,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     with contextlib.suppress(asyncio.CancelledError):
         await reaper_task
 
-    if getattr(app.state, "saver_cm", None):
+    if getattr(app.state, "saver_connection", None):
         with contextlib.suppress(Exception):
-            await app.state.saver_cm.__aexit__(None, None, None)
+            await app.state.saver_connection.close()
 
     if getattr(app.state, "conn_pool", None):
         with contextlib.suppress(Exception):
@@ -344,6 +375,9 @@ def _initial_state(body: QueryRequest, session_messages: list[dict[str, Any]]) -
         "session_id": body.session_id,
         "user_id": body.user_id,
         "operator_role": body.metadata.get("operator_role", "end_user"),
+        "demo_session_id": body.metadata.get("demo_session_id", ""),
+        "demo_actor_id": body.metadata.get("actor_id", ""),
+        "execution_id": body.metadata.get("execution_id", ""),
         "user_message": body.message,
         "messages": session_messages,
         "selected_action": None,
@@ -427,18 +461,18 @@ async def _get_graph(
     log.warning("orchestrator.checkpointer_reconnect", session_id=session_id)
     try:
         # Try to teardown the old saver context cleanly
-        old_saver_cm = getattr(app.state, "saver_cm", None)
-        if old_saver_cm is not None:
+        old_saver_connection = getattr(app.state, "saver_connection", None)
+        if old_saver_connection is not None:
             with contextlib.suppress(Exception):
-                await old_saver_cm.__aexit__(None, None, None)
-            app.state.saver_cm = None
+                await old_saver_connection.close()
+            app.state.saver_connection = None
 
         # Attempt reconnection
         if AsyncPostgresSaver is not None and settings.postgres_sync_url:
-            new_saver_cm = AsyncPostgresSaver.from_conn_string(settings.postgres_sync_url)
-            new_saver = await new_saver_cm.__aenter__()
-            app.state.saver_cm = new_saver_cm
+            new_saver, new_connection = await _open_async_checkpointer()
+            app.state.saver_connection = new_connection
             app.state.agent_graph = await build_graph_async(new_saver)
+            app.state.checkpointer_ready = True
             log.info("orchestrator.checkpointer_reconnected")
         else:
             raise RuntimeError("No postgres_sync_url configured for reconnect")
@@ -447,7 +481,8 @@ async def _get_graph(
             "orchestrator.checkpointer_reconnect_failed_fallback_memory",
             error=str(reconnect_exc),
         )
-        app.state.saver_cm = None
+        app.state.saver_connection = None
+        app.state.checkpointer_ready = False
         app.state.agent_graph = await build_graph_async(None)
 
     graph = app.state.agent_graph
@@ -458,6 +493,58 @@ async def _get_graph(
         metadata=metadata,
     )
     return graph, config
+
+
+async def _semantic_cache_lookup(
+    body: QueryRequest,
+) -> tuple[QueryResponse | None, Any | None, dict[str, str] | None]:
+    cache: SemanticCache | None = getattr(app.state, "semantic_cache", None)
+    if not cache or not is_cache_eligible(body.message, body.metadata):
+        return None, None, None
+    context = cache_context(body.metadata).as_payload()
+    try:
+        query = await cache_query(body.message)
+        cached = await cache.get(query, context)
+        if not cached:
+            return None, query, context
+        response = QueryResponse.model_validate(cached)
+        response.session_id = body.session_id
+        response.trace_id = str(uuid.uuid4())
+        response.cache.hit = True
+        response.cache.scope = context["scope"]
+        response.cache.embedding_model = context["embedding_model"]
+        response.cache.knowledge_version = context["knowledge_version"]
+        return response, query, context
+    except Exception as exc:
+        log.warning("orchestrator.semantic_cache_lookup_failed", error=exc.__class__.__name__)
+        return None, None, context
+
+
+async def _semantic_cache_store(
+    body: QueryRequest,
+    response: QueryResponse,
+    query: Any | None,
+    context: dict[str, str] | None,
+) -> None:
+    cache: SemanticCache | None = getattr(app.state, "semantic_cache", None)
+    if not cache or not context or not is_cache_eligible(body.message, body.metadata):
+        return
+    if response.action_taken not in (None, "auto_respond") or not response.retrieved_chunks:
+        return
+    try:
+        resolved_query = query if query is not None else await cache_query(body.message)
+        response.cache.hit = False
+        response.cache.scope = context["scope"]
+        response.cache.embedding_model = context["embedding_model"]
+        response.cache.knowledge_version = context["knowledge_version"]
+        await cache.put(
+            resolved_query,
+            body.message,
+            response.model_dump(mode="json"),
+            context,
+        )
+    except Exception as exc:
+        log.warning("orchestrator.semantic_cache_put_failed", error=exc.__class__.__name__)
 
 
 # /run
@@ -479,8 +566,12 @@ async def run(body: QueryRequest) -> Any:
             metadata={"endpoint": "/run", "user_id": body.user_id},
         )
     except Exception as exc:
-        log.error("orchestrator.graph_init_failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        trace_id = str(uuid.uuid4())
+        log.error("orchestrator.graph_init_failed", error=exc.__class__.__name__, trace_id=trace_id)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "agent_unavailable", "trace_id": trace_id},
+        ) from exc
 
     # Check if session is already completed or currently paused
     snapshot = await graph.aget_state(config)
@@ -507,46 +598,10 @@ async def run(body: QueryRequest) -> Any:
 
     http_client: httpx.AsyncClient | None = getattr(app.state, "http", None)
 
-    # SemanticCache Lookup
-    query_vector: list[float] | None = None
-    cache: SemanticCache | None = getattr(app.state, "semantic_cache", None)
-    if cache and body.message and http_client:
-        try:
-            from src.utils.embedder import get_embedder
-
-            embedder = get_embedder()
-            query_vector = await asyncio.to_thread(embedder.embed_query, body.message)
-            cached = await cache.get(query_vector)
-            if cached:
-                log.info("orchestrator.semantic_cache_hit", session_id=body.session_id)
-                from src.utils.audit.client import fire_audit_log
-
-                asyncio.create_task(
-                    fire_audit_log(
-                        client=http_client,
-                        session_id=body.session_id,
-                        user_id=body.user_id,
-                        action_type="READ",
-                        action_name="cache_hit",
-                        risk_level="SAFE",
-                        hitl_required=False,
-                        status="success",
-                        reasoning="Returned answer directly from SemanticCache hit.",
-                        payload={"query": body.message},
-                        result={"answer": cached.get("response", cached.get("answer", ""))},
-                    )
-                )
-                return QueryResponse(
-                    session_id=body.session_id,
-                    answer=cached.get("response", cached.get("answer", "")),
-                    action_taken="auto_respond",
-                    confidence=0.95,
-                    reasoning="Answer retrieved from semantic response cache.",
-                    evidence=["Semantic cache hit (similarity >= 0.92)"],
-                    execution_time_sec=0.01,
-                )
-        except Exception as exc:
-            log.warning("orchestrator.semantic_cache_lookup_failed", error=str(exc))
+    cached_response, cache_query_value, cache_scope = await _semantic_cache_lookup(body)
+    if cached_response is not None:
+        log.info("orchestrator.semantic_cache_hit", session_id=body.session_id)
+        return cached_response
 
     session_messages = await _fetch_session_messages(body.session_id, client=http_client)
 
@@ -586,8 +641,12 @@ async def run(body: QueryRequest) -> Any:
         # Async graph invocation
         result = await graph.ainvoke(initial_state, config)
     except Exception as exc:
-        log.error("orchestrator.run_error", error=str(exc), exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        trace_id = str(uuid.uuid4())
+        log.error("orchestrator.run_error", error=exc.__class__.__name__, trace_id=trace_id)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "agent_unavailable", "trace_id": trace_id},
+        ) from exc
     finally:
         if semaphore:
             semaphore.release()
@@ -614,18 +673,7 @@ async def run(body: QueryRequest) -> Any:
         }
 
     response = _build_response(body.session_id, result)
-    if cache and body.message:
-        try:
-            if query_vector is None:
-                from src.utils.embedder import get_embedder
-
-                embedder = get_embedder()
-                query_vector = await asyncio.to_thread(embedder.embed_query, body.message)
-            asyncio.create_task(
-                cache.put(query_vector, body.message, response.model_dump(mode="json"))
-            )
-        except Exception as exc:
-            log.warning("orchestrator.semantic_cache_put_failed", error=str(exc))
+    await _semantic_cache_store(body, response, cache_query_value, cache_scope)
     return response
 
 
@@ -648,14 +696,18 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
             metadata={"endpoint": "/run/stream", "user_id": body.user_id},
         )
     except Exception as exc:
-        log.error("orchestrator.stream_graph_init_failed", error=str(exc))
-        error_message = str(exc)
+        trace_id = str(uuid.uuid4())
+        log.error(
+            "orchestrator.stream_graph_init_failed",
+            error=exc.__class__.__name__,
+            trace_id=trace_id,
+        )
 
         # Return an SSE error event rather than a hard 500
         async def _err_gen() -> AsyncGenerator[str, None]:
             import json
 
-            yield f"data: {json.dumps({'node': 'error', 'status': 'error', 'message': error_message})}\n\n"
+            yield f"data: {json.dumps({'node': 'error', 'status': 'error', 'message': 'Agent startup is temporarily unavailable.', 'trace_id': trace_id})}\n\n"
 
         return StreamingResponse(
             _err_gen(),
@@ -678,6 +730,27 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
 
         start = time.monotonic()
         last_ping = start
+
+        cached_response, cache_query_value, cache_scope = await _semantic_cache_lookup(body)
+        if cached_response is not None:
+            yield (
+                "data: "
+                + json.dumps({"node": "semantic_cache", "status": "cache_hit", "elapsed_ms": 0})
+                + "\n\n"
+            )
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "node": "done",
+                        "status": "end",
+                        "elapsed_ms": 0,
+                        "response": cached_response.model_dump(mode="json"),
+                    }
+                )
+                + "\n\n"
+            )
+            return
 
         # Fetch session history so the graph has conversation context
         http_client: httpx.AsyncClient | None = getattr(app.state, "http", None)
@@ -707,34 +780,11 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                     )
                     yield f"data: {payload}\n\n"
                 elif kind == "on_chain_end":
-                    output = event.get("data", {}).get("output") or {}
-                    extra = {}
-                    if (
-                        name in ("responder", "responder_node")
-                        or "final_answer" in output
-                        or (
-                            isinstance(output, dict)
-                            and (
-                                "final_answer" in output.get(name, {})
-                                or "action_result" in output.get(name, {})
-                            )
-                        )
-                    ):
-                        try:
-                            snapshot = await graph.aget_state(config)
-                            if snapshot.values:
-                                response = _build_response(body.session_id, snapshot.values)
-                                extra = {"response": response.model_dump(mode="json")}
-                        except Exception as snapshot_exc:
-                            log.warning(
-                                "orchestrator.stream_snapshot_failed", error=str(snapshot_exc)
-                            )
                     payload = json.dumps(
                         {
                             "node": name,
                             "status": "end",
                             "elapsed_ms": round((now - start) * 1000),
-                            **extra,
                         }
                     )
                     yield f"data: {payload}\n\n"
@@ -769,6 +819,7 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                 yield f"data: {hitl_payload}\n\n"
             elif snapshot.values:
                 response = _build_response(body.session_id, snapshot.values)
+                await _semantic_cache_store(body, response, cache_query_value, cache_scope)
                 extra_done = {"response": response.model_dump(mode="json")}
 
             done_payload = json.dumps(
@@ -782,8 +833,21 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
             yield f"data: {done_payload}\n\n"
 
         except Exception as exc:
-            log.error("orchestrator.stream_error", session_id=body.session_id, error=str(exc))
-            err_payload = json.dumps({"node": "error", "status": "error", "message": str(exc)})
+            trace_id = str(uuid.uuid4())
+            log.error(
+                "orchestrator.stream_error",
+                session_id=body.session_id,
+                error=exc.__class__.__name__,
+                trace_id=trace_id,
+            )
+            err_payload = json.dumps(
+                {
+                    "node": "error",
+                    "status": "error",
+                    "message": "Agent processing is temporarily unavailable.",
+                    "trace_id": trace_id,
+                }
+            )
             yield f"data: {err_payload}\n\n"
 
     return StreamingResponse(
@@ -794,6 +858,31 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/status/{session_id}", tags=["agent"])
+async def run_status(
+    session_id: str,
+    _token: str = Depends(verify_service_token),
+) -> dict[str, Any] | QueryResponse:
+    """Read the current graph state without invoking or resuming the graph."""
+    graph, config = await _get_graph(session_id=session_id, tags=["kraken-agent", "status"])
+    snapshot = await graph.aget_state(config)
+    if snapshot.next:
+        interrupt_value = _extract_interrupt(snapshot)
+        return {
+            "status": "pending_approval",
+            "approval_id": interrupt_value.get("approval_id", ""),
+            "session_id": session_id,
+            "message": "A CRITICAL triage action requires human approval.",
+        }
+    values = snapshot.values or {}
+    if values and any(
+        values.get(key) is not None
+        for key in ("final_answer", "action_result", "error", "selected_action")
+    ):
+        return _build_response(session_id, values)
+    return {"status": "running", "session_id": session_id}
 
 
 @app.post("/approval-callback", tags=["hitl"])
@@ -852,6 +941,14 @@ async def approval_callback(
     )
 
     try:
+        snapshot = await graph.aget_state(config)
+        if not snapshot.next:
+            raise HTTPException(status_code=409, detail="Approval is no longer pending.")
+        interrupt_value = _extract_interrupt(snapshot)
+        if interrupt_value.get("approval_id") != body.approval_id:
+            raise HTTPException(
+                status_code=409, detail="Approval does not match the pending action."
+            )
         log.info(
             "orchestrator.resuming",
             session_id=session_id,
@@ -870,9 +967,15 @@ async def approval_callback(
             ),
             config,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
-        log.error("orchestrator.resume_error", error=str(exc))
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        trace_id = str(uuid.uuid4())
+        log.error("orchestrator.resume_error", error=exc.__class__.__name__, trace_id=trace_id)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "resume_unavailable", "trace_id": trace_id},
+        ) from exc
     finally:
         if semaphore:
             semaphore.release()

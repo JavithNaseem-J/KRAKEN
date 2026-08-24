@@ -44,6 +44,11 @@ class KnowledgeChunkPayload(BaseModel):
     title: str = Field(default="")
     category: str = Field(default="general")
     allowed_roles: list[str] = Field(default_factory=lambda: ["public"])
+    embedding_model: str
+    collection_version: str
+    scope: str = "shared"
+    expires_at: float | None = None
+    untrusted_evidence: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

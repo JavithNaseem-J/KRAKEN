@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from functools import lru_cache
 from typing import Any
 
@@ -7,6 +8,31 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from src.utils.config import get_settings
+from src.utils.exceptions import LLMProviderUnavailableError
+
+
+class ProviderCircuitBreaker:
+    def __init__(self) -> None:
+        self._open_until = 0.0
+
+    async def invoke(self, runnable: Any, messages: list[Any]) -> Any:
+        now = time.monotonic()
+        if now < self._open_until:
+            raise LLMProviderUnavailableError("LLM provider circuit is temporarily open.")
+        try:
+            result = await runnable.ainvoke(messages)
+            self._open_until = 0.0
+            return result
+        except Exception as exc:
+            self._open_until = now + get_settings().provider_circuit_breaker_seconds
+            raise LLMProviderUnavailableError("LLM provider is temporarily unavailable.") from exc
+
+
+_provider_breaker = ProviderCircuitBreaker()
+
+
+async def invoke_llm(runnable: Any, messages: list[Any]) -> Any:
+    return await _provider_breaker.invoke(runnable, messages)
 
 
 def validate_llm_config() -> None:
@@ -34,7 +60,7 @@ def get_llm() -> Any:
         temperature=s.llm_temperature,
         max_tokens=s.llm_max_tokens,  # type: ignore[call-arg]
         timeout=s.llm_timeout_seconds,
-        max_retries=4,
+        max_retries=1,
     )
 
     if s.llm_fallback_model:
@@ -45,7 +71,7 @@ def get_llm() -> Any:
             temperature=s.llm_temperature,
             max_tokens=s.llm_max_tokens,  # type: ignore[call-arg]
             timeout=s.llm_timeout_seconds,
-            max_retries=4,
+            max_retries=1,
         )
         return primary.with_fallbacks([fallback])
 

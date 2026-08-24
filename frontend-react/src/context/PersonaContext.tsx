@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+
+import { bootstrapDemoSession, transitionPersona } from '../services/api';
 
 export type PersonaRole = 'end_user' | 'tier1_analyst' | 'incident_commander' | 'admin';
 
@@ -10,7 +12,6 @@ export interface Persona {
   badge: string;
   title: string;
   description: string;
-  apiKey: string;
   canApprove: boolean;
   clearanceLevel: 'PUBLIC' | 'TIER_1' | 'TIER_2' | 'ADMIN';
 }
@@ -31,7 +32,6 @@ export const PERSONAS: Persona[] = [
     badge: 'User',
     title: 'End User',
     description: 'General IT inquiries and personal ticket status. Cannot trigger operational actions.',
-    apiKey: import.meta.env.VITE_API_KEY_ANALYST ?? import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-analyst-default',
     canApprove: false,
     clearanceLevel: 'PUBLIC',
   },
@@ -43,7 +43,6 @@ export const PERSONAS: Persona[] = [
     badge: 'Tier 1',
     title: 'Tier 1 Analyst',
     description: 'Alert triage, ticket search, stages containment requests (cannot authorize execution).',
-    apiKey: import.meta.env.VITE_API_KEY_ANALYST ?? import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-analyst-default',
     canApprove: false,
     clearanceLevel: 'TIER_1',
   },
@@ -55,7 +54,6 @@ export const PERSONAS: Persona[] = [
     badge: 'Lead',
     title: 'Security Lead',
     description: 'Authorizes perimeter containment (IP quarantine, account unlock) and inspects forensic SOPs.',
-    apiKey: import.meta.env.VITE_API_KEY_ADMIN ?? import.meta.env.VITE_API_KEY_BOB ?? 'dev-key-admin-default',
     canApprove: true,
     clearanceLevel: 'TIER_2',
   },
@@ -67,9 +65,6 @@ export const PERSONAS: Persona[] = [
     badge: 'Admin',
     title: 'Approver',
     description: 'Unrestricted enterprise clearance, policy override, full cryptographic audit trail inspection.',
-    apiKey:
-      import.meta.env.VITE_API_KEY_ADMIN ??
-      'dev-key-admin-default',
     canApprove: true,
     clearanceLevel: 'ADMIN',
   },
@@ -97,11 +92,27 @@ export const PersonaProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   });
 
+  useEffect(() => {
+    void bootstrapDemoSession()
+      .then((session) => {
+        const serverPersona = PERSONAS.find((persona) => persona.role === session.persona);
+        if (serverPersona) setActivePersona(serverPersona);
+      })
+      .catch(() => {
+        // The chat surface reports the actionable backend waking/error state on first use.
+      });
+  }, []);
+
   const setPersona = (role: PersonaRole) => {
     const target = PERSONAS.find((p) => p.role === role);
     if (target) {
+      const previous = activePersona;
       setActivePersona(target);
       localStorage.setItem(PERSONA_STORAGE_KEY, role);
+      void transitionPersona(role).catch(() => {
+        setActivePersona(previous);
+        localStorage.setItem(PERSONA_STORAGE_KEY, previous.role);
+      });
     }
   };
 

@@ -24,11 +24,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     configure_logging(
         log_level=settings.log_level, log_format=settings.log_format, service="knowledge"
     )
-    from src.utils.embedder import get_embedder
+    embedder: Any
+    if settings.qdrant_url and settings.qdrant_cloud_inference_enabled:
+        embedder = None
+        log.info("knowledge.startup.qdrant_cloud_inference", model=settings.qdrant_inference_model)
+    else:
+        from src.utils.embedder import get_embedder
 
-    # 1. Load embedding model
-    log.info("knowledge.startup.embedder", model=settings.embedding_model)
-    embedder = get_embedder()
+        log.info("knowledge.startup.embedder", model=settings.embedding_model)
+        embedder = get_embedder()
 
     # 2. Open Qdrant client & ensure collection
     try:
@@ -38,9 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         from src.utils.knowledge.ingest import ensure_collection
 
-        await ensure_collection(
-            client, settings.qdrant_collection_name, vector_size=settings.embedding_dim
-        )
+        await ensure_collection(client, settings.qdrant_collection_name)
 
         app.state.client = client
         app.state.embedder = embedder
@@ -56,7 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             counts = await run_ingest_async(client, embedder)
             log.info("knowledge.startup.auto_ingest_complete", counts=counts)
     except Exception as exc:
-        log.warning("knowledge.startup.qdrant_degraded", error=str(exc))
+        log.warning("knowledge.startup.qdrant_degraded", error=exc.__class__.__name__)
         app.state.client = None
         app.state.embedder = embedder
         app.state.retriever = None
@@ -88,7 +90,7 @@ async def stats() -> dict[str, int]:
         info = await app.state.client.get_collection(settings.qdrant_collection_name)
         count = info.points_count or 0
     except Exception as exc:
-        log.warning("knowledge.stats_error", error=str(exc))
+        log.warning("knowledge.stats_error", error=exc.__class__.__name__)
         count = 0
     return {settings.qdrant_collection_name: count}
 
@@ -113,7 +115,7 @@ async def retrieve(
             app.state.retriever = retriever
         return await retriever.retrieve(body)
     except Exception as exc:
-        log.error("knowledge.retrieve_error", error=str(exc))
+        log.error("knowledge.retrieve_error", error=exc.__class__.__name__)
         return RetrievalResult(
             query=body.query, chunks=[], total_retrieved=0, sources_queried=body.sources
         )
@@ -136,26 +138,32 @@ async def ingest(
             cache = SemanticCache(client=app.state.client)
             await cache.invalidate()
         except Exception as exc:
-            log.warning("knowledge.cache_invalidation_error", error=str(exc))
+            log.warning("knowledge.cache_invalidation_error", error=exc.__class__.__name__)
 
         log.info("knowledge.ingest.complete", counts=counts)
         return counts
     except Exception as exc:
-        log.error("knowledge.ingest_failed", error=str(exc))
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {exc}") from exc
+        log.error("knowledge.ingest_failed", error=exc.__class__.__name__)
+        raise HTTPException(status_code=500, detail="Knowledge ingestion failed.") from exc
 
 
 @app.post("/upload", tags=["admin"])
 async def upload_document(
     file: Annotated[UploadFile, File(...)],
     allowed_roles: Annotated[str, Form()] = "public",
+    demo_session_id: Annotated[str | None, Form()] = None,
+    expires_at: Annotated[float | None, Form()] = None,
     _token: str = Depends(verify_service_token),
 ) -> dict[str, Any]:
     """Dynamically parse, embed, and ingest an uploaded document file into Qdrant."""
     try:
-        from src.utils.knowledge.ingest import ingest_uploaded_file_async
+        from src.utils.knowledge.ingest import (
+            cleanup_expired_private_points,
+            ingest_uploaded_file_async,
+        )
 
         content_bytes = await file.read()
+        await cleanup_expired_private_points(app.state.client)
         roles_list = [r.strip().lower() for r in allowed_roles.split(",") if r.strip()] or [
             "public"
         ]
@@ -165,7 +173,12 @@ async def upload_document(
             filename=file.filename or "uploaded_doc.txt",
             file_bytes=content_bytes,
             allowed_roles=roles_list,
+            demo_session_id=demo_session_id,
+            expires_at=expires_at,
         )
+        from src.utils.cache import SemanticCache
+
+        await SemanticCache(client=app.state.client).invalidate()
         return {
             "status": "success",
             "filename": file.filename,
@@ -173,5 +186,5 @@ async def upload_document(
             "allowed_roles": roles_list,
         }
     except Exception as exc:
-        log.error("knowledge.upload_failed", filename=file.filename, error=str(exc))
-        raise HTTPException(status_code=500, detail=f"File ingestion failed: {exc}") from exc
+        log.error("knowledge.upload_failed", error=exc.__class__.__name__)
+        raise HTTPException(status_code=500, detail="Upload processing failed.") from exc

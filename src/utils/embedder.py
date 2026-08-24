@@ -7,30 +7,13 @@ from typing import Any
 import structlog
 
 from src.utils.config import get_settings
+from src.utils.exceptions import EmbeddingProviderUnavailableError
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
 
 _embedder_instance: BGEEmbedder | None = None
 _embedder_lock = threading.Lock()
-
-
-class ZeroVectorEmbedder:
-    """Lightweight zero-vector fallback embedder when no API keys are set and local models are unconfigured."""
-
-    def __init__(self, dim: int = 1536) -> None:
-        self.dim = dim
-        log.error(
-            "embedder.zero_vector_fallback_active",
-            dim=dim,
-            message="ZeroVectorEmbedder is active. Embeddings will be zero vectors; retrieval will return empty or default results.",
-        )
-
-    def embed_query(self, text: str) -> list[float]:
-        return [0.0] * self.dim
-
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return [[0.0] * self.dim for _ in texts]
 
 
 class BGEEmbedder:
@@ -49,11 +32,11 @@ class BGEEmbedder:
 
         log.info("embedder.loading", provider=provider, model=model_name)
 
-        if provider in ("cloud", "openai") and (settings.embedding_api_key or settings.llm_api_key):
+        if provider in ("cloud", "openai") and settings.embedding_api_key:
             from langchain_openai import OpenAIEmbeddings
             from pydantic import SecretStr
 
-            api_key = settings.embedding_api_key or settings.llm_api_key
+            api_key = settings.embedding_api_key
             base_url = settings.embedding_base_url or None
 
             self._model = OpenAIEmbeddings(
@@ -63,9 +46,9 @@ class BGEEmbedder:
             )
             log.info("embedder.cloud_api_ready", model=model_name)
         elif provider in ("cloud", "openai"):
-            log.warning("embedder.no_api_key_provided_using_zero_vector_fallback")
-            dim = settings.embedding_dim
-            self._model = ZeroVectorEmbedder(dim=dim)
+            raise EmbeddingProviderUnavailableError(
+                "No embedding API is configured; Qdrant Cloud Inference must be used directly."
+            )
         else:
             try:
                 from langchain_huggingface import HuggingFaceEmbeddings
@@ -77,8 +60,9 @@ class BGEEmbedder:
                 )
                 log.info("embedder.local_hf_ready", model=model_name)
             except Exception as exc:
-                log.warning("embedder.fallback_zero_vectors", reason=str(exc))
-                self._model = ZeroVectorEmbedder(dim=settings.embedding_dim)
+                raise EmbeddingProviderUnavailableError(
+                    "The configured local embedding model could not be loaded."
+                ) from exc
 
         self.model_name = model_name
         self.device = device

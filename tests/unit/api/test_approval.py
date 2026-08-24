@@ -38,13 +38,13 @@ def client(monkeypatch):
         patch("src.api.approval.ApprovalQueue", return_value=mock_queue),
         TestClient(app) as c,
     ):
-            c.app.state.queue = mock_queue
-            c.app.state.http = AsyncMock()
-            mock_resp = MagicMock()
-            mock_resp.status_code = status.HTTP_200_OK
-            c.app.state.http.post = AsyncMock(return_value=mock_resp)
-            c.app.state.http.aclose = AsyncMock()
-            yield c
+        c.app.state.queue = mock_queue
+        c.app.state.http = AsyncMock()
+        mock_resp = MagicMock()
+        mock_resp.status_code = status.HTTP_200_OK
+        c.app.state.http.post = AsyncMock(return_value=mock_resp)
+        c.app.state.http.aclose = AsyncMock()
+        yield c
 
 
 def test_health_healthy(client):
@@ -93,6 +93,9 @@ def test_pending_creation_success(client):
         payload={"hello": "world"},
         reasoning="to store data",
         session_id="session-123",
+        initiator_id="",
+        initiator_role="end_user",
+        approval_id=None,
     )
 
 
@@ -151,3 +154,35 @@ def test_submit_decision_four_eyes_allowed_for_incident_commander(client):
     )
     assert response.status_code == status.HTTP_200_OK
 
+
+def test_initiator_cannot_approve_own_action(client):
+    client.app.state.queue.get.return_value = {
+        "action_name": "quarantine_ip",
+        "session_id": "session-123",
+        "initiator_id": "bob",
+    }
+    response = client.post(
+        "/approve/test-approval-id/decision",
+        data={
+            "decision": "approve",
+            "csrf_token": "valid-csrf-token",
+            "approver_role": "incident_commander",
+            "approver_id": "bob",
+            "expected_session_id": "session-123",
+        },
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    client.app.state.queue.resolve.assert_not_called()
+
+
+def test_approval_session_mismatch_is_not_disclosed(client):
+    response = client.post(
+        "/approve/test-approval-id/decision",
+        data={
+            "decision": "reject",
+            "csrf_token": "valid-csrf-token",
+            "expected_session_id": "different-session",
+        },
+    )
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    client.app.state.queue.resolve.assert_not_called()

@@ -35,6 +35,8 @@ class ActionRequest(BaseModel):
     session_id: str
     user_id: str
     reasoning: str  # Why the agent chose this action — stored in audit log
+    demo_session_id: str | None = None
+    demo_actor_id: str | None = None
 
 
 class ActionResult(BaseModel):

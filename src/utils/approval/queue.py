@@ -14,6 +14,7 @@ log = structlog.get_logger(__name__)
 
 _PREFIX = "kraken:approval:"
 _INDEX = "kraken:approval:index"
+_RESOLVED_PREFIX = "kraken:approval:resolved:"
 
 
 class ApprovalQueue:
@@ -29,6 +30,7 @@ class ApprovalQueue:
         self._timeout = timeout_seconds
         self._in_memory_map: dict[str, dict[str, Any]] = {}
         self._in_memory_csrf: dict[str, str] = {}
+        self._in_memory_resolved: dict[str, datetime] = {}
 
     # Public API
 
@@ -54,12 +56,15 @@ class ApprovalQueue:
         payload: dict[str, Any],
         reasoning: str,
         session_id: str,
+        initiator_id: str = "",
+        initiator_role: str = "end_user",
+        approval_id: str | None = None,
     ) -> str:
         """
         Register a new pending approval. Returns the approval_id.
         Entry expires automatically after timeout_seconds via Redis TTL or in-memory map.
         """
-        approval_id = str(uuid.uuid4())
+        approval_id = approval_id or str(uuid.uuid4())
         expires_at = (datetime.now(UTC) + timedelta(seconds=self._timeout)).isoformat()
 
         entry = {
@@ -68,21 +73,35 @@ class ApprovalQueue:
             "payload": payload,
             "reasoning": reasoning,
             "session_id": session_id,
+            "initiator_id": initiator_id,
+            "initiator_role": initiator_role,
             "expires_at": expires_at,
             "status": "pending",
         }
 
         key = f"{_PREFIX}{approval_id}"
+        resolved_key = f"{_RESOLVED_PREFIX}{approval_id}"
 
         try:
-            pipe = self._redis.pipeline()
-            pipe.set(key, json.dumps(entry), ex=self._timeout)
-            pipe.sadd(_INDEX, approval_id)
-            pipe.expire(_INDEX, self._timeout + 3600)
-            await pipe.execute()
+            if await self._redis.exists(resolved_key):
+                return approval_id
+            created = await self._redis.set(
+                key,
+                json.dumps(entry),
+                ex=self._timeout,
+                nx=True,
+            )
+            if created:
+                pipe = self._redis.pipeline()
+                pipe.sadd(_INDEX, approval_id)
+                pipe.expire(_INDEX, self._timeout + 3600)
+                await pipe.execute()
         except Exception as exc:
             log.warning("queue.redis_enqueue_failed_using_in_memory", error=str(exc))
-            self._in_memory_map[approval_id] = entry
+            self.sweep_expired_in_memory()
+            if approval_id in self._in_memory_resolved:
+                return approval_id
+            self._in_memory_map.setdefault(approval_id, entry)
 
         log.info("queue.enqueued", approval_id=approval_id, expires_at=expires_at)
         return approval_id
@@ -95,6 +114,7 @@ class ApprovalQueue:
                 return json.loads(data)
         except Exception as exc:
             log.warning("queue.redis_get_failed_using_in_memory", error=str(exc))
+        self.sweep_expired_in_memory()
         return self._in_memory_map.get(approval_id)
 
     async def resolve(self, approval_id: str) -> dict[str, Any] | None:
@@ -108,14 +128,21 @@ class ApprovalQueue:
         try:
             data = await self._redis.getdel(key)
             if data is not None:
-                await self._redis.srem(_INDEX, approval_id)
+                pipe = self._redis.pipeline()
+                pipe.srem(_INDEX, approval_id)
+                pipe.set(f"{_RESOLVED_PREFIX}{approval_id}", "1", ex=self._timeout)
+                await pipe.execute()
                 log.info("queue.resolved", approval_id=approval_id)
                 return json.loads(data)
         except Exception as exc:
             log.warning("queue.redis_resolve_failed_using_in_memory", error=str(exc))
 
+        self.sweep_expired_in_memory()
         entry = self._in_memory_map.pop(approval_id, None)
         if entry:
+            self._in_memory_resolved[approval_id] = datetime.now(UTC) + timedelta(
+                seconds=self._timeout
+            )
             log.info("queue.resolved_in_memory", approval_id=approval_id)
         return entry
 
@@ -156,7 +183,12 @@ class ApprovalQueue:
         for app_id in expired_ids:
             self._in_memory_map.pop(app_id, None)
             self._in_memory_csrf.pop(app_id, None)
-        return len(expired_ids)
+        expired_resolved_ids = [
+            app_id for app_id, expires_at in self._in_memory_resolved.items() if expires_at < now
+        ]
+        for app_id in expired_resolved_ids:
+            self._in_memory_resolved.pop(app_id, None)
+        return len(expired_ids) + len(expired_resolved_ids)
 
     async def close(self) -> None:
         with contextlib.suppress(Exception):

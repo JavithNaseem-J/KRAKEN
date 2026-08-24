@@ -4,18 +4,15 @@ import threading
 from collections import OrderedDict
 from unittest.mock import MagicMock
 
-from src.utils.embedder import BGEEmbedder, ZeroVectorEmbedder
+import pytest
+
+from src.utils.embedder import BGEEmbedder
+from src.utils.exceptions import EmbeddingProviderUnavailableError
 
 
-def test_zero_vector_embedder() -> None:
-    embedder = ZeroVectorEmbedder(dim=384)
-    vec = embedder.embed_query("test query")
-    assert len(vec) == 384
-    assert all(x == 0.0 for x in vec)
-
-    docs = embedder.embed_documents(["doc 1", "doc 2"])
-    assert len(docs) == 2
-    assert len(docs[0]) == 384
+def test_missing_provider_never_returns_fake_vectors() -> None:
+    with pytest.raises(EmbeddingProviderUnavailableError):
+        BGEEmbedder()
 
 
 def test_bge_embedder_lru_cache_eviction() -> None:

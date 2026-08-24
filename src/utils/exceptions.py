@@ -31,3 +31,11 @@ class InvalidExtensionError(KRAKENBaseException):
 
 class ActionNotFoundError(KRAKENBaseException):
     """Raised when the requested action name is not in the registry."""
+
+
+class EmbeddingProviderUnavailableError(KRAKENBaseException):
+    """Raised when no configured embedding provider can produce real vectors."""
+
+
+class LLMProviderUnavailableError(KRAKENBaseException):
+    """Raised when the configured LLM provider is unavailable or circuit-open."""

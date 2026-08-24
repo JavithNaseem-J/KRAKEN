@@ -21,17 +21,22 @@ from src.utils.config import Settings
 _TOKEN = "a" * 32
 
 # Cloud-valid URLs for all checked fields.
-# Optional backing services (postgres, redis) are left empty (not configured = degraded mode).
 _CLOUD_URLS = {
-    "postgres_url": "",          # not configured — boots in degraded mode
-    "postgres_sync_url": "",     # not configured — boots in degraded mode
-    "redis_url": "",             # not configured — rate-limiting degraded
+    "postgres_url": "postgresql+asyncpg://u:p@db.example.com:5432/akea",
+    "postgres_sync_url": "postgresql://u:p@db.example.com:5432/akea",
+    "redis_url": "rediss://cache.example.com:6379",
+    "qdrant_url": "https://qdrant.example.com",
+    "qdrant_api_key": "qdrant-test-key",
+    "llm_api_key": "groq-test-key",
     "orchestrator_url": "https://orchestrator.akea.internal",
     "knowledge_url": "https://knowledge.akea.internal",
     "action_url": "https://action.akea.internal",
     "approval_url": "https://approval.akea.internal",
     "memory_url": "https://memory.akea.internal",
     "audit_url": "https://audit.akea.internal",
+    "gateway_api_keys": "server-only-test-key:tier1_analyst",
+    "demo_session_secret": "demo-session-secret-0123456789abcdef",
+    "demo_cookie_secure": True,
 }
 
 
@@ -113,16 +118,13 @@ class TestProdEnforcement:
         with pytest.raises(ValidationError, match="Local/compose hostnames"):
             _make_settings("staging", redis_url="redis://localhost:6379/1")
 
-    def test_empty_redis_url_allowed_in_prod(self) -> None:
-        """Empty redis_url means 'not configured' — boots in degraded mode, no error."""
-        # Should not raise
-        settings = _make_settings("prod", redis_url="")
-        assert settings.redis_url == ""
+    def test_empty_redis_url_rejected_in_prod(self) -> None:
+        with pytest.raises(ValidationError, match="redis_url"):
+            _make_settings("prod", redis_url="")
 
-    def test_empty_postgres_url_allowed_in_prod(self) -> None:
-        """Empty postgres_url means 'not configured' — boots in degraded mode, no error."""
-        settings = _make_settings("prod", postgres_url="", postgres_sync_url="")
-        assert settings.postgres_url == ""
+    def test_empty_postgres_url_rejected_in_prod(self) -> None:
+        with pytest.raises(ValidationError, match="postgres_url"):
+            _make_settings("prod", postgres_url="", postgres_sync_url="")
 
     def test_multiple_offenders_reported_together(self) -> None:
         """All offending fields must appear in a single ValidationError."""

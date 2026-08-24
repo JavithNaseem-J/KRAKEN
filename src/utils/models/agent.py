@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from src.utils.models.demo import CacheMetadata
+
 
 # FastAPI contracts
 class QueryRequest(BaseModel):
@@ -38,3 +40,4 @@ class QueryResponse(BaseModel):
     trace_id: str | None = Field(
         default=None, description="Unique request trace ID for distributed tracing"
     )
+    cache: CacheMetadata = Field(default_factory=CacheMetadata)

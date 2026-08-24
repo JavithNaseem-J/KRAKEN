@@ -14,7 +14,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import type { ChatMessage as ChatMessageType, QueryResponse, UserRole } from "@/types/agent";
-import type { AgentStreamEvent } from "@/services/api";
+import { uploadKnowledgeDocument, type AgentStreamEvent } from "@/services/api";
 import { ChatMessage } from "@/components/ChatMessage";
 
 interface AutoResizeProps {
@@ -127,19 +127,34 @@ export default function RuixenMoonChat({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const [uploadCount, setUploadCount] = useState(0);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !activeRole) return;
+    const suffix = file.name.toLowerCase().split('.').pop();
+    if (!suffix || !['pdf', 'txt', 'md', 'markdown'].includes(suffix)) {
+      setUploadNotice('Only PDF, TXT, and Markdown files are accepted.');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setUploadNotice('File exceeds the 2 MB Demo Mode limit.');
+      return;
+    }
+    if (uploadCount >= 3) {
+      setUploadNotice('This demo session already has three active uploads.');
+      return;
+    }
     setIsUploading(true);
     setUploadNotice(null);
     try {
-      const { uploadKnowledgeDocument } = await import("@/services/api");
       const userRole = activeRole.user_id === "alice" ? "tier1" : activeRole.user_id === "bob" ? "security_lead" : "public";
-      const res = await uploadKnowledgeDocument(file, activeRole.api_key, userRole);
-      setUploadNotice(`✅ Ingested ${res.filename} (${res.chunks_ingested} chunks)`);
+      const res = await uploadKnowledgeDocument(file, userRole);
+      setUploadCount((count) => count + 1);
+      setUploadNotice(`Ingested ${res.filename} (${res.chunks_ingested} chunks)`);
     } catch (err: any) {
-      setUploadNotice(`⚠️ Ingestion failed: ${err.message || 'Error uploading'}`);
+      const detail = err?.response?.data?.error || err?.response?.data?.detail;
+      setUploadNotice(detail || 'Upload processing is temporarily unavailable.');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -173,6 +188,9 @@ export default function RuixenMoonChat({
               {sessionTitle || "KRAKEN Operations Console"}
             </span>
           </div>
+          <span className="border border-emerald-700/60 bg-emerald-950/40 px-2 py-1 text-[10px] font-semibold text-emerald-300">
+            DEMO MODE · SYNTHETIC DATA
+          </span>
         </div>
       </header>
 
@@ -294,7 +312,7 @@ export default function RuixenMoonChat({
               type="file"
               ref={fileInputRef}
               onChange={handleFileChange}
-              accept=".pdf,.docx,.md,.txt"
+              accept=".pdf,.md,.markdown,.txt"
               className="hidden"
             />
 
@@ -307,7 +325,7 @@ export default function RuixenMoonChat({
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled || isUploading}
                   className="text-neutral-400 hover:text-white hover:bg-neutral-800/80 rounded-xl"
-                  title="Attach document (.pdf, .docx, .md, .txt) for Knowledge Base ingestion"
+                  title="Attach a private PDF, TXT, or Markdown document"
                 >
                   {isUploading ? <Loader2 className="w-4 h-4 animate-spin text-purple-400" /> : <Paperclip className="w-4 h-4" />}
                 </Button>

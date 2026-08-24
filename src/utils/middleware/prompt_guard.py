@@ -99,19 +99,16 @@ class PromptGuardMiddleware(BaseHTTPMiddleware):
                     if isinstance(message, str) and message:
                         guard_result = guard_message(message, operator_role)
                         if guard_result.detected_injection:
-                            truncated = message[:120] + ("..." if len(message) > 120 else "")
                             if not guard_result.blocked:
                                 log.warning(
                                     "gateway.prompt_injection_operator_bypass",
                                     path=request.url.path,
-                                    query_preview=truncated,
                                     trace_id=getattr(request.state, "trace_id", None),
                                 )
                             else:
                                 log.warning(
                                     "gateway.prompt_injection_blocked",
                                     path=request.url.path,
-                                    query_preview=truncated,
                                     trace_id=getattr(request.state, "trace_id", None),
                                 )
                                 return JSONResponse(

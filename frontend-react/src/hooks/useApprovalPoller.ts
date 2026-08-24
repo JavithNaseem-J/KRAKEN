@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 
 import { pollSessionStatus } from '../services/api';
-import { isPendingApproval, type RunResponse } from '../types/agent';
+import { isPendingApproval, isRunningExecution, type RunResponse } from '../types/agent';
 
 const POLL_INTERVAL_MS = 3_000;
 /** Match the HITL approval token TTL (15 minutes). */
@@ -12,7 +12,6 @@ const MAX_CONSECUTIVE_ERRORS = 5;
 interface UseApprovalPollerOptions {
   /** Session currently in `pending_approval` state, or null when idle. */
   pendingSessionId: string | null;
-  apiKey: string;
   onUpdate: (response: RunResponse) => void;
   onTimeout: (reason?: string) => void;
 }
@@ -24,7 +23,6 @@ interface UseApprovalPollerOptions {
  */
 export function useApprovalPoller({
   pendingSessionId,
-  apiKey,
   onUpdate,
   onTimeout,
 }: UseApprovalPollerOptions): void {
@@ -45,9 +43,10 @@ export function useApprovalPoller({
         onTimeoutRef.current('Security authorization request timed out after 15 minutes.');
         return;
       }
-      pollSessionStatus(pendingSessionId, apiKey)
+      pollSessionStatus(pendingSessionId)
         .then((res) => {
           consecutiveErrors = 0;
+          if (isRunningExecution(res)) return;
           if (!isPendingApproval(res)) {
             clearInterval(timer);
             onUpdateRef.current(res);
@@ -65,5 +64,5 @@ export function useApprovalPoller({
     }, POLL_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [pendingSessionId, apiKey]);
+  }, [pendingSessionId]);
 }

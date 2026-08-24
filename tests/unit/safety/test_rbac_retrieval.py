@@ -43,8 +43,13 @@ def test_rbac_filtering_admin_allowed():
 
 def test_rbac_filtering_incident_commander_allowed_sop():
     privileged_roles = {
-        "admin", "security_lead", "approver", "operator",
-        "soc_tier2", "soc_tier3", "incident_commander"
+        "admin",
+        "security_lead",
+        "approver",
+        "operator",
+        "soc_tier2",
+        "soc_tier3",
+        "incident_commander",
     }
     assert "incident_commander" in privileged_roles
     assert "tier1_analyst" not in privileged_roles
