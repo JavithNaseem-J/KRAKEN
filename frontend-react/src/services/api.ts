@@ -15,8 +15,16 @@ import type {
 } from '../types/agent';
 
 function getBaseUrl(envUrl: string | undefined, defaultLocal: string): string {
-  const configured = envUrl?.trim();
+  let configured = envUrl?.trim();
   if (configured) {
+    // If Render fromService provides a bare host without protocol (e.g. kraken-backend.onrender.com)
+    if (
+      !configured.startsWith('http://') &&
+      !configured.startsWith('https://') &&
+      !configured.startsWith('/')
+    ) {
+      configured = `https://${configured}`;
+    }
     return configured.replace(/\/$/, '');
   }
   return defaultLocal.replace(/\/$/, '');
