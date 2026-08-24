@@ -1,32 +1,79 @@
-# One same-origin Render service serves React and FastAPI from the production image.
+# ==============================================================================
+# KRAKEN — Render.com Unified Production Blueprint
+#
+# Deploy the complete KRAKEN Autonomous Agent platform (FastAPI Gateway,
+# LangGraph Orchestrator, HITL Approval Engine, and React UI) on Render.
+#
+# Quick Deploy:
+# 1. Push this repository to GitHub.
+# 2. Go to https://dashboard.render.com/blueprints -> "New Blueprint Instance".
+# 3. Select this repository and click "Apply".
+# 4. Under Environment variables in Render Dashboard, set your LLM_API_KEY.
+# ==============================================================================
 
 services:
   - type: web
     name: kraken
-    env: docker
+    runtime: docker
     plan: free
+    region: oregon
     dockerfilePath: Dockerfile
     dockerContext: .
     healthCheckPath: /health
+    autoDeploy: true
+
     envVars:
+      # ── Runtime & Environment ───────────────────────────────────────────────
       - key: PORT
-        value: 10000
+        value: "10000"
       - key: ENVIRONMENT
         value: prod
       - key: LOG_FORMAT
         value: json
-      - key: DEMO_COOKIE_SECURE
-        value: true
+      - key: LOG_LEVEL
+        value: INFO
+
+      # ── LLM Inference Provider (Groq / OpenAI) ──────────────────────────────
+      - key: LLM_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: LLM_MODEL
+        value: llama-3.3-70b-versatile
+      - key: LLM_FALLBACK_MODEL
+        value: llama-3.1-8b-instant
+      - key: LLM_TEMPERATURE
+        value: "0.0"
+      - key: LLM_MAX_TOKENS
+        value: "4096"
+      - key: LLM_API_KEY
+        sync: false
+
+      # ── Embeddings & Semantic Search ────────────────────────────────────────
+      - key: EMBEDDING_PROVIDER
+        value: cloud
       - key: QDRANT_CLOUD_INFERENCE_ENABLED
-        value: true
+        value: "true"
       - key: QDRANT_INFERENCE_MODEL
         value: sentence-transformers/all-MiniLM-L6-v2
       - key: QDRANT_INFERENCE_DIM
-        value: 384
+        value: "384"
       - key: KNOWLEDGE_COLLECTION_VERSION
         value: v2
+      - key: SEMANTIC_CACHE_ENABLED
+        value: "true"
+
+      # ── Security, CORS & HITL Approvals ─────────────────────────────────────
       - key: CORS_ALLOWED_ORIGINS
-        value: https://kraken-pme9.onrender.com
+        value: "*"
+      - key: HITL_SERVICE_TOKEN
+        generateValue: true
+      - key: DEMO_SESSION_SECRET
+        generateValue: true
+      - key: DEMO_COOKIE_SECURE
+        value: "true"
+      - key: GATEWAY_API_KEYS
+        value: "dev-key-analyst-default:tier1_analyst,dev-key-admin-default:admin,dev-key-security-lead:security_lead"
+
+      # ── Unified In-Process Service Routing ──────────────────────────────────
       - key: ORCHESTRATOR_URL
         value: http://orchestrator.internal
       - key: KNOWLEDGE_URL
@@ -35,20 +82,12 @@ services:
         value: http://action.internal
       - key: APPROVAL_URL
         value: http://approval.internal
-      - key: APPROVAL_BASE_URL
-        value: https://kraken-pme9.onrender.com
       - key: MEMORY_URL
         value: http://memory.internal
       - key: AUDIT_URL
         value: http://audit.internal
-      - key: LLM_API_KEY
-        sync: false
-      - key: DEMO_SESSION_SECRET
-        sync: false
-      - key: HITL_SERVICE_TOKEN
-        sync: false
-      - key: GATEWAY_API_KEYS
-        sync: false
+
+      # ── Optional External Backing Stores (Leave empty for In-Memory Mode) ──
       - key: POSTGRES_URL
         sync: false
       - key: POSTGRES_SYNC_URL
@@ -59,3 +98,9 @@ services:
         sync: false
       - key: QDRANT_API_KEY
         sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: LANGFUSE_HOST
+        value: https://cloud.langfuse.com
