@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from src.utils.models.action import ActionDefinition, ActionType, RiskLevel
 
 REGISTRY: dict[str, ActionDefinition] = {
@@ -83,6 +85,65 @@ REGISTRY: dict[str, ActionDefinition] = {
     ),
 }
 
+ACTION_POLICY_METADATA: dict[str, dict[str, Any]] = {
+    "create_ticket": {
+        "staging_permitted_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
+        "requires_four_eyes": True,
+        "authorizing_roles": ["incident_commander", "admin"],
+        "minimum_approver_clearance": "TIER_2",
+        "audit_tags": ["RBAC:TICKET_CREATION", "GOVERNANCE:FOUR_EYES"],
+    },
+    "quarantine_ip": {
+        "staging_permitted_roles": ["tier1_analyst", "incident_commander", "admin"],
+        "requires_four_eyes": True,
+        "authorizing_roles": ["incident_commander", "admin"],
+        "minimum_approver_clearance": "TIER_2",
+        "audit_tags": ["RBAC:FIREWALL_MUTATION", "NIST:AC-3", "GOVERNANCE:FOUR_EYES"],
+    },
+    "unlock_account": {
+        "staging_permitted_roles": ["tier1_analyst", "incident_commander", "admin"],
+        "requires_four_eyes": True,
+        "authorizing_roles": ["incident_commander", "admin"],
+        "minimum_approver_clearance": "TIER_2",
+        "audit_tags": ["RBAC:IDENTITY_MANAGEMENT", "NIST:AC-2", "GOVERNANCE:FOUR_EYES"],
+    },
+    "escalate": {
+        "staging_permitted_roles": ["tier1_analyst", "incident_commander", "admin"],
+        "requires_four_eyes": True,
+        "authorizing_roles": ["incident_commander", "admin"],
+        "minimum_approver_clearance": "TIER_2",
+        "audit_tags": ["RBAC:INCIDENT_ESCALATION", "GOVERNANCE:FOUR_EYES"],
+    },
+    "request_info": {
+        "staging_permitted_roles": ["tier1_analyst", "incident_commander", "admin"],
+        "requires_four_eyes": False,
+        "authorizing_roles": ["tier1_analyst", "incident_commander", "admin"],
+        "minimum_approver_clearance": "TIER_1",
+        "audit_tags": ["RBAC:INFO_REQUEST"],
+    },
+    "close": {
+        "staging_permitted_roles": ["incident_commander", "admin"],
+        "requires_four_eyes": True,
+        "authorizing_roles": ["incident_commander", "admin"],
+        "minimum_approver_clearance": "TIER_2",
+        "audit_tags": ["RBAC:TICKET_CLOSURE", "GOVERNANCE:FOUR_EYES"],
+    },
+    "write_json_file": {
+        "staging_permitted_roles": ["tier1_analyst", "incident_commander", "admin"],
+        "requires_four_eyes": True,
+        "authorizing_roles": ["incident_commander", "admin"],
+        "minimum_approver_clearance": "TIER_2",
+        "audit_tags": ["SANDBOX:WRITE_FILE", "GOVERNANCE:FOUR_EYES"],
+    },
+    "auto_respond": {
+        "staging_permitted_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
+        "requires_four_eyes": False,
+        "authorizing_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
+        "minimum_approver_clearance": "PUBLIC",
+        "audit_tags": ["KNOWLEDGE:READ_ONLY"],
+    },
+}
+
 
 def get_action(name: str) -> ActionDefinition:
     """Retrieve an action definition. Raises KeyError if not registered."""
@@ -94,3 +155,22 @@ def get_action(name: str) -> ActionDefinition:
             details={"available": list(REGISTRY.keys())},
         )
     return REGISTRY[name]
+
+
+def get_privileged_action_terms() -> tuple[str, ...]:
+    """Return operator-intent phrases derived from registered privileged actions."""
+    terms: set[str] = set()
+    for action in REGISTRY.values():
+        if not (action.requires_hitl or action.risk_level == RiskLevel.CRITICAL):
+            continue
+        normalized = action.name.replace("_", " ")
+        terms.add(action.name)
+        terms.add(normalized)
+
+        words = normalized.split()
+        if words:
+            terms.add(words[0])
+        if len(words) > 1:
+            terms.add(" ".join(words[:2]))
+
+    return tuple(sorted(terms, key=lambda item: (-len(item), item)))

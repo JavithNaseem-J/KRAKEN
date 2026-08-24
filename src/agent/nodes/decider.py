@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
-from src.safety.policy_engine import should_override_to_auto_respond
+from src.safety.policy_engine import get_policy_engine, should_override_to_auto_respond
 from src.utils.config import get_settings
 from src.utils.llm import get_llm
 from src.utils.registry import REGISTRY, get_action
@@ -51,6 +51,7 @@ async def decider_node(state: GraphState) -> dict:
     log.info("decider.start", session_id=session_id)
 
     user_message = state.get("user_message", "")
+    operator_role = state.get("operator_role", "end_user")
     reasoning = state.get("reasoning", "No reasoning available.")
 
     human_content = f"User request: {user_message}\n\nAnalysis:\n{reasoning}"
@@ -124,6 +125,27 @@ async def decider_node(state: GraphState) -> dict:
 
             if act_name in REGISTRY:
                 act_def = get_action(act_name)
+                policy_decision = get_policy_engine().evaluate_action_staging(
+                    act_name,
+                    operator_role,
+                    act_payload,
+                )
+                if not policy_decision.allowed:
+                    log.warning(
+                        "decider.policy_staging_denied",
+                        session_id=session_id,
+                        action=act_name,
+                        operator_role=operator_role,
+                        reason=policy_decision.reason,
+                    )
+                    return {
+                        "selected_action": None,
+                        "selected_actions": [],
+                        "action_payload": None,
+                        "risk_level": None,
+                        "evidence": decision.evidence,
+                        "error": policy_decision.reason,
+                    }
                 act_risk = act_def.risk_level.value
                 if act_risk == "CRITICAL":
                     highest_risk = "CRITICAL"

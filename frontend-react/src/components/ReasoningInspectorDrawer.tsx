@@ -2,20 +2,11 @@ import { Shield } from 'lucide-react';
 import Markdown from 'react-markdown';
 import type { ChatMessage } from '../types/agent';
 import { usePersona } from '../context/PersonaContext';
+import { formatReasoning } from '../lib/formatReasoning';
 
 interface ReasoningInspectorDrawerProps {
   message: ChatMessage | null;
   onClose: () => void;
-}
-
-function formatReasoning(text: string): string {
-  if (!text) return '';
-  return text
-    .replace(/(?:###|\*\*|#)*\s*(RELEVANT INFORMATION|GAPS OR CONFLICTS|CONCLUSION):?\s*(?:\*\*|#)*/gi, '\n\n#### **$1**\n\n')
-    .replace(/(?:^|\n)\s*[•\*]\s*/g, '\n- ')
-    .replace(/([^\n])\s*•\s*/g, '$1\n- ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 export function ReasoningInspectorDrawer({ message, onClose }: ReasoningInspectorDrawerProps) {

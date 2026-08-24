@@ -17,6 +17,7 @@ class GraphState(TypedDict):
     messages: Required[Annotated[list[dict[str, str]], operator.add]]
     final_answer: NotRequired[str]
     user_id: NotRequired[str]
+    operator_role: NotRequired[str]
     retrieved_chunks: NotRequired[list[ChunkDict]]
     reasoning: NotRequired[str]
     selected_action: NotRequired[str | None]

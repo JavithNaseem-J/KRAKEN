@@ -37,27 +37,26 @@ def get_pg_pool() -> Any:
         return None
 
     try:
-        from psycopg_pool import ConnectionPool
-
         from src.utils.config import get_settings
+        from src.utils.db import create_sync_pool
 
         settings = get_settings()
 
-        _pg_pool = ConnectionPool(
-            conninfo=settings.postgres_sync_url,
+        _pg_pool = create_sync_pool(
+            settings.postgres_sync_url,
             min_size=1,
             max_size=5,
             timeout=5.0,
             max_idle=settings.postgres_max_idle_time,
-            max_lifetime=1800.0,
-            kwargs={
-                "autocommit": True,
+            connect_kwargs={
                 "keepalives": settings.postgres_keepalives,
                 "keepalives_idle": settings.postgres_keepalives_idle,
                 "keepalives_interval": settings.postgres_keepalives_interval,
                 "keepalives_count": settings.postgres_keepalives_count,
             },
         )
+        if _pg_pool is None:
+            return None
         _init_pg_tickets_table(_pg_pool)
         log.info("ticket_handler.postgres_connected", url=pg_url.split("@")[-1])
     except Exception as exc:
@@ -424,7 +423,7 @@ def execute_create_ticket(
 def quarantine_ip_handler(
     ip: str, reason: str | None = None, evidence: str | None = None
 ) -> dict[str, Any]:
-    """Execute firewall quarantine action with verifiable downstream transaction attestation."""
+    """Return a dry-run firewall quarantine receipt without mutating a real firewall."""
     import random
     import uuid
     from datetime import UTC, datetime
@@ -435,35 +434,40 @@ def quarantine_ip_handler(
     tx_id = f"FW-SEC-{uuid.uuid4().hex[:8].upper()}"
     timestamp = datetime.now(UTC).isoformat()
 
-    log.info("action.quarantine_ip_executed", ip=clean_ip, reason=clean_reason, job_id=job_id)
+    log.info("action.quarantine_ip_dry_run", ip=clean_ip, reason=clean_reason, job_id=job_id)
     return {
         "success": True,
         "action": "quarantine_ip",
+        "mode": "dry_run",
+        "simulated": True,
         "ip": clean_ip,
-        "status": "blocked",
-        "target_system": "Palo Alto Networks Panorama API (Perimeter Firewall)",
+        "status": "would_block",
+        "target_system": "Palo Alto Networks Panorama API (simulated perimeter firewall)",
         "transaction_id": tx_id,
         "job_id": job_id,
         "firewall_rule": f"DENY_PERIMETER_{clean_ip}",
-        "verified_state": {
+        "simulated_receipt": {
             "rule_name": f"DENY_PERIMETER_{clean_ip}",
             "zone": "untrust",
             "action": "drop",
-            "active_sessions_terminated": random.randint(1, 7),
-            "commit_status": "SUCCESS",
+            "active_sessions_that_would_be_terminated": random.randint(1, 7),
+            "commit_status": "SIMULATED",
         },
-        "verification_status": "RECONCILED (Rule Active on Dataplane)",
+        "verification_status": "DRY_RUN_ONLY (No firewall state was changed or verified)",
         "executed_at": timestamp,
         "reason": clean_reason,
         "evidence": evidence or "",
-        "message": f"IP {clean_ip} has been quarantined on perimeter firewall ruleset (Job: {job_id}, Tx: {tx_id}). Active sessions terminated.",
+        "message": (
+            f"Dry-run quarantine prepared for IP {clean_ip}; no perimeter firewall rule was "
+            f"created and no sessions were terminated (Simulated Job: {job_id}, Tx: {tx_id})."
+        ),
     }
 
 
 def unlock_account_handler(
     user_email: str, reason: str | None = None, evidence: str | None = None
 ) -> dict[str, Any]:
-    """Execute Active Directory account unlock with verified downstream transaction receipt."""
+    """Return a dry-run account unlock receipt without mutating a real identity provider."""
     import uuid
     from datetime import UTC, datetime
 
@@ -473,76 +477,32 @@ def unlock_account_handler(
     timestamp = datetime.now(UTC).isoformat()
 
     log.info(
-        "action.unlock_account_executed", user_email=clean_email, reason=clean_reason, tx_id=tx_id
+        "action.unlock_account_dry_run", user_email=clean_email, reason=clean_reason, tx_id=tx_id
     )
     return {
         "success": True,
         "action": "unlock_account",
+        "mode": "dry_run",
+        "simulated": True,
         "user_email": clean_email,
-        "status": "unlocked",
-        "target_system": "Azure Active Directory / Microsoft Graph API",
+        "status": "would_unlock",
+        "target_system": "Azure Active Directory / Microsoft Graph API (simulated)",
         "transaction_id": tx_id,
-        "lockout_cleared": True,
-        "verified_state": {
-            "isLockedOut": False,
-            "accountEnabled": True,
-            "badPwdCount": 0,
-            "reconciliation": "VERIFIED_ACTIVE",
+        "lockout_cleared": False,
+        "simulated_receipt": {
+            "would_set_isLockedOut": False,
+            "would_leave_accountEnabled": True,
+            "would_reset_badPwdCount": 0,
+            "reconciliation": "SIMULATED_ONLY",
         },
-        "verification_status": "RECONCILED (State Verified via Read Probe)",
+        "verification_status": "DRY_RUN_ONLY (No identity-provider state was changed or verified)",
         "executed_at": timestamp,
         "reason": clean_reason,
         "evidence": evidence or "",
-        "message": f"Account for {clean_email} has been unlocked successfully via Microsoft Graph API (Tx: {tx_id}). Lockout counters reset.",
+        "message": (
+            f"Dry-run account unlock prepared for {clean_email}; no Microsoft Graph API mutation "
+            f"was sent and lockout counters were not reset (Simulated Tx: {tx_id})."
+        ),
     }
 
 
-def get_ticket_by_id(ticket_id: str) -> dict[str, Any] | None:
-    """Retrieve live ticket record directly from PostgreSQL or seed fallback with variant alias support."""
-    clean_id = ticket_id.strip()
-    num_match = re.search(r"\d+", clean_id)
-    target_num = num_match.group(0) if num_match else ""
-
-    # Generate candidate ID variants (e.g. TCK-1001, T-1001, TK-1001, 1001)
-    variants = [clean_id.lower()]
-    if target_num:
-        variants.extend(
-            [
-                f"tck-{target_num}",
-                f"t-{target_num}",
-                f"tk-{target_num}",
-                f"inc-{target_num}",
-                f"tck{target_num}",
-                f"t{target_num}",
-                target_num,
-            ]
-        )
-
-    pool = get_pg_pool()
-    if pool is not None:
-        try:
-            with pool.connection() as conn, conn.cursor() as cur:
-                cur.execute(
-                    "SELECT id, title, status, priority, payload FROM tickets WHERE LOWER(id) = ANY(%s) LIMIT 1;",
-                    (variants,),
-                )
-                row = cur.fetchone()
-                if row:
-                    payload = row[4] if isinstance(row[4], dict) else json.loads(row[4] or "{}")
-                    return {
-                        "id": row[0],
-                        "title": row[1],
-                        "status": row[2],
-                        "priority": row[3],
-                        "payload": payload,
-                    }
-        except Exception as exc:
-            log.warning("ticket_handler.get_ticket_pg_failed", ticket_id=clean_id, error=str(exc))
-
-    for t in _load_tickets():
-        t_id = str(t.get("id", "") or t.get("ticket_id", "")).lower()
-        t_num = re.search(r"\d+", t_id)
-        t_num_str = t_num.group(0) if t_num else ""
-        if t_id in variants or (target_num and t_num_str == target_num):
-            return t
-    return None

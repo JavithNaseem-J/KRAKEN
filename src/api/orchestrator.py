@@ -32,6 +32,7 @@ from src.agent.agent import build_graph_async
 from src.utils.auth import verify_service_token
 from src.utils.cache import SemanticCache
 from src.utils.config import get_settings
+from src.utils.db import create_sync_pool
 from src.utils.http_client import (
     create_async_http_client,
     internal_request,
@@ -171,25 +172,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 2. Open a sync psycopg connection pool for PostgresSaver if configured
     conn_pool = None
     if ConnectionPool is not None and settings.postgres_sync_url:
-        try:
-            conn_pool = ConnectionPool(
-                conninfo=settings.postgres_sync_url,
-                min_size=1,
-                max_size=10,
-                max_idle=settings.postgres_max_idle_time,
-                max_lifetime=1800.0,
-                open=True,
-                kwargs={
-                    "autocommit": True,
-                    "keepalives": settings.postgres_keepalives,
-                    "keepalives_idle": settings.postgres_keepalives_idle,
-                    "keepalives_interval": settings.postgres_keepalives_interval,
-                    "keepalives_count": settings.postgres_keepalives_count,
-                },
+        conn_pool = create_sync_pool(
+            settings.postgres_sync_url,
+            min_size=1,
+            max_size=10,
+            max_idle=settings.postgres_max_idle_time,
+            connect_kwargs={
+                "keepalives": settings.postgres_keepalives,
+                "keepalives_idle": settings.postgres_keepalives_idle,
+                "keepalives_interval": settings.postgres_keepalives_interval,
+                "keepalives_count": settings.postgres_keepalives_count,
+            },
+        )
+        if conn_pool is None:
+            log.warning(
+                "orchestrator.postgres_pool_failed",
+                error="shared sync pool creation returned None",
             )
-        except Exception as exc:
-            log.warning("orchestrator.postgres_pool_failed", error=str(exc))
-            conn_pool = None
     app.state.conn_pool = conn_pool
 
     # 4. Build the compiled graph (AsyncPostgresSaver with MemorySaver fallback)
@@ -344,6 +343,7 @@ def _initial_state(body: QueryRequest, session_messages: list[dict[str, Any]]) -
     return {
         "session_id": body.session_id,
         "user_id": body.user_id,
+        "operator_role": body.metadata.get("operator_role", "end_user"),
         "user_message": body.message,
         "messages": session_messages,
         "selected_action": None,

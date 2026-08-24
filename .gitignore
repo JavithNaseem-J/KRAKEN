@@ -192,7 +192,9 @@ cython_debug/
 # AI Assistants & Agent Tooling
 .opencode/
 .gemini/
+# Local skill/plugin cache.
 .agents/
+.codex/
 
 # Abstra
 .abstra/
@@ -244,7 +246,6 @@ data/qdrant/
 data/workspace/*.json
 data/workspace/*.bak.json
 !data/workspace/README.txt
-/openspec
 
 # Playwright test suite & configuration
 e2e/
@@ -260,10 +261,66 @@ playwright/.auth/
 .playwright/
 
 # Local directories excluded from git repository
-tests/
 e2e/
-docs/
 .agent/
 .opencode/
-openspec/
 
+# Repo-owned test/spec artifacts: keep broad directories ignored, then expose
+# only the tests and OpenSpec change files needed for this remediation.
+tests/*
+!tests/conftest.py
+!tests/evals/
+tests/evals/*
+!tests/evals/eval_harness.py
+!tests/evals/llm_judge.py
+!tests/evals/test_rag_evals.py
+!tests/integration/
+tests/integration/*
+!tests/integration/conftest.py
+!tests/integration/test_consolidated_flow.py
+!tests/integration/test_offline_gateway_boot.py
+!tests/unit/
+tests/unit/*
+!tests/unit/agent/
+tests/unit/agent/*
+!tests/unit/agent/test_async_concurrency.py
+!tests/unit/agent/test_decider.py
+!tests/unit/agent/test_executor.py
+!tests/unit/agent/test_graph_nodes.py
+!tests/unit/agent/test_orchestrator.py
+!tests/unit/agent/test_prompt_registry.py
+!tests/unit/agent/test_truthful_responses.py
+!tests/unit/api/
+tests/unit/api/*
+!tests/unit/api/test_action.py
+!tests/unit/api/test_approval.py
+!tests/unit/api/test_approval_queue.py
+!tests/unit/api/test_audit.py
+!tests/unit/api/test_editable_hitl_ticket_fields.py
+!tests/unit/api/test_gateway.py
+!tests/unit/api/test_gateway_prompt_guard.py
+!tests/unit/api/test_hitl_and_tickets.py
+!tests/unit/api/test_html_export.py
+!tests/unit/api/test_knowledge.py
+!tests/unit/api/test_memory.py
+!tests/unit/safety/
+tests/unit/safety/*
+!tests/unit/safety/test_path_validator.py
+!tests/unit/safety/test_policy_engine.py
+!tests/unit/safety/test_rbac_retrieval.py
+!tests/unit/utils/
+tests/unit/utils/*
+!tests/unit/utils/test_audit_store.py
+!tests/unit/utils/test_caching.py
+!tests/unit/utils/test_cloud_host_validation.py
+!tests/unit/utils/test_config_validation.py
+!tests/unit/utils/test_db_schema.py
+!tests/unit/utils/test_embedder.py
+!tests/unit/utils/test_file_ingestion.py
+!tests/unit/utils/test_knowledge_loaders.py
+!tests/unit/utils/test_observability.py
+!tests/unit/utils/test_semantic_cache.py
+!tests/unit/utils/test_short_term_memory.py
+!tests/unit/utils/test_ticket_handler.py
+
+openspec/

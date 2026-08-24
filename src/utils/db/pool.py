@@ -41,21 +41,24 @@ def create_sync_pool(
     min_size: int = 1,
     max_size: int = 10,
     max_idle: float = 300.0,
+    timeout: float = 5.0,
+    max_lifetime: float = 1800.0,
+    connect_kwargs: dict[str, Any] | None = None,
 ) -> Any:
     """Create and return a sync psycopg_pool ConnectionPool."""
     try:
         from psycopg_pool import ConnectionPool
 
+        kwargs = {"autocommit": True, **(connect_kwargs or {})}
         pool = ConnectionPool(
             conninfo=postgres_sync_url,
             min_size=min_size,
             max_size=max_size,
+            timeout=timeout,
             max_idle=max_idle,
-            max_lifetime=1800.0,
+            max_lifetime=max_lifetime,
             open=True,
-            kwargs={
-                "autocommit": True,
-            },
+            kwargs=kwargs,
         )
         return pool
     except Exception as exc:

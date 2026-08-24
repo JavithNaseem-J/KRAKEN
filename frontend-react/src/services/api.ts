@@ -251,8 +251,8 @@ export async function streamAgentQuery(
   return finalResponse;
 }
 
-/** Export a session as a downloadable incident briefing PDF report. */
-export async function exportSessionPDF(
+/** Export a session as a downloadable incident briefing HTML report. */
+export async function exportSessionHTML(
   sessionId: string,
   messages: unknown[],
   persona: { label: string; title: string },
@@ -268,7 +268,7 @@ export async function exportSessionPDF(
   });
 
   if (!response.ok) {
-    throw new Error(`PDF export failed with status ${response.status}`);
+    throw new Error(`HTML export failed with status ${response.status}`);
   }
 
   return await response.blob();

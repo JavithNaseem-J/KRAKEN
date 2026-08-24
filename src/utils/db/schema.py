@@ -1,51 +1,38 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import structlog
 
 log = structlog.get_logger(__name__)
 
+_SCHEMA_SQL_PATH = Path(__file__).with_name("schema.sql")
+
+
+def _load_schema_sql() -> str:
+    return _SCHEMA_SQL_PATH.read_text(encoding="utf-8")
+
+
+SCHEMA_DDL = _load_schema_sql()
+
+
+def _extract_section(sql: str, section_name: str) -> str:
+    start = f"-- section:{section_name}:start"
+    end = f"-- section:{section_name}:end"
+    if start not in sql or end not in sql:
+        raise RuntimeError(f"Schema section '{section_name}' is missing.")
+    return sql.split(start, 1)[1].split(end, 1)[0].strip()
+
+
+CREATE_TICKETS_TABLE_DDL = _extract_section(SCHEMA_DDL, "tickets")
+
 
 async def ensure_schema_async(pool: Any) -> None:
     """Execute idempotent DDL statements against an asyncpg connection pool."""
-    ddl = """
-    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-    CREATE TABLE IF NOT EXISTS audit_log (
-        id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-        timestamp     TIMESTAMPTZ NOT NULL    DEFAULT NOW(),
-        session_id    VARCHAR(64) NOT NULL,
-        user_id       VARCHAR(64) NOT NULL,
-        action_type   VARCHAR(32) NOT NULL,
-        action_name   VARCHAR(64) NOT NULL,
-        risk_level    VARCHAR(16) NOT NULL,
-        hitl_required BOOLEAN     NOT NULL,
-        hitl_decision VARCHAR(16),
-        status        VARCHAR(16) NOT NULL,
-        payload       JSONB,
-        result        JSONB,
-        reasoning     TEXT,
-        previous_hash VARCHAR(64) NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
-        entry_hash    VARCHAR(64)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp DESC);
-    CREATE INDEX IF NOT EXISTS idx_audit_log_session ON audit_log (session_id, timestamp DESC);
-    CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log (user_id, timestamp DESC);
-
-    CREATE TABLE IF NOT EXISTS tickets (
-        id VARCHAR(64) PRIMARY KEY,
-        title TEXT,
-        status VARCHAR(32) NOT NULL DEFAULT 'open',
-        priority VARCHAR(32) NOT NULL DEFAULT 'medium',
-        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    );
-    """
     try:
         async with pool.acquire() as conn:
-            await conn.execute(ddl)
+            await conn.execute(SCHEMA_DDL)
         log.info("db.ensure_schema_complete")
     except Exception as exc:
         log.warning("db.ensure_schema_failed", error=str(exc))
@@ -53,43 +40,9 @@ async def ensure_schema_async(pool: Any) -> None:
 
 def ensure_schema_sync(pool: Any) -> None:
     """Execute idempotent DDL statements against a psycopg_pool ConnectionPool."""
-    ddl = """
-    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
-    CREATE TABLE IF NOT EXISTS audit_log (
-        id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-        timestamp     TIMESTAMPTZ NOT NULL    DEFAULT NOW(),
-        session_id    VARCHAR(64) NOT NULL,
-        user_id       VARCHAR(64) NOT NULL,
-        action_type   VARCHAR(32) NOT NULL,
-        action_name   VARCHAR(64) NOT NULL,
-        risk_level    VARCHAR(16) NOT NULL,
-        hitl_required BOOLEAN     NOT NULL,
-        hitl_decision VARCHAR(16),
-        status        VARCHAR(16) NOT NULL,
-        payload       JSONB,
-        result        JSONB,
-        reasoning     TEXT,
-        previous_hash VARCHAR(64) NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
-        entry_hash    VARCHAR(64)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp DESC);
-    CREATE INDEX IF NOT EXISTS idx_audit_log_session ON audit_log (session_id, timestamp DESC);
-    CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log (user_id, timestamp DESC);
-
-    CREATE TABLE IF NOT EXISTS tickets (
-        id VARCHAR(64) PRIMARY KEY,
-        title TEXT,
-        status VARCHAR(32) NOT NULL DEFAULT 'open',
-        priority VARCHAR(32) NOT NULL DEFAULT 'medium',
-        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-    );
-    """
     try:
         with pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(ddl)
+            cur.execute(SCHEMA_DDL)
             conn.commit()
         log.info("db.ensure_schema_sync_complete")
     except Exception as exc:

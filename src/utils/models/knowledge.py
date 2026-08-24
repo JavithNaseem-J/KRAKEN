@@ -34,16 +34,6 @@ class FAQDocument(BaseModel):
     category: str = Field(default="policy")
 
 
-class SLADocument(BaseModel):
-    """Schema for raw SLA markdown/JSON records loaded during ingestion."""
-
-    rule_id: str = Field(..., min_length=1)
-    severity: str = Field(..., min_length=1)
-    response_sla_minutes: int = Field(default=60, ge=1)
-    resolution_sla_minutes: int = Field(default=240, ge=1)
-    description: str = Field(..., min_length=1)
-
-
 class KnowledgeChunkPayload(BaseModel):
     """Payload schema for points upserted into Qdrant vector database."""
 

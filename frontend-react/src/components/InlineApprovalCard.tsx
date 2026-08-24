@@ -6,6 +6,7 @@ import Markdown from 'react-markdown';
 import { fetchApprovalDetails, submitApprovalDecision } from '../services/api';
 import type { ApprovalDetails, ApprovalState, QueryResponse } from '../types/agent';
 import { usePersona } from '../context/PersonaContext';
+import { formatReasoning } from '../lib/formatReasoning';
 
 interface InlineApprovalCardProps {
   approvalId: string;
@@ -14,16 +15,6 @@ interface InlineApprovalCardProps {
   isExecuting?: boolean;
   onResolved: (approvalId: string, decision: 'approve' | 'reject', response?: QueryResponse) => void;
   onExpired?: (approvalId: string) => void;
-}
-
-function formatReasoning(text: string): string {
-  if (!text) return '';
-  return text
-    .replace(/(?:###|\*\*|#)*\s*(RELEVANT INFORMATION|GAPS OR CONFLICTS|CONCLUSION):?\s*(?:\*\*|#)*/gi, '\n\n#### **$1**\n\n')
-    .replace(/(?:^|\n)\s*[•\*]\s*/g, '\n- ')
-    .replace(/([^\n])\s*•\s*/g, '$1\n- ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 function formatCountdown(seconds: number): string {

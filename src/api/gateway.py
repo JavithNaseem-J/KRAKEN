@@ -27,11 +27,13 @@ from src.utils.http_client import (
 from src.utils.logging import configure_logging
 from src.utils.middleware.prompt_guard import (
     PromptGuardMiddleware,
-    check_prompt_injection,
-    sanitize_pii,
+    guard_message,
+    is_operator_role,
 )
 from src.utils.middleware.rate_limit import RateLimiterDatabaseError, SlidingWindowRateLimiter
 from src.utils.middleware.trace_id import TraceIdMiddleware
+from src.utils.models.agent import QueryRequest
+from src.utils.registry import get_privileged_action_terms
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -336,28 +338,115 @@ async def root() -> dict[str, Any]:
     }
 
 
-# Operator-Privilege Intent Gate
-# Keywords that signal a state-mutating / high-privilege operation intent.
-# If a message contains these keywords the request MUST carry
-# the X-Operator-Role: operator header, otherwise it is denied before the LLM
-# is ever invoked — preventing ticket data leakage via the HITL approval card.
-_HIGH_PRIVILEGE_PATTERNS = re.compile(
-    r"\b(escalate|write\s+(?:a\s+)?(?:json|report|file)|close\s+ticket|"
-    r"delete|purge|remove\s+ticket|wipe|create\s+(?:a\s+)?(?:new\s+)?ticket)\b",
-    re.IGNORECASE,
-)
+def _compile_privileged_action_pattern() -> re.Pattern[str]:
+    terms = get_privileged_action_terms()
+    escaped_terms = [re.escape(term).replace(r"\ ", r"\s+") for term in terms]
+    return re.compile(r"\b(" + "|".join(escaped_terms) + r")\b", re.IGNORECASE)
 
-_ALLOWED_OPERATOR_ROLES: frozenset[str] = frozenset(
-    {
-        "operator",
-        "tier1_analyst",
-        "incident_commander",
-        "security_lead",
-        "admin",
-        "soc_tier1",
-        "soc_tier2",
-    }
-)
+
+_HIGH_PRIVILEGE_PATTERNS = _compile_privileged_action_pattern()
+
+
+async def _prepare_agent_request(
+    request: Request,
+) -> tuple[dict[str, Any] | None, dict[str, str], JSONResponse | None]:
+    allowed, rl_headers = await _check_rate_limit(request)
+    if not allowed:
+        return (
+            None,
+            rl_headers,
+            JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"error": "Rate limit exceeded. Try again shortly."},
+                headers=rl_headers,
+            ),
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return (
+            None,
+            rl_headers,
+            JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Invalid JSON body."},
+            ),
+        )
+
+    if not isinstance(body, dict):
+        return (
+            None,
+            rl_headers,
+            JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={"error": "Invalid request payload", "details": []},
+            ),
+        )
+
+    user_id = getattr(request.state, "user_id", "anonymous")
+    body.setdefault("session_id", str(uuid.uuid4()))
+    body["user_id"] = user_id
+    metadata = body.setdefault("metadata", {})
+    if isinstance(metadata, dict):
+        metadata["operator_role"] = (
+            request.headers.get("X-Operator-Role", "end_user").strip().lower()
+        )
+
+    message = body.get("message", "")
+    if isinstance(message, str) and message:
+        operator_role = request.headers.get("X-Operator-Role")
+        guard_result = guard_message(message, operator_role)
+        if guard_result.blocked:
+            log.warning("gateway.prompt_injection_blocked", path=request.url.path)
+            return (
+                None,
+                rl_headers,
+                JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"error": "Request blocked: potential prompt injection detected."},
+                ),
+            )
+        if guard_result.redacted_pii:
+            body["message"] = guard_result.sanitized_text
+            message = guard_result.sanitized_text
+
+        if _HIGH_PRIVILEGE_PATTERNS.search(message) and not is_operator_role(operator_role):
+            log.warning(
+                "gateway.privilege_escalation_denied",
+                user_id=user_id,
+                message_preview=message[:80],
+            )
+            return (
+                None,
+                rl_headers,
+                JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={
+                        "error": (
+                            "Access denied. This operation requires operator-level clearance. "
+                            "Please contact your security administrator to request elevated access."
+                        )
+                    },
+                ),
+            )
+
+    try:
+        QueryRequest.model_validate(body)
+    except ValidationError as err:
+        return (
+            None,
+            rl_headers,
+            JSONResponse(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                content={
+                    "error": "Invalid request payload",
+                    "details": err.errors(include_url=False),
+                },
+            ),
+        )
+
+    return body, rl_headers, None
 
 
 @app.post(
@@ -370,75 +459,10 @@ async def run(request: Request) -> JSONResponse:
     Submit a query to the agent.
     Rate limited per user. Proxied to orchestrator /run.
     """
-    allowed, rl_headers = await _check_rate_limit(request)
-    if not allowed:
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"error": "Rate limit exceeded. Try again shortly."},
-            headers=rl_headers,
-        )
-
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST, content={"error": "Invalid JSON body."}
-        )
-
-    # Ensure session_id and user_id defaults if not provided
-    if isinstance(body, dict):
-        body.setdefault("session_id", str(uuid.uuid4()))
-        body.setdefault("user_id", "anonymous")
-
-    message = body.get("message", "") if isinstance(body, dict) else ""
-    if isinstance(message, str) and message:
-        is_operator = (
-            request.headers.get("X-Operator-Role", "").strip().lower() in _ALLOWED_OPERATOR_ROLES
-        )
-        if check_prompt_injection(message) and not is_operator:
-            log.warning("gateway.prompt_injection_blocked", path=request.url.path)
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Request blocked: potential prompt injection detected."},
-            )
-        sanitized = sanitize_pii(message)
-        if sanitized != message:
-            body["message"] = sanitized
-            message = sanitized
-
-    # Operator Privilege Intent Gate
-    # Check if the message contains high-privilege operational intent keywords.
-    # If so, require the X-Operator-Role: operator header before forwarding.
-    # This prevents unauthenticated users from triggering HITL cards that
-    # expose internal ticket data.
-    if isinstance(message, str) and _HIGH_PRIVILEGE_PATTERNS.search(message):
-        operator_role = request.headers.get("X-Operator-Role", "").strip().lower()
-        if operator_role not in _ALLOWED_OPERATOR_ROLES:
-            user_id = getattr(request.state, "user_id", "anonymous")
-            log.warning(
-                "gateway.privilege_escalation_denied",
-                user_id=user_id,
-                message_preview=message[:80],
-            )
-            return JSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={
-                    "error": (
-                        "Access denied. This operation requires operator-level clearance. "
-                        "Please contact your security administrator to request elevated access."
-                    )
-                },
-            )
-
-    try:
-        from src.utils.models.agent import QueryRequest
-
-        QueryRequest.model_validate(body)
-    except ValidationError as err:
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={"error": "Invalid request payload", "details": err.errors(include_url=False)},
-        )
+    body, rl_headers, error_response = await _prepare_agent_request(request)
+    if error_response is not None:
+        return error_response
+    assert body is not None
 
     response = await _proxy(request, f"{settings.orchestrator_url}/run", body)
 
@@ -459,69 +483,10 @@ async def run_stream(request: Request) -> Any:
     Submit a query to the agent with real-time SSE streaming.
     Rate limited per user. Proxied to orchestrator /run/stream.
     """
-    allowed, rl_headers = await _check_rate_limit(request)
-    if not allowed:
-        return JSONResponse(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            content={"error": "Rate limit exceeded. Try again shortly."},
-            headers=rl_headers,
-        )
-
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST, content={"error": "Invalid JSON body."}
-        )
-
-    user_id = getattr(request.state, "user_id", "anonymous")
-    if isinstance(body, dict):
-        body.setdefault("session_id", str(uuid.uuid4()))
-        body["user_id"] = user_id
-
-    message = body.get("message", "") if isinstance(body, dict) else ""
-    if isinstance(message, str) and message:
-        is_operator = (
-            request.headers.get("X-Operator-Role", "").strip().lower() in _ALLOWED_OPERATOR_ROLES
-        )
-        if check_prompt_injection(message) and not is_operator:
-            log.warning("gateway.prompt_injection_blocked", path=request.url.path)
-            return JSONResponse(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                content={"error": "Request blocked: potential prompt injection detected."},
-            )
-        sanitized = sanitize_pii(message)
-        if sanitized != message:
-            body["message"] = sanitized
-            message = sanitized
-
-    if isinstance(message, str) and _HIGH_PRIVILEGE_PATTERNS.search(message):
-        operator_role = request.headers.get("X-Operator-Role", "").strip().lower()
-        if operator_role not in _ALLOWED_OPERATOR_ROLES:
-            log.warning(
-                "gateway.privilege_escalation_denied",
-                user_id=user_id,
-                message_preview=message[:80],
-            )
-            return JSONResponse(
-                status_code=status.HTTP_403_FORBIDDEN,
-                content={
-                    "error": (
-                        "Access denied. This operation requires operator-level clearance. "
-                        "Please contact your security administrator to request elevated access."
-                    )
-                },
-            )
-
-    try:
-        from src.utils.models.agent import QueryRequest
-
-        QueryRequest.model_validate(body)
-    except ValidationError as err:
-        return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            content={"error": "Invalid request payload", "details": err.errors(include_url=False)},
-        )
+    body, rl_headers, error_response = await _prepare_agent_request(request)
+    if error_response is not None:
+        return error_response
+    assert body is not None
 
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
     forward_headers = service_headers(trace_id=request_id)
@@ -660,24 +625,35 @@ async def upload_knowledge(
     allowed_roles: Annotated[str, Form()] = "public",
 ) -> JSONResponse:
     """Proxy multipart file upload to Knowledge Service."""
-    request_id = str(uuid.uuid4())
+    request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
     headers = service_headers(trace_id=request_id)
     try:
         content_bytes = await file.read()
         files = {"file": (file.filename, content_bytes, file.content_type)}
         data = {"allowed_roles": allowed_roles}
-        async with create_async_http_client(timeout_seconds=60.0) as client:
-            resp = await client.post(
-                f"{settings.knowledge_url}/upload",
-                files=files,
-                data=data,
-                headers=headers,
-            )
-            return JSONResponse(
-                content=resp.json(),
-                status_code=resp.status_code,
-                headers={"X-Request-Id": request_id},
-            )
+        resp = await internal_request(
+            "POST",
+            f"{settings.knowledge_url}/upload",
+            files=files,
+            data=data,
+            headers=headers,
+            timeout_seconds=60.0,
+        )
+        return JSONResponse(
+            content=resp.json(),
+            status_code=resp.status_code,
+            headers={"X-Request-Id": request_id},
+        )
+    except httpx.HTTPStatusError as exc:
+        try:
+            content = exc.response.json()
+        except ValueError:
+            content = {"error": exc.response.text[:300]}
+        return JSONResponse(
+            content=content,
+            status_code=exc.response.status_code,
+            headers={"X-Request-Id": request_id},
+        )
     except Exception as exc:
         log.error("gateway.upload_proxy_failed", error=str(exc))
         return JSONResponse(
@@ -690,7 +666,7 @@ async def upload_knowledge(
 @app.post("/v1/report/export", tags=["report"])
 async def export_report(request: Request) -> Response:
     """
-    Generate and export a formatted Executive Incident Briefing PDF report for a session.
+    Generate and export a formatted Executive Incident Briefing HTML report for a session.
     """
     try:
         payload = await request.json()

@@ -1,3 +1,1 @@
-from .error import ErrorResponse
-
-__all__ = ["ErrorResponse"]
+__all__: list[str] = []

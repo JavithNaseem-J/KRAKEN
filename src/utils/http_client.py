@@ -136,6 +136,7 @@ async def internal_request(
     *,
     json_payload: dict[str, Any] | None = None,
     data: dict[str, Any] | None = None,
+    files: Any | None = None,
     content: bytes | None = None,
     headers: dict[str, str] | None = None,
     timeout_seconds: float = 60.0,
@@ -161,12 +162,20 @@ async def internal_request(
                 url,
                 json=json_payload,
                 data=data,
+                files=files,
                 content=content,
                 headers=headers,
             )
     elif client is not None:
         request_fn = getattr(client, resolved_method.lower())
-        resp = await request_fn(url, json=json_payload, data=data, content=content, headers=headers)
+        resp = await request_fn(
+            url,
+            json=json_payload,
+            data=data,
+            files=files,
+            content=content,
+            headers=headers,
+        )
     else:
         async with create_async_http_client(timeout_seconds=timeout_seconds) as fallback_client:
             resp = await fallback_client.request(
@@ -174,6 +183,7 @@ async def internal_request(
                 url,
                 json=json_payload,
                 data=data,
+                files=files,
                 content=content,
                 headers=headers,
             )

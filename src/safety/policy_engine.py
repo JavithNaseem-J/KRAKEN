@@ -8,6 +8,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from src.utils.constants import TICKET_ID_REGEX
+from src.utils.registry import ACTION_POLICY_METADATA, REGISTRY
 
 log = structlog.get_logger(__name__)
 
@@ -46,8 +47,12 @@ class ClearanceLevel(StrEnum):
 
 ROLE_CLEARANCE_MAP: dict[str, ClearanceLevel] = {
     "end_user": ClearanceLevel.PUBLIC,
+    "operator": ClearanceLevel.TIER_1,
     "tier1_analyst": ClearanceLevel.TIER_1,
+    "soc_tier1": ClearanceLevel.TIER_1,
+    "soc_tier2": ClearanceLevel.TIER_2,
     "incident_commander": ClearanceLevel.TIER_2,
+    "security_lead": ClearanceLevel.TIER_2,
     "admin": ClearanceLevel.ADMIN,
 }
 
@@ -57,6 +62,18 @@ CLEARANCE_HIERARCHY: dict[ClearanceLevel, int] = {
     ClearanceLevel.TIER_2: 2,
     ClearanceLevel.ADMIN: 3,
 }
+
+ROLE_ALIASES: dict[str, str] = {
+    "operator": "tier1_analyst",
+    "soc_tier1": "tier1_analyst",
+    "soc_tier2": "incident_commander",
+    "security_lead": "incident_commander",
+}
+
+
+def normalize_operator_role(role: str | None) -> str:
+    clean_role = (role or "end_user").lower()
+    return ROLE_ALIASES.get(clean_role, clean_role)
 
 
 class PolicyDecision(BaseModel):
@@ -88,81 +105,26 @@ class ActionPolicyRule(BaseModel):
     audit_tags: list[str]
 
 
-# Declarative Policy Rules Matrix
-DEFAULT_ACTION_POLICIES: dict[str, ActionPolicyRule] = {
-    "create_ticket": ActionPolicyRule(
-        action_name="create_ticket",
-        description="Stage and create a new IT or security support ticket.",
-        staging_permitted_roles=["end_user", "tier1_analyst", "incident_commander", "admin"],
-        requires_four_eyes=True,
-        authorizing_roles=["incident_commander", "admin"],
-        minimum_approver_clearance=ClearanceLevel.TIER_2,
-        audit_tags=["RBAC:TICKET_CREATION", "GOVERNANCE:FOUR_EYES"],
-    ),
-    "quarantine_ip": ActionPolicyRule(
-        action_name="quarantine_ip",
-        description="Block external IP on perimeter firewall ruleset.",
-        staging_permitted_roles=["tier1_analyst", "incident_commander", "admin"],
-        requires_four_eyes=True,
-        authorizing_roles=["incident_commander", "admin"],
-        minimum_approver_clearance=ClearanceLevel.TIER_2,
-        audit_tags=["RBAC:FIREWALL_MUTATION", "NIST:AC-3", "GOVERNANCE:FOUR_EYES"],
-    ),
-    "unlock_account": ActionPolicyRule(
-        action_name="unlock_account",
-        description="Clear Active Directory / Microsoft Graph account lockout.",
-        staging_permitted_roles=["tier1_analyst", "incident_commander", "admin"],
-        requires_four_eyes=True,
-        authorizing_roles=["incident_commander", "admin"],
-        minimum_approver_clearance=ClearanceLevel.TIER_2,
-        audit_tags=["RBAC:IDENTITY_MANAGEMENT", "NIST:AC-2", "GOVERNANCE:FOUR_EYES"],
-    ),
-    "escalate": ActionPolicyRule(
-        action_name="escalate",
-        description="Escalate high-severity incident ticket to emergency engineering.",
-        staging_permitted_roles=["tier1_analyst", "incident_commander", "admin"],
-        requires_four_eyes=True,
-        authorizing_roles=["incident_commander", "admin"],
-        minimum_approver_clearance=ClearanceLevel.TIER_2,
-        audit_tags=["RBAC:INCIDENT_ESCALATION", "GOVERNANCE:FOUR_EYES"],
-    ),
-    "request_info": ActionPolicyRule(
-        action_name="request_info",
-        description="Request supplemental details from ticket requester.",
-        staging_permitted_roles=["tier1_analyst", "incident_commander", "admin"],
-        requires_four_eyes=False,
-        authorizing_roles=["tier1_analyst", "incident_commander", "admin"],
-        minimum_approver_clearance=ClearanceLevel.TIER_1,
-        audit_tags=["RBAC:INFO_REQUEST"],
-    ),
-    "close": ActionPolicyRule(
-        action_name="close",
-        description="Mark verified incident ticket resolved and closed.",
-        staging_permitted_roles=["incident_commander", "admin"],
-        requires_four_eyes=True,
-        authorizing_roles=["incident_commander", "admin"],
-        minimum_approver_clearance=ClearanceLevel.TIER_2,
-        audit_tags=["RBAC:TICKET_CLOSURE", "GOVERNANCE:FOUR_EYES"],
-    ),
-    "write_json_file": ActionPolicyRule(
-        action_name="write_json_file",
-        description="Write structured report to local sandbox.",
-        staging_permitted_roles=["tier1_analyst", "incident_commander", "admin"],
-        requires_four_eyes=True,
-        authorizing_roles=["incident_commander", "admin"],
-        minimum_approver_clearance=ClearanceLevel.TIER_2,
-        audit_tags=["SANDBOX:WRITE_FILE", "GOVERNANCE:FOUR_EYES"],
-    ),
-    "auto_respond": ActionPolicyRule(
-        action_name="auto_respond",
-        description="Automated knowledge base Q&A and status reporting.",
-        staging_permitted_roles=["end_user", "tier1_analyst", "incident_commander", "admin"],
-        requires_four_eyes=False,
-        authorizing_roles=["end_user", "tier1_analyst", "incident_commander", "admin"],
-        minimum_approver_clearance=ClearanceLevel.PUBLIC,
-        audit_tags=["KNOWLEDGE:READ_ONLY"],
-    ),
-}
+def build_action_policies() -> dict[str, ActionPolicyRule]:
+    """Build policy rules from the action registry and registry-owned metadata."""
+    policies: dict[str, ActionPolicyRule] = {}
+    for action_name, action_def in REGISTRY.items():
+        metadata = ACTION_POLICY_METADATA[action_name]
+        policies[action_name] = ActionPolicyRule(
+            action_name=action_name,
+            description=action_def.description,
+            staging_permitted_roles=list(metadata["staging_permitted_roles"]),
+            requires_four_eyes=bool(metadata["requires_four_eyes"]),
+            authorizing_roles=list(metadata["authorizing_roles"]),
+            minimum_approver_clearance=ClearanceLevel(
+                str(metadata["minimum_approver_clearance"])
+            ),
+            audit_tags=list(metadata["audit_tags"]),
+        )
+    return policies
+
+
+DEFAULT_ACTION_POLICIES: dict[str, ActionPolicyRule] = build_action_policies()
 
 # Dynamic Least-Privilege Knowledge Redaction Rules
 SENSITIVE_KNOWLEDGE_PATTERNS: list[tuple[re.Pattern, str, ClearanceLevel]] = [
@@ -196,7 +158,7 @@ class PolicyEngine:
         self, action_name: str, operator_role: str, payload: dict[str, Any] | None = None
     ) -> PolicyDecision:
         """Evaluate whether an operator role is permitted to initiate or stage an action."""
-        clean_role = (operator_role or "end_user").lower()
+        clean_role = normalize_operator_role(operator_role)
         rule = self._policies.get(action_name)
 
         if not rule:
@@ -234,7 +196,7 @@ class PolicyEngine:
         self, action_name: str, approver_role: str | None, decision: str = "approve"
     ) -> ApprovalPolicyDecision:
         """Evaluate Four-Eyes authorization decision against minimum clearance rules."""
-        clean_role = (approver_role or "admin").lower()
+        clean_role = normalize_operator_role(approver_role or "admin")
         clearance = ROLE_CLEARANCE_MAP.get(clean_role, ClearanceLevel.PUBLIC)
 
         if decision == "reject":
@@ -316,7 +278,7 @@ class PolicyEngine:
         if not text:
             return ""
 
-        clean_role = (operator_role or "end_user").lower()
+        clean_role = normalize_operator_role(operator_role)
         caller_clearance = ROLE_CLEARANCE_MAP.get(clean_role, ClearanceLevel.PUBLIC)
         caller_level_int = CLEARANCE_HIERARCHY.get(caller_clearance, 0)
 

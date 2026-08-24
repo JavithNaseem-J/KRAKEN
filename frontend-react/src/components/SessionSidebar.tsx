@@ -34,9 +34,6 @@ interface SessionSidebarProps {
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
-  roles?: unknown;
-  activeRole?: unknown;
-  onSelectRole?: (role: any) => void;
 }
 
 interface GroupedSessions {

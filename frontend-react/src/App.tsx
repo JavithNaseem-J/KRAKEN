@@ -18,29 +18,6 @@ import {
 
 const SESSIONS_STORAGE_KEY = 'akea.chat.sessions.v1';
 
-const USER_ROLES: UserRole[] = [
-  {
-    user_id: 'alice',
-    label: 'Alice',
-    title: 'Tier 1 Analyst',
-    api_key: import.meta.env.VITE_API_KEY_ANALYST ?? import.meta.env.VITE_API_KEY_ALICE ?? 'dev-key-analyst-default',
-  },
-  {
-    user_id: 'bob',
-    label: 'Bob',
-    title: 'Security Lead',
-    api_key: import.meta.env.VITE_API_KEY_ADMIN ?? import.meta.env.VITE_API_KEY_BOB ?? 'dev-key-admin-default',
-  },
-  {
-    user_id: 'admin',
-    label: 'Admin',
-    title: 'Approver',
-    api_key:
-      import.meta.env.VITE_API_KEY_ADMIN ??
-      'dev-key-admin-default',
-  },
-];
-
 function newSession(): ChatSession {
   const now = new Date().toISOString();
   return {
@@ -79,19 +56,6 @@ function loadSessions(): ChatSession[] {
 
 function queryResponseToMessage(res: QueryResponse): ChatMessageType {
   let content = res.answer;
-  if (!content || !content.trim()) {
-    const act = res.action_result as Record<string, unknown> | undefined;
-    if (act && typeof act === 'object') {
-      if (act.ticket_id) {
-        content = `### Ticket Details: ${act.ticket_id}\n\n- **Title:** ${act.title || 'N/A'}\n- **Status:** \`${act.status || 'open'}\`\n- **Priority:** \`${act.priority || 'P3'}\`\n- **Category:** ${act.category || 'Support'}\n- **Assignee:** ${act.assignee || 'Unassigned'}\n- **Description:** ${act.description || ''}`;
-        if (act.resolution) {
-          content += `\n- **Resolution:** ${act.resolution}`;
-        }
-      } else if (act.message) {
-        content = String(act.message);
-      }
-    }
-  }
   if (!content || !content.trim()) {
     content = res.reasoning || 'The agent processed your request successfully.';
   }
@@ -410,14 +374,11 @@ export default function App() {
       <SessionSidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
-        roles={USER_ROLES}
-        activeRole={activeRole}
         isOpen={sidebarOpen}
         onToggleOpen={() => setSidebarOpen((prev) => !prev)}
         onSelectSession={(id) => setActiveSessionId(id)}
         onNewSession={createSession}
         onDeleteSession={deleteSession}
-        onSelectRole={() => {}}
       />
 
       {/* Main Ruixen Moon Chat Component */}

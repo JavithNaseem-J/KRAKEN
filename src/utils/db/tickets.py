@@ -5,18 +5,9 @@ from typing import Any
 
 import structlog
 
-log = structlog.get_logger(__name__)
+from src.utils.db.schema import CREATE_TICKETS_TABLE_DDL
 
-CREATE_TICKETS_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS tickets (
-    id VARCHAR(64) PRIMARY KEY,
-    title TEXT,
-    status VARCHAR(32) NOT NULL DEFAULT 'open',
-    priority VARCHAR(32) NOT NULL DEFAULT 'medium',
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-"""
+log = structlog.get_logger(__name__)
 
 
 def ensure_tickets_table(conn: Any) -> None:
