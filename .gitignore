@@ -256,6 +256,7 @@ playwright.config.ts
 test-results/
 playwright-report/
 blob-report/
+reports/
 playwright/.cache/
 playwright/.auth/
 .playwright/

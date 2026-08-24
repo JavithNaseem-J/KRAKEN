@@ -78,13 +78,41 @@ jobs:
         env:
           ENVIRONMENT: test
           LLM_API_KEY: "dummy-key-for-unit-tests"
-        run: uv run python -m pytest tests/unit -q --durations=10 -p no:cacheprovider --tb=short -ra
+          PYTHONHASHSEED: "0"
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          uv run python -m pytest tests/unit -q --durations=10 -p no:cacheprovider --tb=short -ra --junitxml=reports/unit.xml 2>&1 | tee reports/unit.log
+
+      - name: Upload Unit Test Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-unit-test-report
+          path: |
+            reports/unit.xml
+            reports/unit.log
+          if-no-files-found: ignore
 
       - name: Run Integration Tests
         env:
           ENVIRONMENT: test
           LLM_API_KEY: "dummy-key-for-unit-tests"
-        run: uv run python -m pytest tests/integration -m integration -q -p no:cacheprovider --tb=short -ra
+          PYTHONHASHSEED: "0"
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          uv run python -m pytest tests/integration -m integration -q -p no:cacheprovider --tb=short -ra --junitxml=reports/integration.xml 2>&1 | tee reports/integration.log
+
+      - name: Upload Integration Test Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-integration-test-report
+          path: |
+            reports/integration.xml
+            reports/integration.log
+          if-no-files-found: ignore
 
   # ============================================================================
   # 3. Frontend Lint, Type Check & Production Bundle Build
