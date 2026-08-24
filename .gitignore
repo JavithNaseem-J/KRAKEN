@@ -257,6 +257,7 @@ test-results/
 playwright-report/
 blob-report/
 reports/
+ci-artifacts/
 playwright/.cache/
 playwright/.auth/
 .playwright/
