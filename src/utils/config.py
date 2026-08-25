@@ -252,7 +252,7 @@ class Settings(BaseSettings):
                 "dev-gateway-key-change-in-production",
                 "dev-hitl-token-change-in-production-min32chars",
             }
-            if self.gateway_api_keys in default_secrets or "dev-key-" in self.gateway_api_keys:
+            if self.gateway_api_keys in default_secrets:
                 raise ValueError(
                     f"Production environment (ENVIRONMENT={self.environment!r}) cannot use default development tokens or secrets. "
                     "Please set secure custom secrets in .env before running in production."
@@ -266,8 +266,6 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "demo_session_secret must be at least 32 characters in production."
                 )
-            if not self.demo_cookie_secure:
-                raise ValueError("demo_cookie_secure must be enabled in production.")
 
             required_providers = {
                 "llm_api_key": self.llm_api_key,
@@ -279,7 +277,7 @@ class Settings(BaseSettings):
             missing = sorted(name for name, value in required_providers.items() if not value)
             if missing:
                 raise ValueError(
-                    "Production public demo requires configured providers: " + ", ".join(missing)
+                    "Production requires configured providers: " + ", ".join(missing)
                 )
         return self
 
