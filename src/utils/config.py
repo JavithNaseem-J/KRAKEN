@@ -276,9 +276,7 @@ class Settings(BaseSettings):
             }
             missing = sorted(name for name, value in required_providers.items() if not value)
             if missing:
-                raise ValueError(
-                    "Production requires configured providers: " + ", ".join(missing)
-                )
+                raise ValueError("Production requires configured providers: " + ", ".join(missing))
         return self
 
     # Observability
