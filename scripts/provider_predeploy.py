@@ -20,6 +20,7 @@ from src.utils.cache import SEMANTIC_CACHE_COLLECTION, SemanticCache
 from src.utils.config import get_settings
 from src.utils.db.schema import SCHEMA_DDL
 from src.utils.knowledge.ingest import ensure_collection, run_ingest_async
+from src.utils.llm_probe import probe_chat_completion
 
 
 async def main_async() -> None:
@@ -27,11 +28,16 @@ async def main_async() -> None:
     checks: dict[str, bool] = {}
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        response = await client.get(
-            f"{settings.llm_base_url.rstrip('/')}/models",
-            headers={"Authorization": f"Bearer {settings.llm_api_key}"},
+        groq_ready, groq_detail = await probe_chat_completion(
+            client,
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            models=[settings.llm_model, settings.llm_fallback_model],
+            timeout_seconds=10.0,
         )
-        checks["groq"] = response.status_code == 200
+        checks["groq"] = groq_ready
+        if groq_detail:
+            print("provider predeploy groq detail: " + groq_detail, file=sys.stderr)
 
     qdrant = AsyncQdrantClient(
         url=settings.qdrant_url,
@@ -109,6 +115,7 @@ async def main_async() -> None:
             row_factory=dict_row,
         )
         try:
+            # pyrefly: ignore [bad-argument-type]
             saver = AsyncPostgresSaver(checkpoint_connection)
             await saver.setup()
             checks["hitl_checkpoints"] = True

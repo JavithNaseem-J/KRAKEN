@@ -177,6 +177,43 @@ class TestDeciderNode:
         assert result["risk_level"] == "SAFE"
 
     @patch("src.agent.nodes.decider.get_llm")
+    def test_create_ticket_fast_path_avoids_llm(self, mock_get_llm: MagicMock) -> None:
+        state = {
+            "session_id": "s1",
+            "operator_role": "tier1_analyst",
+            "user_message": (
+                "Create an IT ticket for Demo User in VPN category with medium priority: "
+                "VPN disconnects after authentication."
+            ),
+            "reasoning": "LLM unavailable.",
+        }
+        result = asyncio.run(decider_node(state))
+
+        assert result["selected_action"] == "create_ticket"
+        assert result["risk_level"] == "SAFE"
+        assert result["action_payload"]["user_name"] == "Demo User"
+        assert result["action_payload"]["category"] == "VPN"
+        assert result["action_payload"]["priority"] == "medium"
+        mock_get_llm.assert_not_called()
+
+    @patch("src.agent.nodes.decider.get_llm")
+    def test_quarantine_ip_fast_path_stages_hitl_without_llm(self, mock_get_llm: MagicMock) -> None:
+        state = {
+            "session_id": "s1",
+            "operator_role": "tier1_analyst",
+            "user_message": (
+                "Quarantine IP 203.0.113.42 due to confirmed malicious scanning evidence."
+            ),
+            "reasoning": "LLM unavailable.",
+        }
+        result = asyncio.run(decider_node(state))
+
+        assert result["selected_action"] == "quarantine_ip"
+        assert result["risk_level"] == "CRITICAL"
+        assert result["action_payload"]["ip"] == "203.0.113.42"
+        mock_get_llm.assert_not_called()
+
+    @patch("src.agent.nodes.decider.get_llm")
     def test_uploaded_instruction_cannot_select_write_action(self, mock_get_llm: MagicMock) -> None:
         mock_llm = MagicMock()
         mock_structured = MagicMock()

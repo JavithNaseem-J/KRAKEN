@@ -15,10 +15,20 @@ class FakeCache:
     def __init__(self, response: dict[str, Any]) -> None:
         self.response = response
         self.get_calls = 0
+        self.put_calls = 0
 
     async def get(self, query: Any, context: dict[str, str]) -> dict[str, Any]:
         self.get_calls += 1
         return self.response
+
+    async def put(
+        self,
+        query: Any,
+        original_query: str,
+        response: dict[str, Any],
+        context: dict[str, str],
+    ) -> None:
+        self.put_calls += 1
 
 
 class FakeGraph:
@@ -81,6 +91,85 @@ async def test_sse_cache_hit_has_explicit_hit_and_one_terminal_response(
     assert events[-1]["response"]["session_id"] == "new-session"
     assert events[-1]["response"]["cache"]["hit"] is True
     assert fake_graph.streamed is False
+
+
+@pytest.mark.asyncio
+async def test_provider_fallback_cache_entry_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cached = QueryResponse(
+        session_id="old-session",
+        answer=(
+            "The AI provider is temporarily unavailable, so KRAKEN cannot compose a "
+            "grounded answer right now."
+        ),
+        reasoning="Reasoning is unavailable because the AI provider could not complete the request.",
+        retrieved_chunks=[
+            {
+                "source": "faq",
+                "content": "VPN guidance",
+                "relevance_score": 0.9,
+            }
+        ],
+    ).model_dump(mode="json")
+    fake_cache = FakeCache(cached)
+    orchestrator.app.state.semantic_cache = fake_cache
+
+    async def fake_cache_query(_: str) -> list[float]:
+        return [0.1, 0.2]
+
+    monkeypatch.setattr(orchestrator, "cache_query", fake_cache_query)
+
+    response, _, _ = await orchestrator._semantic_cache_lookup(
+        QueryRequest(
+            session_id="new-session",
+            message="How do I use the VPN?",
+            metadata={"operator_role": "end_user"},
+        )
+    )
+
+    assert response is None
+    assert fake_cache.get_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_fallback_response_is_not_stored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_cache = FakeCache({})
+    orchestrator.app.state.semantic_cache = fake_cache
+
+    async def fake_cache_query(_: str) -> list[float]:
+        return [0.1, 0.2]
+
+    monkeypatch.setattr(orchestrator, "cache_query", fake_cache_query)
+
+    await orchestrator._semantic_cache_store(
+        QueryRequest(
+            session_id="session",
+            message="How do I use the VPN?",
+            metadata={"operator_role": "end_user"},
+        ),
+        QueryResponse(
+            session_id="session",
+            answer=(
+                "The AI provider is temporarily unavailable, so KRAKEN cannot compose a "
+                "grounded answer right now."
+            ),
+            reasoning="Reasoning is unavailable because the AI provider could not complete the request.",
+            retrieved_chunks=[
+                {
+                    "source": "faq",
+                    "content": "VPN guidance",
+                    "relevance_score": 0.9,
+                }
+            ],
+        ),
+        None,
+        cache_context({"operator_role": "end_user"}).as_payload(),
+    )
+
+    assert fake_cache.put_calls == 0
 
 
 def test_mutations_and_hitl_requests_bypass_cache() -> None:

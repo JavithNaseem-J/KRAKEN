@@ -11,7 +11,7 @@ from src.api.orchestrator import _build_response
 async def test_responder_node_auto_executed_approval_status():
     """Verify responder node does NOT claim human approval on auto_respond actions."""
     mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(
+    mock_invoke = AsyncMock(
         return_value=AIMessage(
             content="**SECURITY OPERATION RESPONSE**\n\n### **ANALYSIS**\nVerified.\n\n### **ACTION TAKEN**\nAnswered user inquiry.\n\n### **RESULTS**\nDone.\n\n### **EVIDENCE CITED**\n- Policy doc.\n\n### **APPROVAL STATUS**\nAuto-executed; no human approval required."
         )
@@ -27,10 +27,13 @@ async def test_responder_node_auto_executed_approval_status():
         "evidence": "Policy doc Section 1",
     }
 
-    with patch("src.agent.nodes.responder.get_llm", return_value=mock_llm):
+    with (
+        patch("src.agent.nodes.responder.get_llm", return_value=mock_llm),
+        patch("src.agent.nodes.responder.invoke_llm", mock_invoke),
+    ):
         result = await responder_node(state)
         assert "final_answer" in result
-        call_args = mock_llm.ainvoke.call_args[0][0]
+        call_args = mock_invoke.await_args.args[1]
         system_msg = call_args[0].content
         # Ensure the prompt didn't inject "Human approval WAS GRANTED"
         assert "Human approval WAS GRANTED" not in system_msg
@@ -42,7 +45,7 @@ async def test_responder_node_auto_executed_approval_status():
 async def test_responder_node_approved_hitl_action():
     """Verify responder node confirms human approval only when approval_status is explicitly 'approved'."""
     mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(
+    mock_invoke = AsyncMock(
         return_value=AIMessage(
             content="**SECURITY OPERATION RESPONSE**\n\n### **ANALYSIS**\nExecuted.\n\n### **ACTION TAKEN**\nQuarantined IP.\n\n### **RESULTS**\nBlocked.\n\n### **EVIDENCE CITED**\n- Incident policy.\n\n### **APPROVAL STATUS**\nHuman approval was granted by an authorized security operator."
         )
@@ -58,9 +61,12 @@ async def test_responder_node_approved_hitl_action():
         "evidence": "Incident policy Section 2",
     }
 
-    with patch("src.agent.nodes.responder.get_llm", return_value=mock_llm):
+    with (
+        patch("src.agent.nodes.responder.get_llm", return_value=mock_llm),
+        patch("src.agent.nodes.responder.invoke_llm", mock_invoke),
+    ):
         _ = await responder_node(state)
-        call_args = mock_llm.ainvoke.call_args[0][0]
+        call_args = mock_invoke.await_args.args[1]
         system_msg = call_args[0].content
         assert "Human approval WAS GRANTED" in system_msg
 

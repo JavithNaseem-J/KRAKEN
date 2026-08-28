@@ -42,3 +42,34 @@ def test_responder_formats_ticket_status_when_llm_fails(mock_get_llm: MagicMock)
     assert "**Status:** `OPEN`" in result["final_answer"]
     assert "Connection error" not in result["final_answer"]
     mock_get_llm.assert_not_called()
+
+
+@patch("src.agent.nodes.responder.get_llm")
+def test_responder_uses_retrieved_chunks_when_llm_fails(mock_get_llm: MagicMock) -> None:
+    mock_llm = MagicMock()
+    mock_llm.ainvoke = AsyncMock(side_effect=RuntimeError("Connection error."))
+    mock_get_llm.return_value = mock_llm
+
+    result = asyncio.run(
+        responder_node(
+            {
+                "session_id": "s1",
+                "user_message": "How do I connect to the corporate VPN?",
+                "reasoning": "Reasoning unavailable.",
+                "selected_action": None,
+                "retrieved_chunks": [
+                    {
+                        "source": "faq",
+                        "content": "### NET-01: GlobalProtect VPN Access\nUse GlobalProtect with MFA.",
+                        "relevance_score": 0.91,
+                        "metadata": {},
+                    }
+                ],
+                "error": "llm_provider_unavailable",
+            }
+        )
+    )
+
+    assert "Corporate VPN Guidance" in result["final_answer"]
+    assert "GlobalProtect" in result["final_answer"]
+    assert "temporarily unavailable" not in result["final_answer"]

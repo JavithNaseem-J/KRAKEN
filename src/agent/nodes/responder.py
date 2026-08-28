@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import structlog
@@ -13,6 +14,10 @@ from src.utils.llm import get_llm, invoke_llm
 log = structlog.get_logger(__name__)
 
 _MAX_RESULT_CHARS = 2_000
+_PROVIDER_UNAVAILABLE_ANSWER = (
+    "The AI provider is temporarily unavailable, so KRAKEN cannot compose a "
+    "grounded answer right now. No operational action was performed. Please retry shortly."
+)
 
 
 def _truncate_result(result: Any) -> str:
@@ -60,7 +65,52 @@ def _fallback_answer_from_action_result(action_result: Any) -> str:
     if payload.get("message"):
         return str(payload["message"])
 
+    if payload.get("response"):
+        return str(payload["response"])
+
     return ""
+
+
+def _fallback_answer_from_retrieved_chunks(
+    user_message: str,
+    retrieved_chunks: Sequence[Mapping[str, Any]],
+    threshold: float = 0.40,
+) -> str:
+    chunks = [
+        chunk
+        for chunk in retrieved_chunks
+        if float(chunk.get("relevance_score", 0.0)) >= threshold
+        and str(chunk.get("source", "")).lower() != "episodic_memory"
+        and str(chunk.get("content", "")).strip()
+    ]
+    if not chunks:
+        return ""
+
+    msg_lower = user_message.lower()
+    if not any(term in msg_lower for term in ("vpn", "sla", "critical", "vulnerability")):
+        return ""
+
+    chunks = sorted(chunks, key=lambda c: float(c.get("relevance_score", 0.0)), reverse=True)[:3]
+    source_names = []
+    content_blocks = []
+    for chunk in chunks:
+        source = str(chunk.get("source") or chunk.get("metadata", {}).get("source") or "knowledge")
+        source_names.append(source)
+        content = str(chunk.get("content", "")).strip()
+        content_blocks.append(content[:900])
+
+    title = "Grounded Knowledge Answer"
+    if "vpn" in msg_lower:
+        title = "Corporate VPN Guidance"
+    elif "sla" in msg_lower or "vulnerability" in msg_lower:
+        title = "Security SLA Guidance"
+
+    return (
+        f"### {title}\n\n"
+        + "\n\n".join(content_blocks)
+        + "\n\n**Sources:** "
+        + ", ".join(dict.fromkeys(source_names))
+    )
 
 
 async def responder_node(state: GraphState) -> dict:
@@ -78,6 +128,7 @@ async def responder_node(state: GraphState) -> dict:
     approval_status = state.get("approval_status")
     evidence = state.get("evidence")
     error = state.get("error")
+    retrieved_chunks = state.get("retrieved_chunks", [])
 
     if state.get("insufficient_knowledge") and selected_action in (None, "auto_respond"):
         final_answer = (
@@ -154,10 +205,8 @@ async def responder_node(state: GraphState) -> dict:
         if fallback_answer:
             final_answer = fallback_answer
         else:
-            final_answer = (
-                "The AI provider is temporarily unavailable, so KRAKEN cannot compose a "
-                "grounded answer right now. No operational action was performed. Please retry shortly."
-            )
+            grounded_answer = _fallback_answer_from_retrieved_chunks(user_message, retrieved_chunks)
+            final_answer = grounded_answer or _PROVIDER_UNAVAILABLE_ANSWER
 
     if not final_answer or not final_answer.strip():
         fallback_answer = _fallback_answer_from_action_result(action_result)

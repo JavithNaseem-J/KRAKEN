@@ -508,6 +508,9 @@ async def _semantic_cache_lookup(
         if not cached:
             return None, query, context
         response = QueryResponse.model_validate(cached)
+        if _is_provider_unavailable_response(response):
+            log.warning("orchestrator.semantic_cache_ignored_provider_fallback")
+            return None, query, context
         response.session_id = body.session_id
         response.trace_id = str(uuid.uuid4())
         response.cache.hit = True
@@ -531,6 +534,9 @@ async def _semantic_cache_store(
         return
     if response.action_taken not in (None, "auto_respond") or not response.retrieved_chunks:
         return
+    if _is_provider_unavailable_response(response):
+        log.warning("orchestrator.semantic_cache_skip_provider_fallback")
+        return
     try:
         resolved_query = query if query is not None else await cache_query(body.message)
         response.cache.hit = False
@@ -545,6 +551,17 @@ async def _semantic_cache_store(
         )
     except Exception as exc:
         log.warning("orchestrator.semantic_cache_put_failed", error=exc.__class__.__name__)
+
+
+def _is_provider_unavailable_response(response: QueryResponse) -> bool:
+    text = f"{response.answer}\n{response.reasoning}".lower()
+    blocked_markers = (
+        "ai provider is temporarily unavailable",
+        "provider is temporarily unavailable",
+        "provider could not complete",
+        "llm_provider_unavailable",
+    )
+    return any(marker in text for marker in blocked_markers)
 
 
 # /run

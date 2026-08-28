@@ -261,11 +261,14 @@ ci-artifacts/
 playwright/.cache/
 playwright/.auth/
 .playwright/
+!frontend-react/playwright.config.ts
 
 # Local directories excluded from git repository
 e2e/
 .agent/
 .opencode/
+!frontend-react/e2e/
+!frontend-react/e2e/production-smoke.spec.ts
 
 # Repo-owned test/spec artifacts: keep broad directories ignored, then expose
 # only the tests and OpenSpec change files needed for this remediation.

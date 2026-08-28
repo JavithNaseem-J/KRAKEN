@@ -422,22 +422,19 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
     timeout = settings.capability_probe_timeout_seconds
 
     async def groq() -> CapabilityStatus:
-        if not settings.llm_api_key:
-            return CapabilityStatus(state=CapabilityState.DEGRADED, detail="not configured")
-        try:
-            client: httpx.AsyncClient = request.app.state.http
-            response = await asyncio.wait_for(
-                client.get(
-                    f"{settings.llm_base_url.rstrip('/')}/models",
-                    headers={"Authorization": f"Bearer {settings.llm_api_key}"},
-                ),
-                timeout=timeout,
-            )
-            if response.status_code == 200:
-                return CapabilityStatus(state=CapabilityState.READY)
-        except Exception:
-            pass
-        return CapabilityStatus(state=CapabilityState.DEGRADED, detail="provider unavailable")
+        from src.utils.llm_probe import probe_chat_completion
+
+        client: httpx.AsyncClient = request.app.state.http
+        ready, detail = await probe_chat_completion(
+            client,
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            models=[settings.llm_model, settings.llm_fallback_model],
+            timeout_seconds=timeout,
+        )
+        if ready:
+            return CapabilityStatus(state=CapabilityState.READY)
+        return CapabilityStatus(state=CapabilityState.DEGRADED, detail=detail)
 
     async def qdrant_storage() -> CapabilityStatus:
         if not settings.qdrant_url or not settings.qdrant_api_key:
