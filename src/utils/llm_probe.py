@@ -51,11 +51,10 @@ async def probe_chat_completion(
                 json={
                     "model": model,
                     "messages": [
-                        {"role": "system", "content": "Reply with KRAKEN_OK only."},
-                        {"role": "user", "content": "health"},
+                        {"role": "user", "content": "Return exactly this text: KRAKEN_OK"},
                     ],
                     "temperature": 0,
-                    "max_tokens": 32,
+                    "max_tokens": 128,
                 },
                 timeout=timeout_seconds,
             )

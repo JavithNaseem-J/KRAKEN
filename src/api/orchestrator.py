@@ -504,7 +504,10 @@ async def _semantic_cache_lookup(
     context = cache_context(body.metadata).as_payload()
     try:
         query = await cache_query(body.message)
-        cached = await cache.get(query, context)
+        try:
+            cached = await cache.get(query, context, query_text=body.message)
+        except TypeError:
+            cached = await cache.get(query, context)
         if not cached:
             return None, query, context
         response = QueryResponse.model_validate(cached)

@@ -79,6 +79,35 @@ class TestSemanticCache:
         conditions = {condition.key: condition.match.value for condition in query_filter.must}
         assert conditions == context
 
+    def test_exact_redis_cache_hits_when_qdrant_misses(self) -> None:
+        mock_qdrant = AsyncMock()
+        mock_qdrant.query_points.return_value = SimpleNamespace(points=[])
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = (
+            '{"answer": "cached VPN answer", "session_id": "old", "reasoning": "cached"}'
+        )
+        mock_settings = MagicMock(semantic_cache_enabled=True, redis_url="")
+        cache = SemanticCache(client=mock_qdrant)
+        cache._redis = mock_redis
+
+        with patch("src.utils.cache.get_settings", return_value=mock_settings):
+            result = asyncio.run(
+                cache.get(
+                    [0.1] * 384,
+                    {
+                        "role": "end_user",
+                        "scope": "shared",
+                        "embedding_model": "model",
+                        "knowledge_version": "v2",
+                    },
+                    query_text="How do I connect to the corporate VPN?",
+                )
+            )
+
+        assert result is not None
+        assert result["answer"] == "cached VPN answer"
+        assert mock_redis.get.await_count == 1
+
 
 class TestQdrantClientFactory:
     def test_create_async_qdrant_client_in_memory(self) -> None:

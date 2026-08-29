@@ -73,3 +73,56 @@ def test_responder_uses_retrieved_chunks_when_llm_fails(mock_get_llm: MagicMock)
     assert "Corporate VPN Guidance" in result["final_answer"]
     assert "GlobalProtect" in result["final_answer"]
     assert "temporarily unavailable" not in result["final_answer"]
+
+
+@patch("src.agent.nodes.responder.get_llm")
+def test_responder_skips_llm_for_known_demo_vpn_question(mock_get_llm: MagicMock) -> None:
+    result = asyncio.run(
+        responder_node(
+            {
+                "session_id": "s1",
+                "user_message": "How do I connect to the corporate VPN?",
+                "reasoning": "Known demo knowledge.",
+                "selected_action": None,
+                "retrieved_chunks": [
+                    {
+                        "source": "faq",
+                        "content": "GlobalProtect VPN Access uses Azure AD SAML and Duo MFA.",
+                        "relevance_score": 0.91,
+                        "metadata": {},
+                    }
+                ],
+            }
+        )
+    )
+
+    assert "Corporate VPN Guidance" in result["final_answer"]
+    assert "**Sources:** faq" in result["final_answer"]
+    mock_get_llm.assert_not_called()
+
+
+@patch("src.agent.nodes.responder.get_llm")
+def test_responder_skips_llm_for_known_demo_sla_question(mock_get_llm: MagicMock) -> None:
+    result = asyncio.run(
+        responder_node(
+            {
+                "session_id": "s1",
+                "user_message": "What is the critical vulnerability SLA?",
+                "reasoning": "Known demo knowledge.",
+                "selected_action": "auto_respond",
+                "retrieved_chunks": [
+                    {
+                        "source": "sla",
+                        "content": "P1 Critical Response SLA: 15 minutes. Resolution SLA: 2 hours.",
+                        "relevance_score": 0.91,
+                        "metadata": {},
+                    }
+                ],
+            }
+        )
+    )
+
+    assert "Critical Vulnerability SLA Guidance" in result["final_answer"]
+    assert "Transaction ID" not in result["final_answer"]
+    assert "Human approval was granted" not in result["final_answer"]
+    mock_get_llm.assert_not_called()

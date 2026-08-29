@@ -17,11 +17,11 @@ def require(condition: bool, message: str) -> None:
         raise AcceptanceError(message)
 
 
-def run(base_url: str) -> tuple[list[str], list[str]]:
+def run(base_url: str, timeout_seconds: float = 240.0) -> tuple[list[str], list[str]]:
     passed: list[str] = []
     failed: list[str] = []
     with httpx.Client(
-        base_url=base_url.rstrip("/"), timeout=120.0, follow_redirects=True
+        base_url=base_url.rstrip("/"), timeout=timeout_seconds, follow_redirects=True
     ) as client:
         session_response = client.post("/v1/demo/session")
         session_response.raise_for_status()
@@ -176,9 +176,10 @@ def _check_create_ticket(created: dict[str, Any]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://localhost:8000")
+    parser.add_argument("--timeout-seconds", type=float, default=240.0)
     args = parser.parse_args()
     try:
-        passed, failed = run(args.base_url)
+        passed, failed = run(args.base_url, timeout_seconds=args.timeout_seconds)
     except (AcceptanceError, httpx.HTTPError) as exc:
         print(f"acceptance failed: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc

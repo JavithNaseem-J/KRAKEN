@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -9,6 +10,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
 from src.utils.constants import TICKET_ID_REGEX
+from src.utils.demo_knowledge import build_demo_knowledge_answer
 from src.utils.llm import get_llm, invoke_llm
 
 log = structlog.get_logger(__name__)
@@ -20,12 +22,23 @@ _STATUS_QUERY_KEYWORDS: tuple[str, ...] = (
     "check status",
     "what is the status",
 )
+_IP_ADDRESS_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
 def _is_ticket_status_query(user_message: str) -> bool:
     msg_lower = user_message.lower()
     return any(keyword in msg_lower for keyword in _STATUS_QUERY_KEYWORDS) and bool(
         TICKET_ID_REGEX.search(user_message)
+    )
+
+
+def _is_demo_operational_fast_path(user_message: str) -> bool:
+    msg_lower = user_message.lower()
+    if re.search(r"\b(create|open)\b", msg_lower) and "ticket" in msg_lower:
+        return True
+    return bool(
+        ("quarantine" in msg_lower or "block" in msg_lower)
+        and _IP_ADDRESS_REGEX.search(user_message)
     )
 
 
@@ -87,9 +100,27 @@ async def reasoner_node(state: GraphState) -> dict:
         )
         return {"reasoning": reasoning, "insufficient_knowledge": False}
 
+    if _is_demo_operational_fast_path(user_message):
+        reasoning = (
+            "The user asked for a known public demo operational flow. "
+            "The deterministic decider can validate and stage the action without LLM reasoning."
+        )
+        log.info("reasoner.demo_operational_fast_path", session_id=session_id)
+        return {"reasoning": reasoning, "insufficient_knowledge": False}
+
     retrieved_chunks = state.get("retrieved_chunks", [])
     # pyrefly: ignore [bad-argument-type]
     chunks_text, has_valid_chunks = _format_chunks(retrieved_chunks, threshold=0.40)
+
+    # pyrefly: ignore [bad-argument-type]
+    if build_demo_knowledge_answer(user_message, retrieved_chunks):
+        reasoning = (
+            "The user asked a known public demo knowledge question. "
+            "High-relevance internal chunks are available, so KRAKEN can answer directly "
+            "from retrieved evidence without LLM reasoning."
+        )
+        log.info("reasoner.demo_knowledge_fast_path", session_id=session_id)
+        return {"reasoning": reasoning, "insufficient_knowledge": False}
 
     operational_intent = any(
         term in user_message.lower()

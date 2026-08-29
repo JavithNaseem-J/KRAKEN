@@ -109,6 +109,25 @@ def test_rate_limiter_database_failure(client):
     assert response.json() == {"answer": "Fail-open response"}
 
 
+def test_rate_limit_uses_forwarded_ip_from_trusted_proxy(client):
+    mock_upstream_resp = MagicMock()
+    mock_upstream_resp.json.return_value = {"answer": "Agent response"}
+    mock_upstream_resp.status_code = status.HTTP_200_OK
+    app.state.http.post.return_value = mock_upstream_resp
+
+    response = client.post(
+        "/v1/run",
+        json={"message": "hello"},
+        headers={
+            "X-API-Key": "dev-key-analyst-default",
+            "X-Forwarded-For": "198.51.100.77",
+        },
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    app.state.limiter.check.assert_awaited_with("198.51.100.77")
+
+
 def test_request_body_too_large(client):
     # Send payload exceeding MAX_BODY_SIZE
     large_payload = "a" * (MAX_BODY_SIZE + 100)

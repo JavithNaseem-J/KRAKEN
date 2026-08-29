@@ -12,6 +12,7 @@ from src.prompts.registry import get_prompt
 from src.safety.policy_engine import get_policy_engine, should_override_to_auto_respond
 from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
+from src.utils.demo_knowledge import has_demo_knowledge_answer
 from src.utils.llm import get_llm, invoke_llm
 from src.utils.registry import REGISTRY, get_action
 
@@ -183,6 +184,21 @@ def _deterministic_action_fast_path(user_message: str, operator_role: str) -> di
     return None
 
 
+def _demo_knowledge_fast_path(state: GraphState) -> dict[str, Any] | None:
+    user_message = state.get("user_message", "")
+    retrieved_chunks = state.get("retrieved_chunks", [])
+    # pyrefly: ignore [bad-argument-type]
+    if not has_demo_knowledge_answer(user_message, retrieved_chunks):
+        return None
+    return {
+        "selected_action": None,
+        "selected_actions": [],
+        "action_payload": None,
+        "risk_level": "SAFE",
+        "evidence": "Known public demo knowledge answer generated from retrieved chunks.",
+    }
+
+
 def _get_available_actions_prompt() -> str:
     """Build the list of available actions dynamically from the registry."""
     lines = []
@@ -228,6 +244,11 @@ async def decider_node(state: GraphState) -> dict:
             action=fast_path.get("selected_action"),
         )
         return fast_path
+
+    knowledge_fast_path = _demo_knowledge_fast_path(state)
+    if knowledge_fast_path is not None:
+        log.info("decider.demo_knowledge_fast_path", session_id=session_id)
+        return knowledge_fast_path
 
     human_content = f"User request: {user_message}\n\nAnalysis:\n{reasoning}"
 

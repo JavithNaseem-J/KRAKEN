@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import uuid
@@ -18,6 +19,7 @@ from qdrant_client.models import (
 )
 
 from src.utils.config import get_settings
+from src.utils.http_client import create_async_redis_client
 
 log = structlog.get_logger(__name__)
 SEMANTIC_CACHE_COLLECTION = "kraken_semantic_cache"
@@ -60,8 +62,55 @@ class SemanticCache:
     def __init__(
         self, client: AsyncQdrantClient | None = None, ttl_seconds: float = 3600.0
     ) -> None:
+        settings = get_settings()
         self._client = client or create_async_qdrant_client()
         self._ttl_seconds = ttl_seconds
+        self._redis = (
+            create_async_redis_client(settings.redis_url)
+            if settings.redis_url and settings.semantic_cache_enabled
+            else None
+        )
+
+    def _exact_cache_key(self, query_text: str, context: dict[str, str] | None) -> str:
+        normalized = " ".join(query_text.lower().split())
+        context_key = json.dumps(context or {}, sort_keys=True)
+        digest = hashlib.sha256(f"{normalized}:{context_key}".encode()).hexdigest()
+        return f"kraken:semantic-cache:exact:{digest}"
+
+    async def _get_exact(
+        self, query_text: str | None, context: dict[str, str] | None
+    ) -> dict[str, Any] | None:
+        if not self._redis or not query_text:
+            return None
+        try:
+            raw = await self._redis.get(self._exact_cache_key(query_text, context))
+            if not raw:
+                return None
+            payload = json.loads(raw)
+            if isinstance(payload, dict):
+                log.info("semantic_cache.exact_hit")
+                return payload
+        except Exception as exc:
+            log.warning("semantic_cache.exact_get_error", error=str(exc))
+        return None
+
+    async def _put_exact(
+        self,
+        query_text: str,
+        response: dict[str, Any],
+        context: dict[str, str] | None,
+    ) -> None:
+        if not self._redis:
+            return
+        try:
+            await self._redis.setex(
+                self._exact_cache_key(query_text, context),
+                int(self._ttl_seconds),
+                json.dumps(response, sort_keys=True, default=str),
+            )
+            log.info("semantic_cache.exact_stored")
+        except Exception as exc:
+            log.warning("semantic_cache.exact_put_error", error=str(exc))
 
     async def init(self) -> None:
         """Ensure the cache collection exists. Must be awaited during service startup."""
@@ -111,7 +160,10 @@ class SemanticCache:
             log.warning("semantic_cache.init_failed", error=str(exc))
 
     async def get(
-        self, query_vector: Any, context: dict[str, str] | None = None
+        self,
+        query_vector: Any,
+        context: dict[str, str] | None = None,
+        query_text: str | None = None,
     ) -> dict[str, Any] | None:
         """Search for semantically similar cached response. Non-blocking; fails open."""
         if not get_settings().semantic_cache_enabled:
@@ -139,7 +191,7 @@ class SemanticCache:
                 created_at = payload.get("created_at")
                 if created_at is not None and (time.time() - float(created_at) > self._ttl_seconds):
                     log.info("semantic_cache.expired", age=time.time() - float(created_at))
-                    return None
+                    return await self._get_exact(query_text, context)
                 log.info(
                     "semantic_cache.hit",
                     score=hits[0].score,
@@ -147,7 +199,7 @@ class SemanticCache:
                 return payload.get("response")
         except Exception as exc:
             log.warning("semantic_cache.get_error", error=str(exc))
-        return None
+        return await self._get_exact(query_text, context)
 
     async def put(
         self,
@@ -160,12 +212,10 @@ class SemanticCache:
         if not get_settings().semantic_cache_enabled:
             return
 
+        point_id = str(
+            uuid.uuid5(uuid.NAMESPACE_DNS, f"{query_text}:{json.dumps(response, sort_keys=True)}")
+        )
         try:
-            point_id = str(
-                uuid.uuid5(
-                    uuid.NAMESPACE_DNS, f"{query_text}:{json.dumps(response, sort_keys=True)}"
-                )
-            )
             await self._client.upsert(
                 collection_name=SEMANTIC_CACHE_COLLECTION,
                 points=[
@@ -184,6 +234,42 @@ class SemanticCache:
             log.info("semantic_cache.stored")
         except Exception as exc:
             log.warning("semantic_cache.put_error", error=str(exc))
+        await self._put_exact(query_text, response, context)
+
+    async def probe(self, context: dict[str, str], vector_dim: int) -> tuple[bool, str | None]:
+        """Verify semantic cache can write and read at least one backend."""
+        if not get_settings().semantic_cache_enabled:
+            return False, "disabled"
+
+        query_text = "__kraken_semantic_cache_probe__"
+        response = {
+            "session_id": "probe",
+            "answer": "semantic cache probe",
+            "reasoning": "cache probe",
+            "sources": ["probe"],
+            "retrieved_chunks": [
+                {"source": "probe", "content": "semantic cache probe", "relevance_score": 1.0}
+            ],
+            "cache": {"hit": False, **context},
+        }
+        if self._redis:
+            try:
+                await self._put_exact(query_text, response, context)
+                cached = await self._get_exact(query_text, context)
+                if cached and cached.get("answer") == response["answer"]:
+                    return True, None
+            except Exception:
+                pass
+
+        try:
+            vector = [0.001] * vector_dim
+            await self.put(vector, query_text, response, context)
+            cached = await self.get(vector, context, query_text=query_text)
+            if cached and cached.get("answer") == response["answer"]:
+                return True, None
+            return False, "cache probe miss"
+        except Exception as exc:
+            return False, exc.__class__.__name__
 
     async def invalidate(self) -> None:
         """Purge all entries from the semantic cache collection."""

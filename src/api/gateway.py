@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import re
 import secrets
 import uuid
@@ -205,8 +206,41 @@ def _rate_limit_headers(remaining: int, retry_after: int) -> dict[str, str]:
     }
 
 
+def _rate_limit_client_ip(request: Request) -> str:
+    direct_ip = request.client.host if request.client else "unknown"
+    if not _is_trusted_forwarding_hop(direct_ip):
+        return direct_ip
+
+    for header in ("x-forwarded-for", "x-real-ip"):
+        value = request.headers.get(header)
+        if not value:
+            continue
+        candidate = value.split(",", 1)[0].strip().strip('"').strip("[]")
+        if _is_ip_address(candidate):
+            return candidate
+    return direct_ip
+
+
+def _is_trusted_forwarding_hop(host: str) -> bool:
+    if host in {"testclient", "localhost", "unknown"}:
+        return True
+    try:
+        parsed = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return parsed.is_loopback or parsed.is_private or parsed.is_link_local
+
+
+def _is_ip_address(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
 async def _check_rate_limit(request: Request) -> tuple[bool, dict[str, str]]:
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _rate_limit_client_ip(request)
     try:
         allowed, remaining, retry_after = await request.app.state.limiter.check(client_ip)
         headers = _rate_limit_headers(remaining, retry_after)
@@ -515,19 +549,55 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
             else "managed checkpointer unavailable"
         ),
     )
+
+    async def semantic_cache() -> CapabilityStatus:
+        if not settings.semantic_cache_enabled:
+            return CapabilityStatus(state=CapabilityState.DISABLED, detail="disabled")
+        if (
+            qdrant_state.state != CapabilityState.READY
+            and redis_state.state != CapabilityState.READY
+        ):
+            return CapabilityStatus(
+                state=CapabilityState.DEGRADED,
+                detail="qdrant and redis unavailable",
+            )
+        try:
+            from src.api.orchestrator import app as orchestrator_app
+            from src.utils.semantic_cache_policy import cache_context
+
+            cache = getattr(orchestrator_app.state, "semantic_cache", None)
+            if cache is None:
+                return CapabilityStatus(
+                    state=CapabilityState.DEGRADED,
+                    detail="cache unavailable",
+                )
+            context = cache_context({"operator_role": "end_user"}).as_payload()
+            vector_dim = (
+                settings.qdrant_inference_dim
+                if settings.qdrant_url and settings.qdrant_cloud_inference_enabled
+                else settings.embedding_dim
+            )
+            ready, detail = await asyncio.wait_for(
+                cache.probe(context, vector_dim),
+                timeout=timeout,
+            )
+            if ready:
+                return CapabilityStatus(state=CapabilityState.READY)
+            return CapabilityStatus(state=CapabilityState.DEGRADED, detail=detail)
+        except Exception as exc:
+            return CapabilityStatus(
+                state=CapabilityState.DEGRADED,
+                detail=exc.__class__.__name__,
+            )
+
+    semantic_cache_state = await semantic_cache()
     capabilities = {
         "groq": groq_state,
         "qdrant_storage": qdrant_state,
         "qdrant_inference": inference_state,
         "redis": redis_state,
         "postgres": postgres_state,
-        "semantic_cache": CapabilityStatus(
-            state=(
-                CapabilityState.READY
-                if settings.semantic_cache_enabled and qdrant_state.state == CapabilityState.READY
-                else CapabilityState.DEGRADED
-            )
-        ),
+        "semantic_cache": semantic_cache_state,
         "hitl_checkpoints": hitl_checkpoint_state,
     }
     overall = (
