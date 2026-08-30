@@ -14,6 +14,7 @@ in-memory approval map, in-memory Qdrant) — no external service is contacted.
 
 from __future__ import annotations
 
+import json
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -52,7 +53,14 @@ _INTEGRATION_ENV = {
     "SEMANTIC_CACHE_ENABLED": "false",
     # Known test secrets (config validation requires >= 32 chars).
     "HITL_SERVICE_TOKEN": _TEST_HITL_TOKEN,
-    "GATEWAY_API_KEYS": f"{_TEST_API_KEY}:demo-user-1",
+    "GATEWAY_API_KEYS": json.dumps(
+        {
+            _TEST_API_KEY: {
+                "user_id": "demo-user-1",
+                "role": "tier1_analyst",
+            }
+        }
+    ),
     "LOG_LEVEL": "WARNING",
     "LOG_FORMAT": "console",
 }
