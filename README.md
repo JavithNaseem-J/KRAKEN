@@ -4,7 +4,7 @@
 
 KRAKEN is a production-grade autonomous AI agent system built with FastAPI, LangGraph, PostgreSQL (Audit & Ticket Store), Redis, and Qdrant (Knowledge RAG, Semantic Cache & Episodic Memory). It handles complex cybersecurity and IT support queries, performs hybrid vector RAG over domain knowledge, executes safe actions autonomously, and routes high-risk operations through a Human-in-the-Loop (HITL) approval queue with an append-only cryptographic audit trail.
 
-For a detailed topology and sequence diagrams of the HITL workflow, see the [System Architecture Documentation](docs/architecture.md). For the internal LangGraph reasoning state machine, node contracts, and prompt versioning guide, see the [Agent Pipeline Documentation](docs/agent-pipeline.md).
+The [production demo design](docs/superpowers/specs/2026-08-24-production-demo-design.md) records the public deployment boundaries, safety model, and acceptance contract.
 
 ---
 
@@ -24,7 +24,7 @@ For a detailed topology and sequence diagrams of the HITL workflow, see the [Sys
 
 - **Python 3.12+**
 - **uv** (or pip)
-- **Docker & Docker Compose** (optional for local containerized run)
+- **Docker** (optional for a local containerized run)
 - **Groq API Key** (or any OpenAI-compatible LLM endpoint)
 
 ---
@@ -49,16 +49,20 @@ cp .env.example .env
 python main.py
 ```
 
-### Option B: Docker Compose
+### Option B: Local Docker Image
 
 ```bash
-# Start the full stack (App + PostgreSQL + Redis + React frontend)
-docker compose up -d
+# Build the same unified image used in production
+docker build -t kraken:local .
 
-# Ingest domain knowledge into vector store
-python scripts/ingest_knowledge.py
+# Run the React UI and API together using your local environment file
+docker run --rm -p 8000:8000 --env-file .env -e PORT=8000 kraken:local
+```
 
-# Run evaluation harness against the running system
+In another terminal, verify the running application:
+
+```bash
+python scripts/acceptance.py --base-url http://127.0.0.1:8000
 python tests/evals/eval_harness.py --base-url http://localhost:8000
 ```
 
@@ -83,12 +87,27 @@ The production Docker image serves the React UI and API together at [http://loca
 ## Development Commands
 
 ```bash
-make install-dev  # Install development dependencies with uv sync
-make test         # Run pytest unit test suite
-make lint         # Run ruff check
-make format       # Run ruff format
-make type-check   # Run mypy type checker across src/
-make status       # Run health check across consolidated app endpoints
-make up           # Start Docker Compose services
-make down         # Stop containers
+uv sync --all-extras
+uv run pytest tests/unit -q
+uv run ruff check src scripts tests
+uv run ruff format --check src scripts tests
+uv run mypy src scripts
+cd frontend-react
+npm ci
+npm test
+npm run lint
+npm run build
 ```
+
+---
+
+## Production Deployment
+
+GitHub Actions deploys only the exact `main` commit that completed CI successfully. Render automatic deployment must remain disabled because the deployment workflow calls the secret Render hook with that tested commit SHA.
+
+Before the first deployment of this version:
+
+1. Set `GATEWAY_API_KEYS` in Render to a JSON object whose keys are unique secrets and whose values contain `user_id` and `role`, for example `{"replace-with-a-random-secret":{"user_id":"portfolio-owner","role":"admin"}}`.
+2. Confirm the GitHub production environment contains `RENDER_DEPLOY_HOOK_URL` and that the URL is never committed or logged.
+3. Confirm the Render service Auto-Deploy setting is **Off**; `render.yaml` also declares `autoDeploy: false`.
+4. After deployment, compare the Render commit with the `deploy_sha` shown by the successful deployment workflow.

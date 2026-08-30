@@ -1,15 +1,7 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
-
-import structlog
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
-
-log = structlog.get_logger(__name__)
 
 # Prompt injection patterns (case-insensitive)
 PROMPT_INJECTION_PATTERNS = [
@@ -77,53 +69,3 @@ def guard_message(text: str, operator_role: str | None = None) -> PromptGuardRes
         detected_injection=detected_injection,
         redacted_pii=sanitized != text,
     )
-
-
-class PromptGuardMiddleware(BaseHTTPMiddleware):
-    """
-    Middleware checking incoming JSON payloads for prompt injection attacks
-    and masking PII strings before requests reach upstream services.
-
-    Requests carrying X-Operator-Role: operator bypass the injection block but
-    still have the pattern match logged as a warning.
-    """
-
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        if request.url.path in ("/v1/run", "/v1/run/stream") and request.method == "POST":
-            operator_role = request.headers.get("X-Operator-Role")
-            try:
-                body_bytes = await request.body()
-                if body_bytes:
-                    payload = json.loads(body_bytes)
-                    message = payload.get("message", "")
-                    if isinstance(message, str) and message:
-                        guard_result = guard_message(message, operator_role)
-                        if guard_result.detected_injection:
-                            if not guard_result.blocked:
-                                log.warning(
-                                    "gateway.prompt_injection_operator_bypass",
-                                    path=request.url.path,
-                                    trace_id=getattr(request.state, "trace_id", None),
-                                )
-                            else:
-                                log.warning(
-                                    "gateway.prompt_injection_blocked",
-                                    path=request.url.path,
-                                    trace_id=getattr(request.state, "trace_id", None),
-                                )
-                                return JSONResponse(
-                                    status_code=400,
-                                    content={
-                                        "error": "Request blocked: potential prompt injection detected."
-                                    },
-                                )
-
-                        if guard_result.redacted_pii:
-                            payload["message"] = guard_result.sanitized_text
-                            log.info("gateway.pii_redacted", path=request.url.path)
-                            new_bytes = json.dumps(payload).encode("utf-8")
-                            request._body = new_bytes
-            except Exception as exc:
-                log.warning("gateway.prompt_guard_error", error=str(exc))
-
-        return await call_next(request)

@@ -77,26 +77,6 @@ export async function transitionPersona(persona: PersonaRole): Promise<DemoSessi
   return data.persona;
 }
 
-export async function resetDemoSession(): Promise<DemoSession> {
-  const current = await bootstrapDemoSession();
-  const { data } = await axios.post<DemoSession>(
-    `${API_URL}/v1/demo/session/reset`,
-    { csrf_token: current.csrf_token },
-    { withCredentials: true },
-  );
-  sessionPromise = Promise.resolve(data);
-  return data;
-}
-
-export async function runAgentQuery(message: string, sessionId: string): Promise<RunResponse> {
-  const { data } = await axios.post<RunResponse>(
-    `${API_URL}/v1/run`,
-    { message, session_id: sessionId },
-    { headers: await sessionHeaders(), withCredentials: true, timeout: 120_000 },
-  );
-  return data;
-}
-
 export function pollSessionStatus(sessionId: string): Promise<RunResponse> {
   void sessionId;
   return axios

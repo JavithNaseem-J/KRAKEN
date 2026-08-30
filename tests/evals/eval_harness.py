@@ -3,7 +3,7 @@ Evaluation harness — runs the golden dataset against the live system and score
 responses using an LLM-as-a-Judge (Faithfulness, Context Recall, Answer Relevance).
 
 Usage:
-    # Start the system first: make up && make ingest
+    # Start the unified application first: python main.py
     python tests/evals/eval_harness.py [--base-url http://localhost:8000] [--api-key your-key]
 
 Scoring:

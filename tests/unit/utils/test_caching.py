@@ -10,7 +10,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.utils.cache import SemanticCache, create_async_qdrant_client
+from src.utils.cache import EXACT_CACHE_GENERATION_KEY, SemanticCache, create_async_qdrant_client
 
 
 class TestSemanticCache:
@@ -26,8 +26,12 @@ class TestSemanticCache:
         mock_qdrant = AsyncMock()
         mock_qdrant.collection_exists.return_value = True
         cache = SemanticCache(client=mock_qdrant)
+        mock_redis = AsyncMock()
+        mock_redis.incr.return_value = 1
+        cache._redis = mock_redis
         asyncio.run(cache.invalidate())
         assert mock_qdrant.delete_collection.call_count == 1
+        mock_redis.incr.assert_awaited_once_with(EXACT_CACHE_GENERATION_KEY)
 
     def test_cache_init_creates_cloud_filter_indexes(self) -> None:
         mock_qdrant = AsyncMock()
@@ -83,9 +87,10 @@ class TestSemanticCache:
         mock_qdrant = AsyncMock()
         mock_qdrant.query_points.return_value = SimpleNamespace(points=[])
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = (
-            '{"answer": "cached VPN answer", "session_id": "old", "reasoning": "cached"}'
-        )
+        mock_redis.get.side_effect = [
+            b"0",
+            '{"answer": "cached VPN answer", "session_id": "old", "reasoning": "cached"}',
+        ]
         mock_settings = MagicMock(semantic_cache_enabled=True, redis_url="")
         cache = SemanticCache(client=mock_qdrant)
         cache._redis = mock_redis
@@ -106,7 +111,62 @@ class TestSemanticCache:
 
         assert result is not None
         assert result["answer"] == "cached VPN answer"
-        assert mock_redis.get.await_count == 1
+        assert mock_redis.get.await_count == 2
+
+    def test_exact_cache_generation_changes_key_namespace(self) -> None:
+        cache = SemanticCache(client=AsyncMock())
+        context = {"role": "end_user", "knowledge_version": "v2"}
+
+        old_key = cache._exact_cache_key("VPN help", context, "0")
+        new_key = cache._exact_cache_key("VPN help", context, "1")
+
+        assert old_key != new_key
+
+    def test_recomputed_query_context_reuses_qdrant_point_id(self) -> None:
+        mock_qdrant = AsyncMock()
+        cache = SemanticCache(client=mock_qdrant)
+        context = {
+            "role": "end_user",
+            "scope": "shared",
+            "embedding_model": "model",
+            "knowledge_version": "v2",
+        }
+        mock_settings = MagicMock(semantic_cache_enabled=True)
+
+        with patch("src.utils.cache.get_settings", return_value=mock_settings):
+            asyncio.run(cache.put([0.1] * 384, "VPN help", {"answer": "old"}, context))
+            asyncio.run(cache.put([0.1] * 384, "VPN help", {"answer": "new"}, context))
+
+        first_id = mock_qdrant.upsert.await_args_list[0].kwargs["points"][0].id
+        second_id = mock_qdrant.upsert.await_args_list[1].kwargs["points"][0].id
+        assert first_id == second_id
+
+    def test_different_cache_context_uses_distinct_qdrant_point_id(self) -> None:
+        mock_qdrant = AsyncMock()
+        cache = SemanticCache(client=mock_qdrant)
+        mock_settings = MagicMock(semantic_cache_enabled=True)
+
+        with patch("src.utils.cache.get_settings", return_value=mock_settings):
+            asyncio.run(
+                cache.put(
+                    [0.1] * 384,
+                    "VPN help",
+                    {"answer": "user"},
+                    {"role": "end_user", "knowledge_version": "v2"},
+                )
+            )
+            asyncio.run(
+                cache.put(
+                    [0.1] * 384,
+                    "VPN help",
+                    {"answer": "admin"},
+                    {"role": "admin", "knowledge_version": "v2"},
+                )
+            )
+
+        first_id = mock_qdrant.upsert.await_args_list[0].kwargs["points"][0].id
+        second_id = mock_qdrant.upsert.await_args_list[1].kwargs["points"][0].id
+        assert first_id != second_id
 
 
 class TestQdrantClientFactory:

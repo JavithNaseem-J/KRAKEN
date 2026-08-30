@@ -23,7 +23,14 @@ from src.utils.http_client import create_async_redis_client
 
 log = structlog.get_logger(__name__)
 SEMANTIC_CACHE_COLLECTION = "kraken_semantic_cache"
+EXACT_CACHE_GENERATION_KEY = "kraken:semantic-cache:generation"
 SIMILARITY_THRESHOLD = 0.92
+
+
+def semantic_cache_point_id(query_text: str, context: dict[str, str] | None) -> str:
+    normalized_query = " ".join(query_text.lower().split())
+    context_key = json.dumps(context or {}, sort_keys=True)
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{normalized_query}:{context_key}"))
 
 
 def create_async_qdrant_client() -> AsyncQdrantClient:
@@ -70,12 +77,36 @@ class SemanticCache:
             if settings.redis_url and settings.semantic_cache_enabled
             else None
         )
+        self._generation_dirty = False
 
-    def _exact_cache_key(self, query_text: str, context: dict[str, str] | None) -> str:
+    def _exact_cache_key(
+        self,
+        query_text: str,
+        context: dict[str, str] | None,
+        generation: str = "0",
+    ) -> str:
         normalized = " ".join(query_text.lower().split())
         context_key = json.dumps(context or {}, sort_keys=True)
         digest = hashlib.sha256(f"{normalized}:{context_key}".encode()).hexdigest()
-        return f"kraken:semantic-cache:exact:{digest}"
+        return f"kraken:semantic-cache:exact:{generation}:{digest}"
+
+    async def _exact_cache_generation(self) -> str | None:
+        if not self._redis:
+            return None
+        try:
+            if self._generation_dirty:
+                generation = await self._redis.incr(EXACT_CACHE_GENERATION_KEY)
+                self._generation_dirty = False
+                return str(int(generation))
+            raw = await self._redis.get(EXACT_CACHE_GENERATION_KEY)
+            if raw is None:
+                return "0"
+            if isinstance(raw, bytes):
+                raw = raw.decode("ascii")
+            return str(int(raw))
+        except Exception as exc:
+            log.warning("semantic_cache.generation_error", error=str(exc))
+            return None
 
     async def _get_exact(
         self, query_text: str | None, context: dict[str, str] | None
@@ -83,7 +114,10 @@ class SemanticCache:
         if not self._redis or not query_text:
             return None
         try:
-            raw = await self._redis.get(self._exact_cache_key(query_text, context))
+            generation = await self._exact_cache_generation()
+            if generation is None:
+                return None
+            raw = await self._redis.get(self._exact_cache_key(query_text, context, generation))
             if not raw:
                 return None
             payload = json.loads(raw)
@@ -103,8 +137,11 @@ class SemanticCache:
         if not self._redis:
             return
         try:
+            generation = await self._exact_cache_generation()
+            if generation is None:
+                return
             await self._redis.setex(
-                self._exact_cache_key(query_text, context),
+                self._exact_cache_key(query_text, context, generation),
                 int(self._ttl_seconds),
                 json.dumps(response, sort_keys=True, default=str),
             )
@@ -212,9 +249,7 @@ class SemanticCache:
         if not get_settings().semantic_cache_enabled:
             return
 
-        point_id = str(
-            uuid.uuid5(uuid.NAMESPACE_DNS, f"{query_text}:{json.dumps(response, sort_keys=True)}")
-        )
+        point_id = semantic_cache_point_id(query_text, context)
         try:
             await self._client.upsert(
                 collection_name=SEMANTIC_CACHE_COLLECTION,
@@ -272,7 +307,12 @@ class SemanticCache:
             return False, exc.__class__.__name__
 
     async def invalidate(self) -> None:
-        """Purge all entries from the semantic cache collection."""
+        """Make Redis exact entries unreachable and purge the Qdrant cache."""
+        if self._redis:
+            self._generation_dirty = True
+            generation = await self._exact_cache_generation()
+            if generation is not None:
+                log.info("semantic_cache.exact_invalidated", generation=generation)
         try:
             if await self._client.collection_exists(SEMANTIC_CACHE_COLLECTION):
                 await self._client.delete_collection(SEMANTIC_CACHE_COLLECTION)

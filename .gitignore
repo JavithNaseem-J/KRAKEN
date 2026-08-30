@@ -195,6 +195,7 @@ cython_debug/
 # Local skill/plugin cache.
 .agents/
 .codex/
+graphify-out/
 
 # Abstra
 .abstra/
@@ -286,6 +287,7 @@ tests/integration/*
 !tests/integration/test_offline_gateway_boot.py
 !tests/unit/
 tests/unit/*
+!tests/unit/test_repository_contract.py
 !tests/unit/agent/
 tests/unit/agent/*
 !tests/unit/agent/test_async_concurrency.py
@@ -323,6 +325,7 @@ tests/unit/safety/*
 !tests/unit/utils/
 tests/unit/utils/*
 !tests/unit/utils/test_audit_store.py
+!tests/unit/utils/test_auth.py
 !tests/unit/utils/test_caching.py
 !tests/unit/utils/test_cloud_host_validation.py
 !tests/unit/utils/test_config_validation.py
@@ -330,6 +333,7 @@ tests/unit/utils/*
 !tests/unit/utils/test_embedder.py
 !tests/unit/utils/test_file_ingestion.py
 !tests/unit/utils/test_knowledge_loaders.py
+!tests/unit/utils/test_knowledge_retriever_version.py
 !tests/unit/utils/test_observability.py
 !tests/unit/utils/test_semantic_cache.py
 !tests/unit/utils/test_short_term_memory.py

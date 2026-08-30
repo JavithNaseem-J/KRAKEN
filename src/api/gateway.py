@@ -43,7 +43,6 @@ from src.utils.http_client import (
 )
 from src.utils.logging import configure_logging
 from src.utils.middleware.prompt_guard import (
-    PromptGuardMiddleware,
     guard_message,
     is_operator_role,
 )
@@ -154,7 +153,6 @@ app = FastAPI(
 
 # Auth & Security middleware
 app.add_middleware(TraceIdMiddleware)
-app.add_middleware(PromptGuardMiddleware)
 app.add_middleware(
     APIKeyMiddleware,
     api_keys=API_KEYS_MAP,
@@ -474,11 +472,33 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
         if not settings.qdrant_url or not settings.qdrant_api_key:
             return CapabilityStatus(state=CapabilityState.DEGRADED, detail="not configured")
         try:
+            from qdrant_client.models import FieldCondition, Filter, MatchValue
+
             from src.utils.cache import create_async_qdrant_client
 
             client = create_async_qdrant_client()
             await asyncio.wait_for(client.get_collections(), timeout=timeout)
+            active_points = await asyncio.wait_for(
+                client.count(
+                    collection_name=settings.qdrant_collection_name,
+                    count_filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="collection_version",
+                                match=MatchValue(value=settings.knowledge_collection_version),
+                            )
+                        ]
+                    ),
+                    exact=True,
+                ),
+                timeout=timeout,
+            )
             await client.close()
+            if active_points.count < 1:
+                return CapabilityStatus(
+                    state=CapabilityState.DEGRADED,
+                    detail="active knowledge version unavailable",
+                )
             return CapabilityStatus(state=CapabilityState.READY)
         except Exception:
             return CapabilityStatus(state=CapabilityState.DEGRADED, detail="provider unavailable")
@@ -690,7 +710,7 @@ async def _prepare_agent_request(
         body["session_id"] = demo_session.session_id
     else:
         user_id = getattr(request.state, "user_id", "anonymous")
-        operator_role = request.headers.get("X-Operator-Role", "end_user").strip().lower()
+        operator_role = getattr(request.state, "operator_role", "end_user")
         body.setdefault("session_id", str(uuid.uuid4()))
     body["user_id"] = user_id
     metadata = body.setdefault("metadata", {})

@@ -20,7 +20,7 @@ services:
     dockerfilePath: Dockerfile
     dockerContext: .
     healthCheckPath: /health
-    autoDeploy: true
+    autoDeploy: false
 
     envVars:
       # ── Runtime & Environment ───────────────────────────────────────────────
@@ -37,9 +37,9 @@ services:
       - key: LLM_BASE_URL
         value: https://api.groq.com/openai/v1
       - key: LLM_MODEL
-        value: llama-3.3-70b-versatile
+        value: openai/gpt-oss-120b
       - key: LLM_FALLBACK_MODEL
-        value: llama-3.1-8b-instant
+        value: openai/gpt-oss-20b
       - key: LLM_TEMPERATURE
         value: "0.0"
       - key: LLM_MAX_TOKENS
@@ -71,7 +71,7 @@ services:
       - key: DEMO_COOKIE_SECURE
         value: "true"
       - key: GATEWAY_API_KEYS
-        value: "dev-key-analyst-default:tier1_analyst,dev-key-admin-default:admin,dev-key-security-lead:security_lead"
+        sync: false
 
       # ── Unified In-Process Service Routing ──────────────────────────────────
       - key: ORCHESTRATOR_URL

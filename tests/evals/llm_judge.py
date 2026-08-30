@@ -19,6 +19,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
+from src.utils.config import DEFAULT_LLM_MODEL
+
 
 class EvaluationResult(BaseModel):
     """Structured output from the LLM judge."""
@@ -78,7 +80,7 @@ def _get_judge_llm() -> Any:
     """Return a ChatOpenAI instance pointing at the configured LLM provider."""
     base_url = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
     api_key = os.getenv("LLM_API_KEY", "gsk_placeholder")
-    model = os.getenv("LLM_JUDGE_MODEL", os.getenv("LLM_MODEL", "llama-3.3-70b-versatile"))
+    model = os.getenv("LLM_JUDGE_MODEL", os.getenv("LLM_MODEL", DEFAULT_LLM_MODEL))
 
     return ChatOpenAI(
         model=model,

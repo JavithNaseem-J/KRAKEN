@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 import uuid
 from pathlib import Path
@@ -16,7 +15,11 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from qdrant_client import AsyncQdrantClient, models
 
-from src.utils.cache import SEMANTIC_CACHE_COLLECTION, SemanticCache
+from src.utils.cache import (
+    SEMANTIC_CACHE_COLLECTION,
+    SemanticCache,
+    semantic_cache_point_id,
+)
 from src.utils.config import get_settings
 from src.utils.db.schema import SCHEMA_DDL
 from src.utils.knowledge.ingest import ensure_collection, run_ingest_async
@@ -81,12 +84,7 @@ async def main_async() -> None:
     await cache.init()
     await cache.put(probe_vector, probe_query, probe_response, probe_context)
     checks["semantic_cache"] = await cache.get(probe_vector, probe_context) == probe_response
-    probe_id = str(
-        uuid.uuid5(
-            uuid.NAMESPACE_DNS,
-            f"{probe_query}:{json.dumps(probe_response, sort_keys=True)}",
-        )
-    )
+    probe_id = semantic_cache_point_id(probe_query, probe_context)
     await qdrant.delete(
         collection_name=SEMANTIC_CACHE_COLLECTION,
         points_selector=models.PointIdsList(points=[probe_id]),

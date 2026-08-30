@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
-from qdrant_client.models import Document, FieldCondition, Filter, MatchAny
+from qdrant_client.models import Document, FieldCondition, Filter, MatchAny, MatchValue
 
 from src.safety.policy_engine import get_policy_engine
 from src.utils.config import get_settings
@@ -246,6 +246,10 @@ class KnowledgeRetriever:
                     key="allowed_roles",
                     match=MatchAny(any=["public", request.user_role]),
                 ),
+                FieldCondition(
+                    key="collection_version",
+                    match=MatchValue(value=settings.knowledge_collection_version),
+                ),
             ]
         )
 
@@ -315,7 +319,11 @@ class KnowledgeRetriever:
                         FieldCondition(
                             key="metadata.ticket_id",
                             match=MatchAny(any=query_ids),
-                        )
+                        ),
+                        FieldCondition(
+                            key="collection_version",
+                            match=MatchValue(value=settings.knowledge_collection_version),
+                        ),
                     ]
                 )
                 scroll_res = await client.scroll(
@@ -347,6 +355,8 @@ class KnowledgeRetriever:
         now = time.time()
         for hit in hits:
             payload = hit.payload or {}
+            if payload.get("collection_version") != settings.knowledge_collection_version:
+                continue
             scope = str(payload.get("scope") or "shared")
             if scope not in {"shared", request.session_id}:
                 continue

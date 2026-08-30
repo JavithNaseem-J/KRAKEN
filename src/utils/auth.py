@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import secrets
+from typing import Any
 
 import structlog
 from fastapi import Header, HTTPException, status
@@ -52,17 +54,30 @@ def verify_service_token(
     return token
 
 
+def _normalize_key_metadata(value: Any) -> dict[str, str]:
+    if isinstance(value, dict):
+        user_id = str(value.get("user_id") or "default_user").strip()
+        role = str(value.get("role") or "user").strip().lower()
+        return {"user_id": user_id or "default_user", "role": role or "user"}
+    if isinstance(value, str):
+        return {"user_id": value.strip() or "default_user", "role": "user"}
+    return {"user_id": "default_user", "role": "user"}
+
+
 def parse_api_keys(raw_keys: str) -> dict[str, dict[str, str]]:
-    """Parse JSON mapping or comma-separated API key config string into key map."""
-    import json
+    """Parse canonical JSON or non-privileged legacy comma-separated API keys."""
 
     if not raw_keys:
         return {}
     try:
         data = json.loads(raw_keys)
         if isinstance(data, dict):
-            return data
-    except Exception:
+            return {
+                str(key).strip(): _normalize_key_metadata(metadata)
+                for key, metadata in data.items()
+                if str(key).strip()
+            }
+    except (TypeError, ValueError, json.JSONDecodeError):
         pass
 
     mapping = {}
@@ -75,6 +90,14 @@ def parse_api_keys(raw_keys: str) -> dict[str, dict[str, str]]:
             else:
                 mapping[part] = {"user_id": "default_user", "role": "user"}
     return mapping
+
+
+def match_api_key(candidate: str, api_keys: dict[str, dict[str, str]]) -> dict[str, str] | None:
+    """Return metadata for a constant-time API-key match."""
+    for configured_key, metadata in api_keys.items():
+        if safe_compare_tokens(candidate, configured_key):
+            return _normalize_key_metadata(metadata)
+    return None
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
@@ -122,9 +145,10 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         current_keys = parse_api_keys(settings.gateway_api_keys)
         valid_keys = {**self.api_keys_map, **current_keys} if self.api_keys_map else current_keys
 
-        if api_key and (
-            api_key in valid_keys or safe_compare_tokens(api_key, settings.gateway_api_keys)
-        ):
+        metadata = match_api_key(api_key, valid_keys) if api_key else None
+        if metadata is not None:
+            request.state.user_id = metadata["user_id"]
+            request.state.operator_role = metadata["role"]
             return await call_next(request)
 
         return JSONResponse(

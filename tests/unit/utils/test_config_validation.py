@@ -9,6 +9,8 @@ Validates that:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -36,7 +38,14 @@ def _make_settings(**overrides) -> Settings:
         "memory_url": "https://memory.example.com",
         "audit_url": "https://audit.example.com",
         "hitl_service_token": _STRONG_TOKEN,
-        "gateway_api_keys": "server-only-test-key:tier1_analyst",
+        "gateway_api_keys": json.dumps(
+            {
+                "server-only-test-key": {
+                    "user_id": "test-analyst",
+                    "role": "tier1_analyst",
+                }
+            }
+        ),
         "demo_session_secret": "demo-session-secret-0123456789abcdef",
         "demo_cookie_secure": True,
     }
@@ -108,5 +117,33 @@ class TestStrongTokenAccepted:
         assert settings.hitl_service_token == token
 
     def test_default_secret_rejected_in_prod_environment(self):
-        with pytest.raises(ValidationError, match="cannot use default development tokens"):
-            _make_settings(gateway_api_keys="dev-secret-key", environment="prod")
+        with pytest.raises(ValidationError, match="default development API keys"):
+            _make_settings(
+                gateway_api_keys=json.dumps(
+                    {"dev-secret-key": {"user_id": "test", "role": "user"}}
+                ),
+                environment="prod",
+            )
+
+    def test_dev_prefixed_gateway_key_rejected_in_prod(self):
+        with pytest.raises(ValidationError, match="default development API keys"):
+            _make_settings(
+                gateway_api_keys=json.dumps(
+                    {"dev-key-public": {"user_id": "test", "role": "user"}}
+                ),
+                environment="prod",
+            )
+
+    def test_legacy_gateway_mapping_rejected_in_prod(self):
+        with pytest.raises(ValidationError, match="must be a JSON object"):
+            _make_settings(
+                gateway_api_keys="server-only-test-key:tier1_analyst",
+                environment="prod",
+            )
+
+    def test_gateway_metadata_required_in_prod(self):
+        with pytest.raises(ValidationError, match="requires non-empty user_id and role"):
+            _make_settings(
+                gateway_api_keys=json.dumps({"server-only-test-key": "tier1_analyst"}),
+                environment="prod",
+            )

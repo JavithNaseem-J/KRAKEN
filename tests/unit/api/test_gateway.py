@@ -181,7 +181,7 @@ def test_registry_derived_privileged_intent_blocked_for_sync_and_stream(client):
     assert stream_response.status_code == status.HTTP_403_FORBIDDEN
 
 
-def test_operator_role_can_bypass_registry_derived_privileged_intent(client):
+def test_operator_role_header_cannot_bypass_registry_derived_privileged_intent(client):
     mock_upstream_resp = MagicMock()
     mock_upstream_resp.json.return_value = {"answer": "queued for approval"}
     mock_upstream_resp.status_code = status.HTTP_200_OK
@@ -196,7 +196,54 @@ def test_operator_role_can_bypass_registry_derived_privileged_intent(client):
         },
     )
 
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def test_authenticated_operator_role_can_run_privileged_intent(client, monkeypatch):
+    import json
+
+    from src.api.gateway import settings
+
+    monkeypatch.setattr(
+        settings,
+        "gateway_api_keys",
+        json.dumps(
+            {
+                "server-admin-key": {
+                    "user_id": "security-admin",
+                    "role": "admin",
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr("src.utils.auth.get_settings", lambda: settings)
+    mock_upstream_resp = MagicMock()
+    mock_upstream_resp.json.return_value = {"answer": "queued for approval"}
+    mock_upstream_resp.status_code = status.HTTP_200_OK
+    app.state.http.post.return_value = mock_upstream_resp
+
+    response = client.post(
+        "/v1/run",
+        json={"message": "Please quarantine IP 203.0.113.10 now"},
+        headers={"X-API-Key": "server-admin-key"},
+    )
+
     assert response.status_code == status.HTTP_200_OK
+    called_body = app.state.http.post.call_args.kwargs["json"]
+    assert called_body["user_id"] == "security-admin"
+    assert called_body["metadata"]["operator_role"] == "admin"
+
+
+def test_raw_gateway_key_configuration_is_rejected(client):
+    from src.api.gateway import settings
+
+    response = client.post(
+        "/v1/run",
+        json={"message": "hello"},
+        headers={"X-API-Key": settings.gateway_api_keys},
+    )
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 def test_pii_redacted(client):

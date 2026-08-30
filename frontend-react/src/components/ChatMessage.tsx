@@ -1,11 +1,11 @@
 import { Bot, BrainCircuit, Check, Copy, User } from 'lucide-react';
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import Markdown from 'react-markdown';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import type { ChatMessage as ChatMessageType, QueryResponse } from '../types/agent';
 import { InlineApprovalCard } from './InlineApprovalCard';
+
+const CodeBlock = lazy(() => import('./CodeBlock'));
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -147,19 +147,15 @@ export function ChatMessage({
                         <span>{match[1]}</span>
                         <CopyButton text={codeText} />
                       </div>
-                      <SyntaxHighlighter
-                        style={vscDarkPlus}
-                        language={match[1]}
-                        PreTag="div"
-                        customStyle={{
-                          margin: 0,
-                          padding: '0.75rem',
-                          background: 'transparent',
-                          fontSize: '0.75rem',
-                        }}
+                      <Suspense
+                        fallback={
+                          <pre className="m-0 overflow-x-auto bg-transparent p-3 text-left font-mono text-xs text-neutral-200">
+                            <code>{codeText}</code>
+                          </pre>
+                        }
                       >
-                        {codeText}
-                      </SyntaxHighlighter>
+                        <CodeBlock language={match[1]} code={codeText} />
+                      </Suspense>
                     </div>
                   ) : (
                     <code

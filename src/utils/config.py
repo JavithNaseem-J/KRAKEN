@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_LLM_MODEL = "openai/gpt-oss-120b"
+DEFAULT_LLM_FALLBACK_MODEL = "openai/gpt-oss-20b"
 
 
 class Settings(BaseSettings):
@@ -21,8 +25,8 @@ class Settings(BaseSettings):
     # LLM
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
-    llm_model: str = "llama-3.3-70b-versatile"
-    llm_fallback_model: str = "llama-3.1-8b-instant"
+    llm_model: str = DEFAULT_LLM_MODEL
+    llm_fallback_model: str = DEFAULT_LLM_FALLBACK_MODEL
     llm_temperature: float = 0.0
     llm_max_tokens: int = 4096
     llm_timeout_seconds: int = 60
@@ -125,7 +129,7 @@ class Settings(BaseSettings):
     orchestrator_max_concurrency: int = 5
     orchestrator_workers: int = 4
 
-    # Internal Service URLs (overridden per-container in docker-compose)
+    # Internal service URLs (overridden by the unified production runtime)
     orchestrator_url: str = "http://localhost:8001"
     knowledge_url: str = "http://localhost:8002"
     action_url: str = "http://localhost:8003"
@@ -244,19 +248,40 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_prod_environment_keys(self) -> Settings:
-        """Enforce strict secret checks when ENVIRONMENT == 'prod' or 'production'."""
-        if self.environment in ("prod", "production"):
+        """Enforce strict secret checks when ENVIRONMENT == 'prod'."""
+        if self.environment == "prod":
             default_secrets = {
                 "dev-secret-key",
                 "dev-token",
                 "dev-gateway-key-change-in-production",
                 "dev-hitl-token-change-in-production-min32chars",
             }
-            if self.gateway_api_keys in default_secrets:
+            try:
+                gateway_keys = json.loads(self.gateway_api_keys)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise ValueError(
-                    f"Production environment (ENVIRONMENT={self.environment!r}) cannot use default development tokens or secrets. "
-                    "Please set secure custom secrets in .env before running in production."
-                )
+                    "Production GATEWAY_API_KEYS must be a JSON object mapping secrets "
+                    "to user_id and role metadata."
+                ) from exc
+            if not isinstance(gateway_keys, dict) or not gateway_keys:
+                raise ValueError("Production GATEWAY_API_KEYS must contain at least one key.")
+            for api_key, metadata in gateway_keys.items():
+                if (
+                    not isinstance(api_key, str)
+                    or not api_key.strip()
+                    or api_key in default_secrets
+                    or api_key.lower().startswith("dev-key-")
+                ):
+                    raise ValueError(
+                        "Production environment cannot use empty or default development API keys."
+                    )
+                if not isinstance(metadata, dict) or not all(
+                    isinstance(metadata.get(field), str) and metadata[field].strip()
+                    for field in ("user_id", "role")
+                ):
+                    raise ValueError(
+                        "Each production API key requires non-empty user_id and role metadata."
+                    )
             if self.demo_session_secret == "dev-demo-session-secret-change-before-prod":
                 raise ValueError(
                     "Production cannot use the shipped demo_session_secret. "

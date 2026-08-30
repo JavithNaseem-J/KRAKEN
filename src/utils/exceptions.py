@@ -13,9 +13,6 @@ class KRAKENBaseException(Exception):  # noqa: N818
         return f"{self.__class__.__name__}(message={self.message!r}, details={self.details})"
 
 
-AKEABaseException = KRAKENBaseException
-
-
 # Action / Write Safety
 class ActionExecutionError(KRAKENBaseException):
     """Raised when an action fails during execution."""

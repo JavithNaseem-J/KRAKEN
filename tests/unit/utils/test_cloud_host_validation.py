@@ -12,6 +12,8 @@ Validates that:
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -34,7 +36,14 @@ _CLOUD_URLS = {
     "approval_url": "https://approval.akea.internal",
     "memory_url": "https://memory.akea.internal",
     "audit_url": "https://audit.akea.internal",
-    "gateway_api_keys": "server-only-test-key:tier1_analyst",
+    "gateway_api_keys": json.dumps(
+        {
+            "server-only-test-key": {
+                "user_id": "test-analyst",
+                "role": "tier1_analyst",
+            }
+        }
+    ),
     "demo_session_secret": "demo-session-secret-0123456789abcdef",
     "demo_cookie_secure": True,
 }
