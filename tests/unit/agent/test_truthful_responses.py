@@ -13,7 +13,7 @@ async def test_responder_node_auto_executed_approval_status():
     mock_llm = MagicMock()
     mock_invoke = AsyncMock(
         return_value=AIMessage(
-            content="**SECURITY OPERATION RESPONSE**\n\n### **ANALYSIS**\nVerified.\n\n### **ACTION TAKEN**\nAnswered user inquiry.\n\n### **RESULTS**\nDone.\n\n### **EVIDENCE CITED**\n- Policy doc.\n\n### **APPROVAL STATUS**\nAuto-executed; no human approval required."
+            content="**SECURITY OPERATION RESPONSE**\n\n### **SUMMARY**\nVerified.\n\n### **ACTION TAKEN**\nAnswered user inquiry.\n\n### **RESULTS**\nDone.\n\n### **EVIDENCE CITED**\n- Policy doc.\n\n### **APPROVAL STATUS**\nAuto-executed; no human approval required."
         )
     )
 
@@ -47,7 +47,7 @@ async def test_responder_node_approved_hitl_action():
     mock_llm = MagicMock()
     mock_invoke = AsyncMock(
         return_value=AIMessage(
-            content="**SECURITY OPERATION RESPONSE**\n\n### **ANALYSIS**\nExecuted.\n\n### **ACTION TAKEN**\nQuarantined IP.\n\n### **RESULTS**\nBlocked.\n\n### **EVIDENCE CITED**\n- Incident policy.\n\n### **APPROVAL STATUS**\nHuman approval was granted by an authorized security operator."
+            content="**SECURITY OPERATION RESPONSE**\n\n### **SUMMARY**\nExecuted.\n\n### **ACTION TAKEN**\nQuarantined IP.\n\n### **RESULTS**\nBlocked.\n\n### **EVIDENCE CITED**\n- Incident policy.\n\n### **APPROVAL STATUS**\nHuman approval was granted by an authorized security operator."
         )
     )
 

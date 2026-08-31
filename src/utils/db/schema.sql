@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
     status        VARCHAR(16) NOT NULL,
     payload       JSONB,
     result        JSONB,
-    reasoning     TEXT,
     previous_hash VARCHAR(64) NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
     entry_hash    VARCHAR(64),
     expires_at    TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '7 days')
@@ -23,6 +22,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 DROP RULE IF EXISTS audit_log_no_update ON audit_log;
 DROP RULE IF EXISTS audit_log_no_delete ON audit_log;
+ALTER TABLE audit_log DROP COLUMN IF EXISTS reasoning;
 UPDATE audit_log SET expires_at = timestamp + INTERVAL '7 days' WHERE expires_at IS NULL;
 ALTER TABLE audit_log ALTER COLUMN expires_at SET DEFAULT (NOW() + INTERVAL '7 days');
 ALTER TABLE audit_log ALTER COLUMN expires_at SET NOT NULL;

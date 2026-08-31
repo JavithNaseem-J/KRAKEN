@@ -31,7 +31,6 @@ class AuditStore:
         """
         entry = entry.model_copy(
             update={
-                "reasoning": None,
                 "payload": summarize_audit_data(entry.payload),
                 "result": summarize_audit_data(entry.result),
             }
@@ -61,12 +60,12 @@ class AuditStore:
                     INSERT INTO audit_log (
                         session_id, user_id, action_type, action_name,
                         risk_level, hitl_required, hitl_decision, status,
-                        reasoning, payload, result, previous_hash, entry_hash
+                        payload, result, previous_hash, entry_hash
                     )
                     VALUES (
                         $1, $2, $3, $4,
                         $5, $6, $7, $8,
-                        $9, $10::jsonb, $11::jsonb, $12, $13
+                        $9::jsonb, $10::jsonb, $11, $12
                     )
                     RETURNING id
                     """,
@@ -78,7 +77,6 @@ class AuditStore:
                 entry.hitl_required,
                 entry.hitl_decision,
                 entry.status,
-                entry.reasoning,
                 payload_str,
                 result_str,
                 previous_hash,

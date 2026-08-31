@@ -1,4 +1,4 @@
-import { Bot, BrainCircuit, Check, Copy, User } from 'lucide-react';
+import { Bot, Check, Copy, User } from 'lucide-react';
 import { lazy, Suspense, useState } from 'react';
 import Markdown from 'react-markdown';
 
@@ -12,7 +12,6 @@ interface ChatMessageProps {
   isExecuting?: boolean;
   onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject', response?: QueryResponse) => void;
   onApprovalExpired?: (approvalId: string) => void;
-  onInspectReasoning: (message: ChatMessageType) => void;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -39,7 +38,6 @@ export function ChatMessage({
   isExecuting,
   onApprovalResolved,
   onApprovalExpired,
-  onInspectReasoning,
 }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -180,19 +178,6 @@ export function ChatMessage({
           }`}
         >
           <span>{new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-          {message.metadata &&
-            (message.metadata.reasoning ||
-              (message.metadata.retrieved_chunks && message.metadata.retrieved_chunks.length > 0) ||
-              (message.metadata.sources && message.metadata.sources.length > 0) ||
-              message.metadata.action_taken) && (
-              <button
-                onClick={() => onInspectReasoning(message)}
-                className="flex items-center gap-1 rounded border border-white/10 px-1.5 py-0.5 text-neutral-400 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                <BrainCircuit size={11} />
-                Reasoning
-              </button>
-            )}
         </div>
       </div>
     </div>

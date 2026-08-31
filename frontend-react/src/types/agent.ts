@@ -3,7 +3,6 @@
  *
  * - QueryResponse    ← shared/models/agent.py :: QueryResponse (orchestrator /run)
  * - PendingApproval  ← orchestrator /run HITL pause payload
- * - AgentMetadata    ← reasoning/trace metadata attached to assistant messages
  * - ChatMessage      ← UI-level chat stream entry
  */
 
@@ -16,11 +15,17 @@ export interface RetrievedChunk {
   metadata?: Record<string, unknown>;
 }
 
+export interface CacheMetadata {
+  hit: boolean;
+  scope: string;
+  knowledge_version: string | null;
+  embedding_model: string | null;
+}
+
 /** Successful agent execution response from POST /v1/run. */
 export interface QueryResponse {
   session_id: string;
   answer: string;
-  reasoning: string;
   action_taken: string | null;
   action_result: unknown | null;
   sources: string[];
@@ -32,6 +37,7 @@ export interface QueryResponse {
   execution_time_sec?: number | null;
   timestamp: string;
   trace_id: string | null;
+  cache: CacheMetadata;
 }
 
 /** HITL pause payload returned by POST /v1/run while awaiting approval. */
@@ -63,28 +69,35 @@ export function isRunningExecution(res: RunResponse): res is RunningExecution {
 export interface ApprovalDetails {
   approval_id: string;
   action_name: string;
-  risk_level: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
-  reasoning: string;
+  risk_level: 'CRITICAL' | 'SAFE';
+  approval_reason: string;
   payload: Record<string, unknown>;
+  session_id: string;
+  status: string;
+  created_at?: string;
+  initiator_id: string;
+  initiator_role: string;
   csrf_token: string;
-}
-
-/** Reasoning/trace metadata attached to a completed assistant message. */
-export interface AgentMetadata {
-  reasoning: string;
-  action_taken: string | null;
-  action_result: unknown | null;
-  sources: string[];
-  retrieved_chunks?: RetrievedChunk[];
-  chunk_scores?: number[];
-  execution_ms?: number | null;
-  trace_id: string | null;
-  timestamp: string;
 }
 
 export type ChatMessageRole = 'user' | 'assistant' | 'system';
 
 export type ApprovalState = 'pending' | 'approved' | 'rejected' | 'expired';
+
+export interface ResponseMetadata {
+  action_taken: string | null;
+  action_result: unknown | null;
+  sources: string[];
+  retrieved_chunks?: RetrievedChunk[];
+  chunk_scores?: number[];
+  confidence?: number | null;
+  evidence?: string[];
+  execution_ms?: number | null;
+  execution_time_sec?: number | null;
+  trace_id: string | null;
+  timestamp: string;
+  cache: CacheMetadata;
+}
 
 /** A single entry in the chat stream. */
 export interface ChatMessage {
@@ -92,8 +105,8 @@ export interface ChatMessage {
   role: ChatMessageRole;
   content: string;
   timestamp: string;
-  /** Present on completed assistant responses. */
-  metadata?: AgentMetadata;
+  /** Safe response evidence and operational metadata. */
+  metadata?: ResponseMetadata;
   /** Present when the message represents a HITL approval request. */
   approval_id?: string;
   approval_state?: ApprovalState;

@@ -19,8 +19,6 @@ def client(monkeypatch):
     monkeypatch.setenv("REDIS_URL", "")
     monkeypatch.setenv("POSTGRES_URL", "")
     monkeypatch.setenv("POSTGRES_SYNC_URL", "")
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
     c = TestClient(app)
     c.app.state.limiter = MagicMock()
     c.app.state.limiter.check = AsyncMock(return_value=(True, 10, 0))

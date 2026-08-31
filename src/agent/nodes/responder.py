@@ -219,10 +219,10 @@ async def responder_node(state: GraphState) -> dict:
         fallback_answer = _fallback_answer_from_action_result(action_result)
         if fallback_answer:
             final_answer = fallback_answer
-        elif reasoning:
-            final_answer = reasoning
         else:
-            final_answer = "Analysis completed. No further action needed."
+            final_answer = (
+                "The agent completed the request but did not produce a user-facing response."
+            )
 
     # Build action explanation (used in audit log)
     if selected_action:

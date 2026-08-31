@@ -50,7 +50,6 @@ async def test_sse_cache_hit_has_explicit_hit_and_one_terminal_response(
     cached = QueryResponse(
         session_id="old-session",
         answer="Use the corporate VPN portal.",
-        reasoning="Grounded response.",
         sources=["faq"],
         retrieved_chunks=[
             {
@@ -90,6 +89,7 @@ async def test_sse_cache_hit_has_explicit_hit_and_one_terminal_response(
     assert sum("response" in event for event in events) == 1
     assert events[-1]["response"]["session_id"] == "new-session"
     assert events[-1]["response"]["cache"]["hit"] is True
+    assert "reasoning" not in events[-1]["response"]
     assert fake_graph.streamed is False
 
 
@@ -103,7 +103,6 @@ async def test_provider_fallback_cache_entry_is_ignored(
             "The AI provider is temporarily unavailable, so KRAKEN cannot compose a "
             "grounded answer right now."
         ),
-        reasoning="Reasoning is unavailable because the AI provider could not complete the request.",
         retrieved_chunks=[
             {
                 "source": "faq",
@@ -156,7 +155,6 @@ async def test_provider_fallback_response_is_not_stored(
                 "The AI provider is temporarily unavailable, so KRAKEN cannot compose a "
                 "grounded answer right now."
             ),
-            reasoning="Reasoning is unavailable because the AI provider could not complete the request.",
             retrieved_chunks=[
                 {
                     "source": "faq",

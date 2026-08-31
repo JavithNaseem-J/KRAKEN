@@ -35,7 +35,8 @@ def test_responder_prompt_contains_approval_status_section() -> None:
     prompt = get_prompt("responder")
     assert isinstance(prompt, str)
     assert "### **APPROVAL STATUS**" in prompt
-    assert "### **ANALYSIS**" in prompt
+    assert "### **SUMMARY**" in prompt
+    assert "Do not reveal internal analysis" in prompt
     assert "### **ACTION TAKEN**" in prompt
 
 

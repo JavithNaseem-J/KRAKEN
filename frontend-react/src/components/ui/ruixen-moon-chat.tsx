@@ -64,7 +64,6 @@ interface RuixenMoonChatProps {
   onToggleSidebar: () => void;
   onApprovalResolved: (approvalId: string, decision: 'approve' | 'reject', response?: QueryResponse) => void;
   onApprovalExpired?: (approvalId: string) => void;
-  onInspectReasoning: (message: ChatMessageType) => void;
   streamingSteps?: AgentStreamEvent[];
 }
 
@@ -80,7 +79,6 @@ export default function RuixenMoonChat({
   onToggleSidebar,
   onApprovalResolved,
   onApprovalExpired,
-  onInspectReasoning,
   streamingSteps = [],
 }: RuixenMoonChatProps) {
   const [message, setMessage] = useState("");
@@ -222,7 +220,6 @@ export default function RuixenMoonChat({
                   }
                   onApprovalResolved={onApprovalResolved}
                   onApprovalExpired={onApprovalExpired}
-                  onInspectReasoning={onInspectReasoning}
                 />
               ))}
               {disabled && (

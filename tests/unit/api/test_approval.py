@@ -15,6 +15,7 @@ def client(monkeypatch):
     monkeypatch.setenv("HITL_SERVICE_TOKEN", _TOKEN)
     mock_queue = MagicMock()
     mock_queue.ping = AsyncMock(return_value=True)
+    mock_queue.purge_legacy_reasoning_entries = AsyncMock(return_value=0)
     mock_queue.stats = AsyncMock(return_value=0)
     mock_queue.enqueue = AsyncMock(return_value="test-approval-id")
     mock_queue.get = AsyncMock(
@@ -22,7 +23,6 @@ def client(monkeypatch):
             "approval_id": "test-approval-id",
             "action_name": "write_json_file",
             "payload": {"data": "test"},
-            "reasoning": "testing",
             "session_id": "session-123",
             "expires_at": "2026-07-05T12:00:00Z",
         }
@@ -69,7 +69,7 @@ def test_pending_creation_unauthorized(client):
 def test_pending_creation_malformed(client):
     response = client.post(
         "/pending",
-        json={"reasoning": "missing required action_name"},
+        json={"payload": {"missing": "action_name"}},
         headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -81,7 +81,6 @@ def test_pending_creation_success(client):
         json={
             "action_name": "write_json_file",
             "payload": {"hello": "world"},
-            "reasoning": "to store data",
             "session_id": "session-123",
         },
         headers=_HEADERS,
@@ -91,12 +90,21 @@ def test_pending_creation_success(client):
     client.app.state.queue.enqueue.assert_called_once_with(
         action_name="write_json_file",
         payload={"hello": "world"},
-        reasoning="to store data",
         session_id="session-123",
         initiator_id="",
         initiator_role="end_user",
         approval_id=None,
     )
+
+
+def test_approval_details_use_deterministic_policy_context(client):
+    response = client.get("/approve/test-approval-id/details")
+
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert "reasoning" not in body
+    assert body["risk_level"] == "CRITICAL"
+    assert "eligible operator" in body["approval_reason"]
 
 
 def test_approval_page_success(client):

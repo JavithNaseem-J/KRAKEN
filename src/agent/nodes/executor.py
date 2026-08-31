@@ -22,7 +22,6 @@ async def _register_approval(
     client: httpx.AsyncClient,
     action_name: str,
     payload: dict[str, Any],
-    reasoning: str,
     session_id: str,
     initiator_id: str,
     initiator_role: str,
@@ -35,7 +34,6 @@ async def _register_approval(
         {
             "action_name": action_name,
             "payload": payload,
-            "reasoning": reasoning,
             "session_id": session_id,
             "initiator_id": initiator_id,
             "initiator_role": initiator_role,
@@ -52,7 +50,6 @@ async def _call_action_service(
     payload: dict[str, Any],
     session_id: str,
     user_id: str,
-    reasoning: str,
     demo_session_id: str | None = None,
     demo_actor_id: str | None = None,
 ) -> dict[str, Any]:
@@ -62,7 +59,6 @@ async def _call_action_service(
         payload=payload,
         session_id=session_id,
         user_id=user_id,
-        reasoning=reasoning,
         demo_session_id=demo_session_id,
         demo_actor_id=demo_actor_id,
     )
@@ -90,7 +86,6 @@ async def executor_node(state: GraphState) -> dict:
     primary_action = state.get("selected_action")
     action_payload = state.get("action_payload") or {}
     risk_level = state.get("risk_level", "SAFE")
-    reasoning = state.get("reasoning", "")
     user_id = state.get("user_id", "system")
     operator_role = state.get("operator_role", "end_user")
     demo_session_id = state.get("demo_session_id") or None
@@ -133,7 +128,6 @@ async def executor_node(state: GraphState) -> dict:
                     act.get("action_payload", {}),
                     session_id,
                     user_id,
-                    reasoning,
                     demo_session_id,
                     demo_actor_id,
                 )
@@ -162,7 +156,6 @@ async def executor_node(state: GraphState) -> dict:
                     client=client,
                     action_name=c_name,
                     payload=c_payload,
-                    reasoning=reasoning,
                     session_id=session_id,
                     initiator_id=demo_actor_id or user_id,
                     initiator_role=operator_role,
@@ -210,7 +203,6 @@ async def executor_node(state: GraphState) -> dict:
                 c_payload,
                 session_id,
                 user_id,
-                reasoning,
                 demo_session_id,
                 demo_actor_id,
             )

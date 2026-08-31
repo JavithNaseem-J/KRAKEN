@@ -20,10 +20,14 @@ from qdrant_client.models import (
 
 from src.utils.config import get_settings
 from src.utils.http_client import create_async_redis_client
+from src.utils.privacy import strip_reasoning_fields
 
 log = structlog.get_logger(__name__)
-SEMANTIC_CACHE_COLLECTION = "kraken_semantic_cache"
+SEMANTIC_CACHE_COLLECTION = "kraken_semantic_cache_v2"
+LEGACY_SEMANTIC_CACHE_COLLECTION = "kraken_semantic_cache"
 EXACT_CACHE_GENERATION_KEY = "kraken:semantic-cache:generation"
+EXACT_CACHE_PREFIX = "kraken:semantic-cache:v2:exact"
+LEGACY_EXACT_CACHE_PATTERN = "kraken:semantic-cache:exact:*"
 SIMILARITY_THRESHOLD = 0.92
 
 
@@ -88,7 +92,32 @@ class SemanticCache:
         normalized = " ".join(query_text.lower().split())
         context_key = json.dumps(context or {}, sort_keys=True)
         digest = hashlib.sha256(f"{normalized}:{context_key}".encode()).hexdigest()
-        return f"kraken:semantic-cache:exact:{generation}:{digest}"
+        return f"{EXACT_CACHE_PREFIX}:{generation}:{digest}"
+
+    async def _purge_legacy_reasoning_payloads(self) -> None:
+        """Remove cache records written before reasoning was removed from public responses."""
+        try:
+            if await self._client.collection_exists(LEGACY_SEMANTIC_CACHE_COLLECTION):
+                await self._client.delete_collection(LEGACY_SEMANTIC_CACHE_COLLECTION)
+                log.info(
+                    "semantic_cache.legacy_collection_purged",
+                    collection=LEGACY_SEMANTIC_CACHE_COLLECTION,
+                )
+        except Exception as exc:
+            log.warning("semantic_cache.legacy_collection_purge_failed", error=str(exc))
+
+        if not self._redis:
+            return
+        try:
+            legacy_keys = [
+                key async for key in self._redis.scan_iter(match=LEGACY_EXACT_CACHE_PATTERN)
+            ]
+            if legacy_keys:
+                await self._redis.delete(*legacy_keys)
+                await self._redis.incr(EXACT_CACHE_GENERATION_KEY)
+                log.info("semantic_cache.legacy_exact_purged", count=len(legacy_keys))
+        except Exception as exc:
+            log.warning("semantic_cache.legacy_exact_purge_failed", error=str(exc))
 
     async def _exact_cache_generation(self) -> str | None:
         if not self._redis:
@@ -123,7 +152,7 @@ class SemanticCache:
             payload = json.loads(raw)
             if isinstance(payload, dict):
                 log.info("semantic_cache.exact_hit")
-                return payload
+                return strip_reasoning_fields(payload)
         except Exception as exc:
             log.warning("semantic_cache.exact_get_error", error=str(exc))
         return None
@@ -149,9 +178,11 @@ class SemanticCache:
         except Exception as exc:
             log.warning("semantic_cache.exact_put_error", error=str(exc))
 
-    async def init(self) -> None:
+    async def init(self, *, purge_legacy: bool = True) -> None:
         """Ensure the cache collection exists. Must be awaited during service startup."""
         settings = get_settings()
+        if purge_legacy:
+            await self._purge_legacy_reasoning_payloads()
         vector_dim = (
             settings.qdrant_inference_dim
             if settings.qdrant_url and settings.qdrant_cloud_inference_enabled
@@ -233,7 +264,7 @@ class SemanticCache:
                     "semantic_cache.hit",
                     score=hits[0].score,
                 )
-                return payload.get("response")
+                return strip_reasoning_fields(payload.get("response"))
         except Exception as exc:
             log.warning("semantic_cache.get_error", error=str(exc))
         return await self._get_exact(query_text, context)
@@ -249,6 +280,7 @@ class SemanticCache:
         if not get_settings().semantic_cache_enabled:
             return
 
+        response = strip_reasoning_fields(response)
         point_id = semantic_cache_point_id(query_text, context)
         try:
             await self._client.upsert(
@@ -280,7 +312,6 @@ class SemanticCache:
         response = {
             "session_id": "probe",
             "answer": "semantic cache probe",
-            "reasoning": "cache probe",
             "sources": ["probe"],
             "retrieved_chunks": [
                 {"source": "probe", "content": "semantic cache probe", "relevance_score": 1.0}
@@ -316,7 +347,7 @@ class SemanticCache:
         try:
             if await self._client.collection_exists(SEMANTIC_CACHE_COLLECTION):
                 await self._client.delete_collection(SEMANTIC_CACHE_COLLECTION)
-                await self.init()
+                await self.init(purge_legacy=False)
                 log.info("semantic_cache.invalidated")
         except Exception as exc:
             log.warning("semantic_cache.invalidate_failed", error=str(exc))

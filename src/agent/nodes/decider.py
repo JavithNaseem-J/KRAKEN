@@ -221,7 +221,6 @@ class DecisionOutput(BaseModel):
     selected_actions: list[ActionDecision] = Field(default_factory=list)
     action_payload: dict = Field(default_factory=dict)
     evidence: str = ""
-    explanation: str = ""
 
 
 async def decider_node(state: GraphState) -> dict:
@@ -357,7 +356,6 @@ async def decider_node(state: GraphState) -> dict:
                     highest_risk = "CRITICAL"
                 payload = dict(act_payload)
                 payload["evidence"] = str(decision.evidence) if decision.evidence else ""
-                payload["explanation"] = str(decision.explanation) if decision.explanation else ""
                 verified_actions.append(
                     {
                         "action_name": act_name,

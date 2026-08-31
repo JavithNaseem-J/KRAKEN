@@ -49,7 +49,6 @@ from src.utils.llm import validate_llm_config
 from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.agent import QueryRequest, QueryResponse
-from src.utils.observability import flush_langfuse, get_langfuse_callback_handler
 from src.utils.semantic_cache_policy import cache_context, cache_query, is_cache_eligible
 
 log = structlog.get_logger(__name__)
@@ -280,7 +279,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         with contextlib.suppress(Exception):
             app.state.conn_pool.close()
 
-    flush_langfuse()
     log.info("orchestrator.shutdown")
 
 
@@ -313,10 +311,10 @@ def _graph_config(
         trace_tags.append(settings.environment)
 
     trace_meta = {
-        "langfuse_session_id": session_id,
-        "langfuse_user_id": user_id or "anonymous",
-        "langfuse_trace_name": "kraken-agent-run",
-        "langfuse_tags": trace_tags,
+        "session_id": session_id,
+        "user_id": user_id or "anonymous",
+        "trace_name": "kraken-agent-run",
+        "trace_tags": trace_tags,
         **(metadata or {}),
     }
 
@@ -325,9 +323,6 @@ def _graph_config(
         "tags": trace_tags,
         "metadata": trace_meta,
     }
-    callbacks = get_langfuse_callback_handler()
-    if callbacks:
-        cfg["callbacks"] = callbacks
     return cfg
 
 
@@ -557,7 +552,7 @@ async def _semantic_cache_store(
 
 
 def _is_provider_unavailable_response(response: QueryResponse) -> bool:
-    text = f"{response.answer}\n{response.reasoning}".lower()
+    text = response.answer.lower()
     blocked_markers = (
         "ai provider is temporarily unavailable",
         "provider is temporarily unavailable",
@@ -1090,15 +1085,14 @@ def _build_response(
                 answer_val += f"\n- **Resolution:** {t.get('resolution')}"
         elif isinstance(action_res, dict) and action_res.get("message"):
             answer_val = str(action_res["message"])
-        elif state.get("reasoning"):
-            answer_val = str(state.get("reasoning"))
         else:
-            answer_val = "Analysis completed. No further action needed."
+            answer_val = (
+                "The agent completed the request but did not produce a user-facing response."
+            )
 
     return QueryResponse(
         session_id=session_id,
         answer=str(answer_val),
-        reasoning=state.get("reasoning", ""),
         action_taken=state.get("selected_action"),
         action_result=state.get("action_result"),
         sources=[c["source"] for c in formatted_chunks],

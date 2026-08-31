@@ -1,12 +1,9 @@
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Clock, Code2, Copy, Loader2, Lock, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import Markdown from 'react-markdown';
-
 import { fetchApprovalDetails, submitApprovalDecision } from '../services/api';
 import type { ApprovalDetails, ApprovalState, QueryResponse } from '../types/agent';
 import { usePersona } from '../context/PersonaContext';
-import { formatReasoning } from '../lib/formatReasoning';
 
 interface InlineApprovalCardProps {
   approvalId: string;
@@ -257,43 +254,17 @@ export function InlineApprovalCard({
             </div>
           )}
 
-          {/* Agent Reasoning */}
+          {/* Deterministic approval policy context */}
           <div className="rounded-xl border border-white/5 bg-black/50 p-3 text-xs text-neutral-300 leading-relaxed">
             <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider block mb-1">
-              Agent Justification & Context
+              Approval Policy
             </span>
-            <div className="text-xs text-neutral-300 leading-relaxed">
-              <Markdown
-                components={{
-                  h4({ children }) {
-                    return (
-                      <h4 className="text-[11px] font-black uppercase tracking-widest text-purple-300 mt-2 mb-1 border-b border-purple-500/30 pb-0.5 font-mono">
-                        {children}
-                      </h4>
-                    );
-                  },
-                  p({ children }) {
-                    return (
-                      <p className="text-justify leading-relaxed text-neutral-200 mb-1 font-sans">
-                        {children}
-                      </p>
-                    );
-                  },
-                  strong({ children }) {
-                    return <strong className="font-black text-white">{children}</strong>;
-                  },
-                  li({ children }) {
-                    return (
-                      <li className="text-justify leading-relaxed text-neutral-200 my-0.5 font-sans">
-                        {children}
-                      </li>
-                    );
-                  },
-                }}
-              >
-                {formatReasoning(details.reasoning)}
-              </Markdown>
-            </div>
+            <p className="text-xs text-neutral-200 leading-relaxed">
+              {details.approval_reason}
+            </p>
+            <span className="mt-2 inline-block font-mono text-[10px] text-amber-300">
+              Risk classification: {details.risk_level}
+            </span>
           </div>
 
           {/* Collapsible Payload Toggle */}

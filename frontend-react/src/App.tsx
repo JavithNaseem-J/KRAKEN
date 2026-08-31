@@ -1,8 +1,6 @@
 import axios from 'axios';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { ErrorBoundary } from './components/ErrorBoundary';
-import { ReasoningInspectorDrawer } from './components/ReasoningInspectorDrawer';
 import { SessionSidebar } from './components/SessionSidebar';
 import RuixenMoonChat from './components/ui/ruixen-moon-chat';
 import { useApprovalPoller } from './hooks/useApprovalPoller';
@@ -36,26 +34,49 @@ function newSession(): ChatSession {
   };
 }
 
+export function sanitizeStoredSessions(value: unknown, nowMs = Date.now()): ChatSession[] {
+  try {
+    const parsed = value as ChatSession[];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.map((s) => ({
+      ...s,
+      messages: (Array.isArray(s.messages) ? s.messages : []).map((m) => {
+        const legacyMessage = stripReasoningFields(m) as ChatMessageType & {
+          approval_details?: unknown;
+        };
+        const { approval_details: _legacyApprovalDetails, ...safeMessage } = legacyMessage;
+        if (safeMessage.approval_state === 'pending') {
+          const ageMs = nowMs - new Date(safeMessage.timestamp).getTime();
+          if (ageMs > 15 * 60 * 1000) {
+            return { ...safeMessage, approval_state: 'expired' as const };
+          }
+        }
+        return safeMessage;
+      }),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export function stripReasoningFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripReasoningFields);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key.toLowerCase() !== 'reasoning')
+        .map(([key, item]) => [key, stripReasoningFields(item)]),
+    );
+  }
+  return value;
+}
+
 function loadSessions(): ChatSession[] {
   try {
     const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw) as ChatSession[];
-    if (!Array.isArray(parsed)) return [];
-
-    const nowMs = Date.now();
-    return parsed.map((s) => ({
-      ...s,
-      messages: s.messages.map((m) => {
-        if (m.approval_state === 'pending') {
-          const ageMs = nowMs - new Date(m.timestamp).getTime();
-          if (ageMs > 15 * 60 * 1000) {
-            return { ...m, approval_state: 'expired' as const };
-          }
-        }
-        return m;
-      }),
-    }));
+    return sanitizeStoredSessions(JSON.parse(raw));
   } catch {
     return [];
   }
@@ -64,7 +85,7 @@ function loadSessions(): ChatSession[] {
 function queryResponseToMessage(res: QueryResponse): ChatMessageType {
   let content = res.answer;
   if (!content || !content.trim()) {
-    content = res.reasoning || 'The agent processed your request successfully.';
+    content = 'The agent completed the request but did not produce a user-facing response.';
   }
 
   return {
@@ -72,15 +93,20 @@ function queryResponseToMessage(res: QueryResponse): ChatMessageType {
     role: 'assistant',
     content,
     timestamp: res.timestamp ?? new Date().toISOString(),
-    metadata: {
-      reasoning: res.reasoning,
+    metadata: stripReasoningFields({
       action_taken: res.action_taken,
       action_result: res.action_result,
       sources: res.sources,
       retrieved_chunks: res.retrieved_chunks,
+      chunk_scores: res.chunk_scores,
+      confidence: res.confidence,
+      evidence: res.evidence,
+      execution_ms: res.execution_ms,
+      execution_time_sec: res.execution_time_sec,
       trace_id: res.trace_id,
       timestamp: res.timestamp,
-    },
+      cache: res.cache,
+    }) as ChatMessageType['metadata'],
   };
 }
 
@@ -99,7 +125,6 @@ export default function App() {
   const { activePersona } = usePersona();
   const [busy, setBusy] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
-  const [inspectedMessage, setInspectedMessage] = useState<ChatMessageType | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const activeSession = sessions.find((s) => s.session_id === activeSessionId) ?? null;
@@ -246,7 +271,7 @@ export default function App() {
             approval_state: 'pending',
           });
           if (res.approval_id) setPendingSessionId(sessionId);
-        } else if (res && (res.answer || res.action_result || res.action_taken || res.reasoning)) {
+        } else if (res && (res.answer || res.action_result || res.action_taken)) {
           appendMessage(sessionId, queryResponseToMessage(res));
         } else {
           appendMessage(sessionId, {
@@ -414,18 +439,9 @@ export default function App() {
           onToggleSidebar={() => setSidebarOpen(true)}
           onApprovalResolved={handleApprovalResolved}
           onApprovalExpired={handleApprovalExpired}
-          onInspectReasoning={setInspectedMessage}
           streamingSteps={streamingSteps}
         />
       </main>
-
-      {/* Slide-Over Reasoning Inspector */}
-      <ErrorBoundary>
-        <ReasoningInspectorDrawer
-          message={inspectedMessage}
-          onClose={() => setInspectedMessage(null)}
-        />
-      </ErrorBoundary>
     </div>
   );
 }

@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.utils.models.demo import CacheMetadata
+from src.utils.privacy import strip_reasoning_fields
 
 
 # FastAPI contracts
@@ -24,9 +25,10 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     """Outbound payload from the orchestrator back to the caller."""
 
+    model_config = ConfigDict(extra="forbid")
+
     session_id: str
     answer: str
-    reasoning: str
     action_taken: str | None = None
     action_result: Any | None = None
     sources: list[str] = Field(default_factory=list)
@@ -41,3 +43,8 @@ class QueryResponse(BaseModel):
         default=None, description="Unique request trace ID for distributed tracing"
     )
     cache: CacheMetadata = Field(default_factory=CacheMetadata)
+
+    @field_validator("action_result", "retrieved_chunks", mode="before")
+    @classmethod
+    def remove_private_reasoning(cls, value: Any) -> Any:
+        return strip_reasoning_fields(value)

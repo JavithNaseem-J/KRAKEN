@@ -108,15 +108,28 @@ export async function fetchApprovalDetails(approvalId: string): Promise<Approval
     approval_id: string;
     action_name: string;
     payload: Record<string, unknown>;
-    reasoning: string;
+    risk_level: 'CRITICAL' | 'SAFE';
+    approval_reason: string;
+    session_id: string;
+    status: string;
+    created_at?: string;
+    initiator_id: string;
+    initiator_role: string;
     csrf_token: string;
   }>(`${API_URL}/approve/${approvalId}/details`, { withCredentials: true });
   return {
     approval_id: data.approval_id,
     action_name: data.action_name || 'Unknown action',
-    risk_level: 'CRITICAL',
-    reasoning: data.reasoning || 'No reasoning provided.',
+    risk_level: data.risk_level || 'CRITICAL',
+    approval_reason:
+      data.approval_reason ||
+      'This critical action requires approval by an eligible operator before execution.',
     payload: data.payload || {},
+    session_id: data.session_id || '',
+    status: data.status || 'PENDING',
+    created_at: data.created_at,
+    initiator_id: data.initiator_id || '',
+    initiator_role: data.initiator_role || 'end_user',
     csrf_token: data.csrf_token,
   };
 }

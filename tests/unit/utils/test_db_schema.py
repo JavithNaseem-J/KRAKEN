@@ -90,3 +90,4 @@ def test_ticket_table_ddl_is_extracted_from_full_schema():
     assert CREATE_TICKETS_TABLE_DDL in SCHEMA_DDL
     assert "audit_log_no_update" in SCHEMA_DDL
     assert "audit_log_no_delete" in SCHEMA_DDL
+    assert "DROP COLUMN IF EXISTS reasoning" in SCHEMA_DDL

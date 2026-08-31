@@ -57,10 +57,7 @@ class Settings(BaseSettings):
     qdrant_api_key: str = ""
     qdrant_collection_name: str = "kraken_knowledge"
 
-    # Observability & Caching
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
-    langfuse_host: str = "https://cloud.langfuse.com"
+    # Caching
     semantic_cache_enabled: bool = True
     qdrant_cloud_inference_enabled: bool = True
     qdrant_inference_model: str = "sentence-transformers/all-MiniLM-L6-v2"

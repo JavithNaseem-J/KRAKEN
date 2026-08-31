@@ -46,8 +46,6 @@ _INTEGRATION_ENV = {
     "REDIS_URL": "",
     "QDRANT_URL": "",
     "QDRANT_API_KEY": "",
-    "LANGFUSE_PUBLIC_KEY": "",
-    "LANGFUSE_SECRET_KEY": "",
     # Zero-vector embeddings make cosine similarity degenerate; keep the
     # semantic cache out of the test path.
     "SEMANTIC_CACHE_ENABLED": "false",

@@ -89,7 +89,7 @@ class TestSemanticCache:
         mock_redis = AsyncMock()
         mock_redis.get.side_effect = [
             b"0",
-            '{"answer": "cached VPN answer", "session_id": "old", "reasoning": "cached"}',
+            '{"answer": "cached VPN answer", "session_id": "old"}',
         ]
         mock_settings = MagicMock(semantic_cache_enabled=True, redis_url="")
         cache = SemanticCache(client=mock_qdrant)
@@ -140,6 +140,27 @@ class TestSemanticCache:
         first_id = mock_qdrant.upsert.await_args_list[0].kwargs["points"][0].id
         second_id = mock_qdrant.upsert.await_args_list[1].kwargs["points"][0].id
         assert first_id == second_id
+
+    def test_cache_strips_nested_reasoning_before_storage(self) -> None:
+        mock_qdrant = AsyncMock()
+        cache = SemanticCache(client=mock_qdrant)
+        cache._redis = None
+        mock_settings = MagicMock(semantic_cache_enabled=True)
+
+        with patch("src.utils.cache.get_settings", return_value=mock_settings):
+            asyncio.run(
+                cache.put(
+                    [0.1] * 384,
+                    "VPN help",
+                    {
+                        "answer": "safe",
+                        "action_result": {"status": "done", "reasoning": "private"},
+                    },
+                )
+            )
+
+        stored = mock_qdrant.upsert.await_args.kwargs["points"][0].payload["response"]
+        assert stored == {"answer": "safe", "action_result": {"status": "done"}}
 
     def test_different_cache_context_uses_distinct_qdrant_point_id(self) -> None:
         mock_qdrant = AsyncMock()

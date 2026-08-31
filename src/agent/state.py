@@ -3,6 +3,8 @@ from __future__ import annotations
 import operator
 from typing import Annotated, Any, Literal, NotRequired, Required, TypedDict
 
+from langgraph.channels import UntrackedValue
+
 
 class ChunkDict(TypedDict):
     source: str
@@ -22,7 +24,7 @@ class GraphState(TypedDict):
     demo_actor_id: NotRequired[str]
     execution_id: NotRequired[str]
     retrieved_chunks: NotRequired[list[ChunkDict]]
-    reasoning: NotRequired[str]
+    reasoning: Annotated[NotRequired[str], UntrackedValue(str)]
     selected_action: NotRequired[str | None]
     selected_actions: NotRequired[list[dict[str, Any]] | None]
     action_payload: NotRequired[dict[str, Any] | None]

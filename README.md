@@ -16,7 +16,8 @@ The [production demo design](docs/superpowers/specs/2026-08-24-production-demo-d
 - **Append-Only Cryptographic Audit Trail**: Every executed action is signed into a SHA-256 hash-chain stored in PostgreSQL with keyset-paginated verification.
 - **Unified Qdrant Vector Engine**: Qdrant Cloud Inference, grounded knowledge RAG, versioned semantic caching, and session-private uploads.
 - **Public Demo Isolation**: Signed one-hour anonymous sessions, server-validated personas, synthetic ticket overlays, query/write quotas, and no browser credentials.
-- **Production Observability**: Prometheus `/metrics` endpoints and Langfuse LLM monitoring.
+- **Private Model Deliberation**: Model reasoning is untracked agent state and is excluded from public APIs, SSE events, browser storage, caches, approvals, action requests, and audit records.
+- **Production Observability**: Prometheus `/metrics`, structured redacted logs, trace IDs, and execution timing without prompt or model-output capture.
 
 ---
 
@@ -81,6 +82,8 @@ The production Docker image serves the React UI and API together at [http://loca
 | **Approval** | In-Process & `:8000/approve/*` | Human-in-the-Loop (HITL) Approval Queue, Details & Decision endpoints |
 | **Memory** | In-Process / `/session` | Short-term Redis Session Memory & Long-term Qdrant Episodic Memory |
 | **Audit** | In-Process / `/log` | Cryptographically chained, append-only PostgreSQL Audit Log |
+
+Public agent responses contain the final answer, action result, grounded sources, cache metadata, timing, and trace ID. They intentionally do not include model reasoning. Approval details use registry-derived `risk_level` and deterministic `approval_reason` fields.
 
 ---
 

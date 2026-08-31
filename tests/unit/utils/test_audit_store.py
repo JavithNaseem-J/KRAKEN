@@ -48,7 +48,7 @@ class TestLogAction:
         assert conn.fetchrow.call_count == 2
         # Verify SQL insert arguments contain entry_hash
         insert_args = conn.fetchrow.call_args_list[1].args
-        assert len(insert_args[13]) == 64  # SHA-256 hex digest length
+        assert len(insert_args[12]) == 64  # SHA-256 hex digest length
 
     async def test_insert_called_once(self) -> None:
         store, conn = _make_store()
@@ -101,14 +101,12 @@ class TestLogAction:
                 risk_level="SAFE",
                 hitl_required=False,
                 status="success",
-                reasoning="Contact visitor@example.com",
                 payload={"description": "private content", "user_name": "Visitor"},
             )
         )
 
         insert_args = conn.fetchrow.call_args_list[1].args
-        assert insert_args[9] is None
-        assert json.loads(insert_args[10]) == {"fields": ["description", "user_name"]}
+        assert json.loads(insert_args[9]) == {"fields": ["description", "user_name"]}
         conn.execute.assert_awaited_once()
 
 

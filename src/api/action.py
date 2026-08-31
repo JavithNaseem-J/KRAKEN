@@ -160,7 +160,6 @@ async def execute(
         hitl_required=action_def.requires_hitl,
         hitl_decision="approved" if action_def.requires_hitl else None,
         status=status_str,
-        reasoning=body.reasoning,
         payload=body.payload,
         result=result_data,
     )

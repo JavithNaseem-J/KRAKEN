@@ -55,7 +55,6 @@ def test_execute_unauthorized(client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {},
-            "reasoning": "r",
         },
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -69,7 +68,6 @@ def test_execute_unknown_action(client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {},
-            "reasoning": "r",
         },
         headers=_HEADERS,
     )
@@ -84,7 +82,6 @@ def test_execute_missing_evidence(client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {},
-            "reasoning": "r",
         },
         headers=_HEADERS,
     )
@@ -105,7 +102,6 @@ def test_execute_auto_respond_success(mock_handler, client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {"evidence": "citing facts", "response_text": "hello"},
-            "reasoning": "answering query",
         },
         headers=_HEADERS,
     )
@@ -130,7 +126,6 @@ def test_execute_get_ticket_status_success(mock_handler, client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {"ticket_id": "TCK-1001"},
-            "reasoning": "read-only status lookup",
         },
         headers=_HEADERS,
     )
@@ -150,7 +145,6 @@ def test_execute_write_json_success(client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {"target_path": "output.json", "content": {"key": "val"}},
-            "reasoning": "saving results",
         },
         headers=_HEADERS,
     )
@@ -169,7 +163,6 @@ def test_execute_write_json_path_traversal(client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {"target_path": "../escaped.json", "content": {"key": "val"}},
-            "reasoning": "unsafe write",
         },
         headers=_HEADERS,
     )
@@ -187,7 +180,6 @@ def test_execute_write_json_invalid_extension(client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {"target_path": "unsafe.sh", "content": {"key": "val"}},
-            "reasoning": "unsafe extension",
         },
         headers=_HEADERS,
     )
@@ -207,7 +199,6 @@ def test_execute_escalate_success(mock_handler, client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {"ticket_id": "TK-100", "reason": "SLA breach", "evidence": "sla evidence"},
-            "reasoning": "escalating",
         },
         headers=_HEADERS,
     )
@@ -231,7 +222,6 @@ def test_execute_request_info_success(mock_handler, client):
                 "info_requested": "logs",
                 "evidence": "missing details",
             },
-            "reasoning": "need info",
         },
         headers=_HEADERS,
     )
@@ -251,7 +241,6 @@ def test_execute_close_success(mock_handler, client):
             "session_id": "s1",
             "user_id": "u1",
             "payload": {"ticket_id": "TK-100", "reason": "resolved", "evidence": "fix confirmed"},
-            "reasoning": "closing",
         },
         headers=_HEADERS,
     )

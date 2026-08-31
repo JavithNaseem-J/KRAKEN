@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.safety.policy_engine import get_policy_engine
 from src.utils.approval.notifier import print_approval_notice
@@ -30,6 +30,8 @@ from src.utils.http_client import (
 from src.utils.logging import configure_logging
 from src.utils.middleware.rate_limit import RateLimitMiddleware
 from src.utils.middleware.trace_id import TraceIdMiddleware
+from src.utils.privacy import strip_reasoning_fields
+from src.utils.registry import get_action
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -42,13 +44,19 @@ templates = Jinja2Templates(
 
 # Request Models
 class PendingApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     approval_id: str | None = None
     action_name: str
     payload: dict[str, Any] = Field(default_factory=dict)
-    reasoning: str = ""
     session_id: str
     initiator_id: str = ""
     initiator_role: str = "end_user"
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def remove_private_reasoning(cls, value: Any) -> Any:
+        return strip_reasoning_fields(value)
 
 
 # Helper: Notify Orchestrator Callback with Retry/Backoff
@@ -117,6 +125,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Verify Redis connectivity at boot
     if not await queue.ping():
         log.warning("approval.redis_connection_failed_running_degraded")
+    await queue.purge_legacy_reasoning_entries()
 
     app.state.queue = queue
 
@@ -159,6 +168,19 @@ def _get_queue() -> ApprovalQueue:
         )
         app.state.queue = queue
     return queue
+
+
+def _approval_policy_details(action_name: str) -> tuple[str, str]:
+    """Return registry-derived approval information without model-generated text."""
+    try:
+        risk_level = get_action(action_name).risk_level.value
+    except Exception:
+        risk_level = "CRITICAL"
+    approval_reason = (
+        f"This {risk_level} action requires approval by an eligible operator "
+        "other than the initiator before execution."
+    )
+    return risk_level, approval_reason
 
 
 @app.get("/", tags=["ops"])
@@ -205,7 +227,6 @@ async def create_pending(
     approval_id = await queue.enqueue(
         action_name=req.action_name,
         payload=req.payload,
-        reasoning=req.reasoning,
         session_id=req.session_id,
         initiator_id=req.initiator_id,
         initiator_role=req.initiator_role,
@@ -236,12 +257,14 @@ async def approval_details(approval_id: str) -> dict[str, Any]:
 
     csrf_token = secrets.token_hex(16)
     await queue.set_csrf_token(approval_id, csrf_token)
+    risk_level, approval_reason = _approval_policy_details(entry.get("action_name", ""))
 
     return {
         "approval_id": approval_id,
         "action_name": entry.get("action_name", ""),
-        "payload": entry.get("payload", {}),
-        "reasoning": entry.get("reasoning", ""),
+        "payload": strip_reasoning_fields(entry.get("payload", {})),
+        "risk_level": risk_level,
+        "approval_reason": approval_reason,
         "session_id": entry.get("session_id", ""),
         "status": entry.get("status", "PENDING"),
         "created_at": entry.get("created_at"),
@@ -265,6 +288,7 @@ async def approval_page(request: Request, approval_id: str) -> HTMLResponse:
 
     csrf_token = secrets.token_hex(16)
     await queue.set_csrf_token(approval_id, csrf_token)
+    risk_level, approval_reason = _approval_policy_details(entry.get("action_name", ""))
 
     return templates.TemplateResponse(
         request=request,
@@ -272,6 +296,9 @@ async def approval_page(request: Request, approval_id: str) -> HTMLResponse:
         context={
             "approval_id": approval_id,
             "action": entry,
+            "action_name": entry.get("action_name", ""),
+            "risk_level": risk_level,
+            "approval_reason": approval_reason,
             "csrf_token": csrf_token,
         },
     )

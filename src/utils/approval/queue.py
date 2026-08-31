@@ -10,6 +10,8 @@ from typing import Any
 import redis.asyncio as aioredis
 import structlog
 
+from src.utils.privacy import strip_reasoning_fields
+
 log = structlog.get_logger(__name__)
 
 _PREFIX = "kraken:approval:"
@@ -54,7 +56,6 @@ class ApprovalQueue:
         self,
         action_name: str,
         payload: dict[str, Any],
-        reasoning: str,
         session_id: str,
         initiator_id: str = "",
         initiator_role: str = "end_user",
@@ -70,8 +71,7 @@ class ApprovalQueue:
         entry = {
             "approval_id": approval_id,
             "action_name": action_name,
-            "payload": payload,
-            "reasoning": reasoning,
+            "payload": strip_reasoning_fields(payload),
             "session_id": session_id,
             "initiator_id": initiator_id,
             "initiator_role": initiator_role,
@@ -106,16 +106,53 @@ class ApprovalQueue:
         log.info("queue.enqueued", approval_id=approval_id, expires_at=expires_at)
         return approval_id
 
+    async def purge_legacy_reasoning_entries(self) -> int:
+        """Delete pending approvals written by schemas that persisted model reasoning."""
+        removed = 0
+        try:
+            async for key in self._redis.scan_iter(match=f"{_PREFIX}*"):
+                key_text = key.decode() if isinstance(key, bytes) else str(key)
+                if key_text == _INDEX or key_text.startswith(_RESOLVED_PREFIX):
+                    continue
+                raw = await self._redis.get(key)
+                if not raw:
+                    continue
+                entry = json.loads(raw)
+                if not isinstance(entry, dict) or "reasoning" not in entry:
+                    continue
+                approval_id = str(entry.get("approval_id", ""))
+                pipe = self._redis.pipeline()
+                pipe.delete(key)
+                if approval_id:
+                    pipe.srem(_INDEX, approval_id)
+                await pipe.execute()
+                removed += 1
+        except Exception as exc:
+            log.warning("queue.legacy_reasoning_purge_failed", error=str(exc))
+
+        legacy_memory_ids = [
+            approval_id
+            for approval_id, entry in self._in_memory_map.items()
+            if "reasoning" in entry
+        ]
+        for approval_id in legacy_memory_ids:
+            self._in_memory_map.pop(approval_id, None)
+            self._in_memory_csrf.pop(approval_id, None)
+        removed += len(legacy_memory_ids)
+        if removed:
+            log.info("queue.legacy_reasoning_purged", count=removed)
+        return removed
+
     async def get(self, approval_id: str) -> dict[str, Any] | None:
         """Return the pending entry, or None if expired/not found."""
         try:
             data = await self._redis.get(f"{_PREFIX}{approval_id}")
             if data:
-                return json.loads(data)
+                return strip_reasoning_fields(json.loads(data))
         except Exception as exc:
             log.warning("queue.redis_get_failed_using_in_memory", error=str(exc))
         self.sweep_expired_in_memory()
-        return self._in_memory_map.get(approval_id)
+        return strip_reasoning_fields(self._in_memory_map.get(approval_id))
 
     async def resolve(self, approval_id: str) -> dict[str, Any] | None:
         """
@@ -133,7 +170,7 @@ class ApprovalQueue:
                 pipe.set(f"{_RESOLVED_PREFIX}{approval_id}", "1", ex=self._timeout)
                 await pipe.execute()
                 log.info("queue.resolved", approval_id=approval_id)
-                return json.loads(data)
+                return strip_reasoning_fields(json.loads(data))
         except Exception as exc:
             log.warning("queue.redis_resolve_failed_using_in_memory", error=str(exc))
 
@@ -144,7 +181,7 @@ class ApprovalQueue:
                 seconds=self._timeout
             )
             log.info("queue.resolved_in_memory", approval_id=approval_id)
-        return entry
+        return strip_reasoning_fields(entry)
 
     async def set_csrf_token(self, approval_id: str, token: str) -> None:
         """Store a CSRF token for an approval request."""

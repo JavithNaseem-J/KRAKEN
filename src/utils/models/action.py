@@ -3,7 +3,9 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from src.utils.privacy import strip_reasoning_fields
 
 
 class ActionType(StrEnum):
@@ -30,13 +32,19 @@ class ActionDefinition(BaseModel):
 class ActionRequest(BaseModel):
     """Payload sent from the orchestrator executor node to the action service."""
 
+    model_config = ConfigDict(extra="forbid")
+
     action_name: str
     payload: dict[str, Any]
     session_id: str
     user_id: str
-    reasoning: str  # Why the agent chose this action — stored in audit log
     demo_session_id: str | None = None
     demo_actor_id: str | None = None
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def remove_private_reasoning(cls, value: Any) -> Any:
+        return strip_reasoning_fields(value)
 
 
 class ActionResult(BaseModel):

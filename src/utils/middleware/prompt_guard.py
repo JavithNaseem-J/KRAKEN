@@ -64,7 +64,7 @@ def guard_message(text: str, operator_role: str | None = None) -> PromptGuardRes
     detected_injection = check_prompt_injection(text)
     sanitized = sanitize_pii(text)
     return PromptGuardResult(
-        blocked=detected_injection and not is_operator_role(operator_role),
+        blocked=detected_injection,
         sanitized_text=sanitized,
         detected_injection=detected_injection,
         redacted_pii=sanitized != text,

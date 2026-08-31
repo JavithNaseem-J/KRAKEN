@@ -316,6 +316,7 @@ tests/unit/api/*
 !tests/unit/api/test_demo_operations_contract.py
 !tests/unit/api/test_unified_runtime_contract.py
 !tests/unit/api/test_semantic_cache_transport_contract.py
+!tests/unit/api/test_public_reasoning_boundary.py
 !tests/unit/api/test_private_upload_contract.py
 !tests/unit/safety/
 tests/unit/safety/*
