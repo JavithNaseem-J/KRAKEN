@@ -1,45 +1,59 @@
 {
-  "service": "Xiarch Global Enterprise IT & SecOps SLA Matrix",
-  "version": "2.4.0",
+  "service": "Northstar Synthetic Enterprise Operations SLA",
+  "version": "3.0.0",
+  "dataset_generation": "northstar-v1",
   "severities": {
     "P1": {
       "name": "Critical",
-      "description": "Enterprise-wide outage, ransomware incident, compromised domain admin, or active data exfiltration.",
+      "description": "Active compromise, broad outage, or synthetic data exfiltration.",
       "response_time_minutes": 15,
       "resolution_time_hours": 2,
-      "approval_level": "CISO / VP of Infrastructure",
-      "escalation_chain": ["secops-lead@xiarch.com", "ciso@xiarch.com", "incident-cmd@xiarch.com"]
+      "approval_level": "Incident Commander",
+      "escalation_chain": [
+        "security-lead@northstar.example",
+        "incident-command@northstar.example"
+      ]
     },
     "P2": {
       "name": "High",
-      "description": "Single server/cluster disruption, high-risk security alert, compromised end-user account, or firewall change request.",
+      "description": "High-impact contained incident or major service degradation.",
       "response_time_minutes": 60,
       "resolution_time_hours": 8,
-      "approval_level": "SecOps Lead / Infrastructure Owner",
-      "escalation_chain": ["secops-lead@xiarch.com", "it-ops-lead@xiarch.com"]
+      "approval_level": "Security Lead",
+      "escalation_chain": [
+        "security-lead@northstar.example",
+        "operations-lead@northstar.example"
+      ]
     },
     "P3": {
       "name": "Medium",
-      "description": "Standard user access request, non-critical software failure, VPN connection issue, hardware replacement.",
+      "description": "Routine access or single-user service issue.",
       "response_time_minutes": 240,
       "resolution_time_hours": 24,
-      "approval_level": "Direct Manager / Helpdesk Tier 2",
-      "escalation_chain": ["it-helpdesk-t2@xiarch.com"]
+      "approval_level": "Tier 2 Owner",
+      "escalation_chain": [
+        "service-desk-t2@northstar.example"
+      ]
     },
     "P4": {
       "name": "Low",
-      "description": "General IT inquiry, non-urgent documentation request, peripheral order, feature request.",
+      "description": "General inquiry or non-urgent request.",
       "response_time_minutes": 480,
       "resolution_time_hours": 72,
-      "approval_level": "Self-service / Tier 1 Helpdesk",
-      "escalation_chain": ["it-helpdesk-t1@xiarch.com"]
+      "approval_level": "Tier 1 Analyst",
+      "escalation_chain": [
+        "service-desk@northstar.example"
+      ]
     }
   },
   "action_risk_mapping": {
     "auto_respond": "SAFE",
     "request_info": "SAFE",
-    "close": "MEDIUM",
-    "escalate": "MEDIUM",
+    "create_ticket": "SAFE",
+    "close_ticket": "MEDIUM",
+    "escalate_ticket": "MEDIUM",
+    "quarantine_ip": "CRITICAL",
+    "unlock_account": "CRITICAL",
     "write_json_file": "CRITICAL"
   }
 }

@@ -180,14 +180,14 @@ def test_private_upload_cache_scope_is_session_specific() -> None:
     context_a = cache_context(
         {
             "operator_role": "end_user",
-            "demo_session_id": "session-a",
+            "public_session_id": "session-a",
             "has_private_uploads": True,
         }
     )
     context_b = cache_context(
         {
             "operator_role": "end_user",
-            "demo_session_id": "session-b",
+            "public_session_id": "session-b",
             "has_private_uploads": True,
         }
     )

@@ -38,8 +38,8 @@ class ActionRequest(BaseModel):
     payload: dict[str, Any]
     session_id: str
     user_id: str
-    demo_session_id: str | None = None
-    demo_actor_id: str | None = None
+    public_session_id: str | None = None
+    public_actor_id: str | None = None
 
     @field_validator("payload", mode="before")
     @classmethod

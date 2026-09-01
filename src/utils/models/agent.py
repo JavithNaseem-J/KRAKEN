@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from src.utils.models.demo import CacheMetadata
+from src.utils.models.public import CacheMetadata
 from src.utils.privacy import strip_reasoning_fields
 
 

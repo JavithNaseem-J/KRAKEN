@@ -12,7 +12,7 @@ from src.utils.config import Settings, get_settings
 from src.utils.exceptions import ActionExecutionError
 
 
-class DemoTicketRepository:
+class SyntheticTicketRepository:
     """Immutable seed tickets plus expiring, session-private overlays."""
 
     def __init__(self, settings: Settings | None = None, *, clock: Any = time.time) -> None:
@@ -38,7 +38,7 @@ class DemoTicketRepository:
             / "data"
             / "knowledge"
             / "tickets"
-            / "sample_tickets.json"
+            / "synthetic_tickets.json"
         )
         records = json.loads(path.read_text(encoding="utf-8"))
         result: dict[str, dict[str, Any]] = {}
@@ -54,7 +54,9 @@ class DemoTicketRepository:
         scope = self._sessions.get(session_id)
         if scope is None and self._redis is not None:
             try:
-                raw = self._redis.get(f"kraken:demo:tickets:{session_id}")
+                raw = self._redis.get(
+                    f"kraken:{self.settings.synthetic_dataset_generation}:synthetic:tickets:{session_id}"
+                )
                 if raw:
                     scope = json.loads(raw)
                     self._sessions[session_id] = scope
@@ -62,7 +64,8 @@ class DemoTicketRepository:
                 scope = None
         if scope is None:
             scope = {
-                "expires_at": now + self.settings.demo_session_ttl_seconds,
+                "expires_at": now + self.settings.public_session_ttl_seconds,
+                "dataset_generation": self.settings.synthetic_dataset_generation,
                 "writes": 0,
                 "overlays": {},
                 "created": {},
@@ -76,7 +79,7 @@ class DemoTicketRepository:
         try:
             ttl = max(1, int(float(scope["expires_at"]) - float(self._clock())))
             self._redis.set(
-                f"kraken:demo:tickets:{session_id}",
+                f"kraken:{self.settings.synthetic_dataset_generation}:synthetic:tickets:{session_id}",
                 json.dumps(scope),
                 ex=ttl,
             )
@@ -84,10 +87,10 @@ class DemoTicketRepository:
             return
 
     def _consume_write(self, scope: dict[str, Any]) -> None:
-        if int(scope["writes"]) >= self.settings.demo_write_limit:
+        if int(scope["writes"]) >= self.settings.public_write_limit:
             remaining = max(1, int(float(scope["expires_at"]) - float(self._clock())))
             raise ActionExecutionError(
-                f"Demo write limit reached. Start a new session or retry in {remaining} seconds."
+                f"Public write limit reached. Start a new session or retry in {remaining} seconds."
             )
         scope["writes"] = int(scope["writes"]) + 1
 
@@ -118,7 +121,7 @@ class DemoTicketRepository:
         with self._lock:
             scope = self._scope(session_id)
             self._consume_write(scope)
-            ticket_id = f"DEMO-{secrets.token_hex(6).upper()}"
+            ticket_id = f"SYN-{secrets.token_hex(6).upper()}"
             ticket = {
                 "ticket_id": ticket_id,
                 "subject": f"{required['category']}: {required['description'][:60]}",
@@ -127,7 +130,8 @@ class DemoTicketRepository:
                 "category": required["category"],
                 "priority": required["priority"],
                 "description": required["description"],
-                "simulated": True,
+                "synthetic": True,
+                "dataset_generation": self.settings.synthetic_dataset_generation,
             }
             scope["created"][ticket_id] = ticket
             self._persist(session_id, scope)
@@ -138,7 +142,7 @@ class DemoTicketRepository:
             scope = self._scope(session_id)
             self._consume_write(scope)
             self._persist(session_id, scope)
-            return max(0, self.settings.demo_write_limit - int(scope["writes"]))
+            return max(0, self.settings.public_write_limit - int(scope["writes"]))
 
     def mutate(
         self,
@@ -161,7 +165,8 @@ class DemoTicketRepository:
             changed = copy.deepcopy(current)
             changed["status"] = status
             changed.update(updates or {})
-            changed["simulated"] = True
+            changed["synthetic"] = True
+            changed["dataset_generation"] = self.settings.synthetic_dataset_generation
             if is_created:
                 scope["created"][normalized] = changed
             else:
@@ -169,7 +174,8 @@ class DemoTicketRepository:
             self._persist(session_id, scope)
             return {
                 "success": True,
-                "simulated": True,
+                "synthetic": True,
+                "dataset_generation": self.settings.synthetic_dataset_generation,
                 "ticket_id": normalized,
                 "status_updated_to": status,
                 **(updates or {}),
@@ -182,4 +188,4 @@ class DemoTicketRepository:
                 self._sessions.pop(session_id, None)
 
 
-demo_ticket_repository = DemoTicketRepository()
+synthetic_ticket_repository = SyntheticTicketRepository()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -22,6 +23,7 @@ from src.utils.cache import (
 )
 from src.utils.config import get_settings
 from src.utils.db.schema import SCHEMA_DDL
+from src.utils.db.tickets import seed_tickets
 from src.utils.knowledge.ingest import ensure_collection, run_ingest_async
 from src.utils.llm_probe import probe_chat_completion
 
@@ -64,6 +66,10 @@ async def main_async() -> None:
                     key="collection_version",
                     match=models.MatchValue(value=settings.knowledge_collection_version),
                 ),
+                models.FieldCondition(
+                    key="dataset_generation",
+                    match=models.MatchValue(value=settings.synthetic_dataset_generation),
+                ),
             ]
         ),
         limit=1,
@@ -103,6 +109,11 @@ async def main_async() -> None:
     with psycopg.connect(settings.postgres_sync_url, connect_timeout=10) as connection:
         checks["postgres"] = connection.execute("SELECT 1").fetchone() == (1,)
         connection.execute(SCHEMA_DDL)
+        tickets_path = (
+            Path(__file__).parent.parent / "data/knowledge/tickets/synthetic_tickets.json"
+        )
+        tickets = json.loads(tickets_path.read_text(encoding="utf-8"))
+        checks["postgres_seed"] = seed_tickets(connection, tickets, update_on_conflict=True) == 500
         checks["postgres_schema"] = True
 
     async with asyncio.timeout(20):
@@ -143,7 +154,8 @@ def main() -> None:
         "REDIS_URL": settings.redis_url,
         "POSTGRES_URL": settings.postgres_url,
         "POSTGRES_SYNC_URL": settings.postgres_sync_url,
-        "DEMO_SESSION_SECRET": settings.demo_session_secret,
+        "PUBLIC_SESSION_SECRET": settings.public_session_secret,
+        "SYNTHETIC_DATASET_GENERATION": settings.synthetic_dataset_generation,
         "HITL_SERVICE_TOKEN": settings.hitl_service_token,
     }
     if missing := sorted(name for name, value in required.items() if not value):

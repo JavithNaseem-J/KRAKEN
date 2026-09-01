@@ -250,6 +250,10 @@ class KnowledgeRetriever:
                     key="collection_version",
                     match=MatchValue(value=settings.knowledge_collection_version),
                 ),
+                FieldCondition(
+                    key="dataset_generation",
+                    match=MatchValue(value=settings.synthetic_dataset_generation),
+                ),
             ]
         )
 
@@ -324,6 +328,10 @@ class KnowledgeRetriever:
                             key="collection_version",
                             match=MatchValue(value=settings.knowledge_collection_version),
                         ),
+                        FieldCondition(
+                            key="dataset_generation",
+                            match=MatchValue(value=settings.synthetic_dataset_generation),
+                        ),
                     ]
                 )
                 scroll_res = await client.scroll(
@@ -356,6 +364,8 @@ class KnowledgeRetriever:
         for hit in hits:
             payload = hit.payload or {}
             if payload.get("collection_version") != settings.knowledge_collection_version:
+                continue
+            if payload.get("dataset_generation") != settings.synthetic_dataset_generation:
                 continue
             scope = str(payload.get("scope") or "shared")
             if scope not in {"shared", request.session_id}:

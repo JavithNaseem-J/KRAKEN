@@ -1,0 +1,36 @@
+{
+  "generation": "northstar-v1",
+  "seed": 240831,
+  "schema_version": "1.0",
+  "generator_version": "1.0",
+  "created_at": "2026-08-31T00:00:00Z",
+  "counts": {
+    "tickets": 500,
+    "documents": 30,
+    "scenarios": 75,
+    "sla_levels": 4
+  },
+  "capability_coverage": {
+    "conflict_resolution": 5,
+    "critical_hitl": 5,
+    "hitl_resume": 5,
+    "knowledge_rag": 5,
+    "no_answer": 5,
+    "prompt_injection_document": 5,
+    "prompt_injection_user": 5,
+    "provider_fallback": 5,
+    "role_retrieval": 5,
+    "safe_create_ticket": 5,
+    "semantic_cache": 5,
+    "sla": 5,
+    "sse": 5,
+    "ticket_lookup": 5,
+    "upload_isolation": 5
+  },
+  "checksums": {
+    "tickets": "03a77d5b1930b64f5a89298754b4c940fa6e5e7e7dc8ab2c3c642d438a255d09",
+    "documents": "84a6425c9cccbcda28c59faf5ee968e82280d534879940e878ba9c250b658833",
+    "scenarios": "f18c76846165190cd8a59ad76fc4c15708c6e769cedc45c5ecf878a936a70672",
+    "sla": "caf15e201b40d5b640004edcbfe34e144f1334a10ec48275dfb0f2c49445da51"
+  }
+}

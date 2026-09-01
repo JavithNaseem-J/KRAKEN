@@ -28,7 +28,7 @@ import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
 
-API_KEY = "itest-demo-key-0123456789abcdef"
+API_KEY = "itest-public-key-0123456789abcdef"
 AUTH = {"X-API-Key": API_KEY}
 
 
@@ -59,10 +59,10 @@ class _LLMScript:
             "selected_action": "escalate",
             "selected_actions": [],
             "action_payload": {
-                "ticket_id": "TCK-1001",
-                "reason": "Critical RCE vulnerability confirmed on TCK-1001.",
+                "ticket_id": "TCK-24001",
+                "reason": "Critical RCE vulnerability confirmed on TCK-24001.",
             },
-            "evidence": "CVE-2026-0001 remote code execution confirmed in TCK-1001.",
+            "evidence": "CVE-2026-0001 remote code execution confirmed in TCK-24001.",
             "explanation": "Critical vulnerability requires senior security review.",
         }
         self.answer = "Mocked post-approval answer confirming execution."
@@ -118,12 +118,12 @@ def client() -> Iterator[TestClient]:
         yield c
 
 
-def _start_demo_as(client: TestClient, persona: str) -> dict[str, Any]:
-    session_response = client.post("/v1/demo/session")
+def _start_public_session_as(client: TestClient, persona: str) -> dict[str, Any]:
+    session_response = client.post("/v1/session")
     assert session_response.status_code == 201, session_response.text
     session = session_response.json()
     transition = client.post(
-        "/v1/demo/persona",
+        "/v1/session/persona",
         json={"persona": persona, "csrf_token": session["csrf_token"]},
     )
     assert transition.status_code == 200, transition.text
@@ -142,6 +142,7 @@ class TestConsolidatedFlow:
         body = ready.json()
         assert body["status"] == "degraded"
         assert set(body["capabilities"]) == {
+            "synthetic_dataset",
             "groq",
             "qdrant_storage",
             "qdrant_inference",
@@ -158,7 +159,7 @@ class TestConsolidatedFlow:
             json={
                 "message": "How do I reset my VPN password?",
                 "session_id": "itest-safe-1",
-                "user_id": "demo-user-1",
+                "user_id": "synthetic-operator-1",
             },
             headers=AUTH,
         )
@@ -171,16 +172,16 @@ class TestConsolidatedFlow:
 
     def test_hitl_approve_path_resumes_graph(self, client: TestClient) -> None:
         SCRIPT.set_critical()
-        session = _start_demo_as(client, "tier1_analyst")
-        demo_headers = {"X-CSRF-Token": session["csrf_token"]}
+        session = _start_public_session_as(client, "tier1_analyst")
+        session_headers = {"X-CSRF-Token": session["csrf_token"]}
         with patch("src.api.action.execute_escalate") as handler:
             resp = client.post(
                 "/v1/run",
                 json={
-                    "message": "Please escalate ticket TCK-1001, critical RCE confirmed.",
+                    "message": "Please escalate ticket TCK-24001, critical RCE confirmed.",
                     "session_id": "browser-value-is-not-trusted",
                 },
-                headers=demo_headers,
+                headers=session_headers,
             )
             assert resp.status_code == 200, resp.text
             paused = resp.json()
@@ -192,11 +193,13 @@ class TestConsolidatedFlow:
             assert details.status_code == 200, details.text
             payload = details.json()
             assert payload["action_name"] == "escalate"
-            assert payload["payload"]["ticket_id"] == "TCK-1001"
+            assert payload["payload"]["ticket_id"] == "TCK-24001"
+            assert payload["synthetic"] is True
+            assert payload["dataset_generation"] == "northstar-v1"
             assert payload["csrf_token"]
 
             transition = client.post(
-                "/v1/demo/persona",
+                "/v1/session/persona",
                 json={
                     "persona": "incident_commander",
                     "csrf_token": session["csrf_token"],
@@ -209,29 +212,29 @@ class TestConsolidatedFlow:
                 data={
                     "decision": "approve",
                     "csrf_token": payload["csrf_token"],
-                    "demo_csrf_token": session["csrf_token"],
+                    "session_csrf_token": session["csrf_token"],
                 },
                 headers={"Accept": "application/json"},
             )
             assert decision.status_code == 200, decision.text
             final = decision.json()["agent_response"]
             assert final["action_result"]["success"] is True
-            assert final["action_result"]["result"]["ticket_id"] == "TCK-1001"
+            assert final["action_result"]["result"]["ticket_id"] == "TCK-24001"
             handler.assert_not_called()
         client.cookies.clear()
 
     def test_hitl_reject_path_cancels_action(self, client: TestClient) -> None:
         SCRIPT.set_critical()
-        session = _start_demo_as(client, "tier1_analyst")
-        demo_headers = {"X-CSRF-Token": session["csrf_token"]}
+        session = _start_public_session_as(client, "tier1_analyst")
+        session_headers = {"X-CSRF-Token": session["csrf_token"]}
         with patch("src.api.action.execute_escalate") as handler:
             resp = client.post(
                 "/v1/run",
                 json={
-                    "message": "Escalate ticket TCK-1001 immediately.",
+                    "message": "Escalate ticket TCK-24001 immediately.",
                     "session_id": "browser-value-is-not-trusted",
                 },
-                headers=demo_headers,
+                headers=session_headers,
             )
             assert resp.status_code == 200, resp.text
             paused = resp.json()
@@ -243,7 +246,7 @@ class TestConsolidatedFlow:
             csrf = details.json()["csrf_token"]
 
             transition = client.post(
-                "/v1/demo/persona",
+                "/v1/session/persona",
                 json={
                     "persona": "incident_commander",
                     "csrf_token": session["csrf_token"],
@@ -256,7 +259,7 @@ class TestConsolidatedFlow:
                 data={
                     "decision": "reject",
                     "csrf_token": csrf,
-                    "demo_csrf_token": session["csrf_token"],
+                    "session_csrf_token": session["csrf_token"],
                 },
                 headers={"Accept": "application/json"},
             )
@@ -275,7 +278,7 @@ class TestConsolidatedFlow:
             json={
                 "message": "How do I set up two-factor authentication?",
                 "session_id": "itest-stream-1",
-                "user_id": "demo-user-1",
+                "user_id": "synthetic-operator-1",
             },
             headers=AUTH,
         ) as resp:

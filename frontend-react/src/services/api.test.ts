@@ -24,7 +24,7 @@ describe('pollSessionStatus', () => {
       status: 'running',
       session_id: 'server-session',
     });
-    expect(axios.get).toHaveBeenCalledWith('/v1/demo/status', { withCredentials: true });
+    expect(axios.get).toHaveBeenCalledWith('/v1/session/status', { withCredentials: true });
     expect(axios.post).not.toHaveBeenCalled();
   });
 });

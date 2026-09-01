@@ -13,13 +13,15 @@ from src.agent.nodes.decider import DecisionOutput, decider_node
 
 class TestDeciderNode:
     @patch("src.agent.nodes.decider.get_llm")
-    def test_status_query_overrides_escalate_to_auto_respond(self, mock_get_llm: MagicMock) -> None:
+    def test_status_query_overrides_escalate_to_read_only_lookup(
+        self, mock_get_llm: MagicMock
+    ) -> None:
         mock_llm = MagicMock()
         mock_structured = MagicMock()
         mock_structured.ainvoke = AsyncMock(
             return_value=DecisionOutput(
                 selected_action="escalate",
-                action_payload={"ticket_id": "TCK-1001", "reason": "urgency"},
+                action_payload={"ticket_id": "TCK-24001", "reason": "urgency"},
                 evidence="Policy citation",
                 explanation="Need escalation",
             )
@@ -29,15 +31,15 @@ class TestDeciderNode:
 
         state = {
             "session_id": "s1",
-            "user_message": "What is the status of ticket TCK-1001?",
+            "user_message": "What is the status of ticket TCK-24001?",
             "reasoning": "User is inquiring about status.",
         }
         result = asyncio.run(decider_node(state))
 
         assert result["selected_action"] == "get_ticket_status"
-        assert result["action_payload"] == {"ticket_id": "TCK-1001"}
+        assert result["action_payload"] == {"ticket_id": "TCK-24001"}
         assert result["risk_level"] == "SAFE"
-        mock_get_llm.assert_not_called()
+        mock_get_llm.assert_called_once()
 
     @patch("src.agent.nodes.decider.get_llm")
     def test_no_ticket_id_overrides_close_to_auto_respond(self, mock_get_llm: MagicMock) -> None:
@@ -72,7 +74,7 @@ class TestDeciderNode:
             return_value=DecisionOutput(
                 selected_action="escalate",
                 action_payload={
-                    "ticket_id": "TCK-1001",
+                    "ticket_id": "TCK-24001",
                     "reason": "RCE vulnerability in production",
                 },
                 evidence="CVE-2024-9999 reported",
@@ -85,7 +87,7 @@ class TestDeciderNode:
         state = {
             "session_id": "s1",
             "operator_role": "tier1_analyst",
-            "user_message": "Critical RCE found in TCK-1001! Escalate immediately!",
+            "user_message": "Critical RCE found in TCK-24001! Escalate immediately!",
             "reasoning": "Critical vulnerability requires escalation.",
         }
         result = asyncio.run(decider_node(state))
@@ -176,28 +178,33 @@ class TestDeciderNode:
         assert result["selected_action"] == "create_ticket"
         assert result["risk_level"] == "SAFE"
 
+    @patch("src.agent.nodes.decider.invoke_llm", new_callable=AsyncMock)
     @patch("src.agent.nodes.decider.get_llm")
-    def test_create_ticket_fast_path_avoids_llm(self, mock_get_llm: MagicMock) -> None:
+    def test_provider_failure_does_not_create_ticket(
+        self, mock_get_llm: MagicMock, mock_invoke: AsyncMock
+    ) -> None:
+        mock_invoke.side_effect = RuntimeError("provider unavailable")
         state = {
             "session_id": "s1",
             "operator_role": "tier1_analyst",
             "user_message": (
-                "Create an IT ticket for Demo User in VPN category with medium priority: "
+                "Create an IT ticket for Synthetic User in VPN category with medium priority: "
                 "VPN disconnects after authentication."
             ),
             "reasoning": "LLM unavailable.",
         }
         result = asyncio.run(decider_node(state))
 
-        assert result["selected_action"] == "create_ticket"
-        assert result["risk_level"] == "SAFE"
-        assert result["action_payload"]["user_name"] == "Demo User"
-        assert result["action_payload"]["category"] == "VPN"
-        assert result["action_payload"]["priority"] == "medium"
-        mock_get_llm.assert_not_called()
+        assert result["selected_action"] is None
+        assert result["error"] == "llm_provider_unavailable"
+        mock_get_llm.assert_called_once()
 
+    @patch("src.agent.nodes.decider.invoke_llm", new_callable=AsyncMock)
     @patch("src.agent.nodes.decider.get_llm")
-    def test_quarantine_ip_fast_path_stages_hitl_without_llm(self, mock_get_llm: MagicMock) -> None:
+    def test_provider_failure_does_not_stage_quarantine(
+        self, mock_get_llm: MagicMock, mock_invoke: AsyncMock
+    ) -> None:
+        mock_invoke.side_effect = RuntimeError("provider unavailable")
         state = {
             "session_id": "s1",
             "operator_role": "tier1_analyst",
@@ -208,10 +215,9 @@ class TestDeciderNode:
         }
         result = asyncio.run(decider_node(state))
 
-        assert result["selected_action"] == "quarantine_ip"
-        assert result["risk_level"] == "CRITICAL"
-        assert result["action_payload"]["ip"] == "203.0.113.42"
-        mock_get_llm.assert_not_called()
+        assert result["selected_action"] is None
+        assert result["error"] == "llm_provider_unavailable"
+        mock_get_llm.assert_called_once()
 
     @patch("src.agent.nodes.decider.get_llm")
     def test_uploaded_instruction_cannot_select_write_action(self, mock_get_llm: MagicMock) -> None:

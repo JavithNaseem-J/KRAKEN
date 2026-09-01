@@ -23,7 +23,7 @@ async def test_resolved_stable_approval_cannot_be_reenqueued() -> None:
             "ip": "203.0.113.10",
             "context": {"reasoning": "private model analysis"},
         },
-        "session_id": "demo-session",
+        "session_id": "northstar-v1_public-session",
         "initiator_id": "alice",
         "initiator_role": "tier1_analyst",
         "approval_id": approval_id,
@@ -49,13 +49,13 @@ async def test_legacy_reasoning_entries_are_purged() -> None:
         server=fakeredis.FakeServer(), decode_responses=True
     )
     await queue._redis.set(
-        "kraken:approval:legacy-id",
+        f"{queue._prefix}legacy-id",
         '{"approval_id":"legacy-id","reasoning":"private analysis"}',
     )
-    await queue._redis.sadd("kraken:approval:index", "legacy-id")
+    await queue._redis.sadd(queue._index, "legacy-id")
 
     assert await queue.purge_legacy_reasoning_entries() == 1
-    assert await queue._redis.get("kraken:approval:legacy-id") is None
+    assert await queue._redis.get(f"{queue._prefix}legacy-id") is None
     assert await queue.stats() == 0
     await queue.close()
 

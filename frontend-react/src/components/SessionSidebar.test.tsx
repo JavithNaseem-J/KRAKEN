@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../services/api', () => ({
-  bootstrapDemoSession: vi.fn(() => new Promise(() => undefined)),
+  bootstrapPublicSession: vi.fn(() => new Promise(() => undefined)),
   transitionPersona: vi.fn().mockResolvedValue('admin'),
 }));
 

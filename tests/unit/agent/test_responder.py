@@ -16,7 +16,7 @@ def test_responder_formats_ticket_status_when_llm_fails(mock_get_llm: MagicMock)
         responder_node(
             {
                 "session_id": "s1",
-                "user_message": "What is the status of ticket TCK-1001?",
+                "user_message": "What is the status of ticket TCK-24001?",
                 "reasoning": "Read-only status lookup.",
                 "selected_action": "get_ticket_status",
                 "action_result": {
@@ -24,7 +24,7 @@ def test_responder_formats_ticket_status_when_llm_fails(mock_get_llm: MagicMock)
                     "success": True,
                     "result": {
                         "action": "get_ticket_status",
-                        "ticket_id": "TCK-1001",
+                        "ticket_id": "TCK-24001",
                         "status": "OPEN",
                         "priority": "P3",
                         "subject": "GlobalProtect VPN Connection Fails",
@@ -38,7 +38,7 @@ def test_responder_formats_ticket_status_when_llm_fails(mock_get_llm: MagicMock)
         )
     )
 
-    assert "Ticket Information: TCK-1001" in result["final_answer"]
+    assert "Ticket Information: TCK-24001" in result["final_answer"]
     assert "**Status:** `OPEN`" in result["final_answer"]
     assert "Connection error" not in result["final_answer"]
     mock_get_llm.assert_not_called()
@@ -75,14 +75,20 @@ def test_responder_uses_retrieved_chunks_when_llm_fails(mock_get_llm: MagicMock)
     assert "temporarily unavailable" not in result["final_answer"]
 
 
+@patch("src.agent.nodes.responder.invoke_llm", new_callable=AsyncMock)
 @patch("src.agent.nodes.responder.get_llm")
-def test_responder_skips_llm_for_known_demo_vpn_question(mock_get_llm: MagicMock) -> None:
+def test_responder_uses_standard_composition_for_vpn_question(
+    mock_get_llm: MagicMock, mock_invoke: AsyncMock
+) -> None:
+    mock_invoke.return_value = MagicMock(
+        content="### Corporate VPN Guidance\n\nUse GlobalProtect with MFA.\n\n**Sources:** faq"
+    )
     result = asyncio.run(
         responder_node(
             {
                 "session_id": "s1",
                 "user_message": "How do I connect to the corporate VPN?",
-                "reasoning": "Known demo knowledge.",
+                "reasoning": "Retrieved current VPN policy.",
                 "selected_action": None,
                 "retrieved_chunks": [
                     {
@@ -98,17 +104,24 @@ def test_responder_skips_llm_for_known_demo_vpn_question(mock_get_llm: MagicMock
 
     assert "Corporate VPN Guidance" in result["final_answer"]
     assert "**Sources:** faq" in result["final_answer"]
-    mock_get_llm.assert_not_called()
+    mock_get_llm.assert_called_once()
+    mock_invoke.assert_awaited_once()
 
 
+@patch("src.agent.nodes.responder.invoke_llm", new_callable=AsyncMock)
 @patch("src.agent.nodes.responder.get_llm")
-def test_responder_skips_llm_for_known_demo_sla_question(mock_get_llm: MagicMock) -> None:
+def test_responder_uses_standard_composition_for_sla_question(
+    mock_get_llm: MagicMock, mock_invoke: AsyncMock
+) -> None:
+    mock_invoke.return_value = MagicMock(
+        content="### Critical Vulnerability SLA Guidance\n\nP1 response: 15 minutes."
+    )
     result = asyncio.run(
         responder_node(
             {
                 "session_id": "s1",
                 "user_message": "What is the critical vulnerability SLA?",
-                "reasoning": "Known demo knowledge.",
+                "reasoning": "Retrieved current P1 SLA.",
                 "selected_action": "auto_respond",
                 "retrieved_chunks": [
                     {
@@ -125,4 +138,5 @@ def test_responder_skips_llm_for_known_demo_sla_question(mock_get_llm: MagicMock
     assert "Critical Vulnerability SLA Guidance" in result["final_answer"]
     assert "Transaction ID" not in result["final_answer"]
     assert "Human approval was granted" not in result["final_answer"]
-    mock_get_llm.assert_not_called()
+    mock_get_llm.assert_called_once()
+    mock_invoke.assert_awaited_once()

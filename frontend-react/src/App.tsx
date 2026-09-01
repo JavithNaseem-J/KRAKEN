@@ -21,7 +21,14 @@ import {
   type UserRole,
 } from './types/agent';
 
-const SESSIONS_STORAGE_KEY = 'akea.chat.sessions.v1';
+const SESSIONS_STORAGE_KEY = 'kraken.chat.sessions.v2';
+const SESSIONS_STORAGE_SCHEMA = 2;
+
+interface StoredSessionEnvelope {
+  schema_version: number;
+  dataset_generation: string;
+  sessions: ChatSession[];
+}
 
 function newSession(): ChatSession {
   const now = new Date().toISOString();
@@ -42,7 +49,7 @@ export function sanitizeStoredSessions(value: unknown, nowMs = Date.now()): Chat
     return parsed.map((s) => ({
       ...s,
       messages: (Array.isArray(s.messages) ? s.messages : []).map((m) => {
-        const legacyMessage = stripReasoningFields(m) as ChatMessageType & {
+        const legacyMessage = stripRemovedPublicFields(m) as ChatMessageType & {
           approval_details?: unknown;
         };
         const { approval_details: _legacyApprovalDetails, ...safeMessage } = legacyMessage;
@@ -60,13 +67,13 @@ export function sanitizeStoredSessions(value: unknown, nowMs = Date.now()): Chat
   }
 }
 
-export function stripReasoningFields(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stripReasoningFields);
+export function stripRemovedPublicFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripRemovedPublicFields);
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
         .filter(([key]) => key.toLowerCase() !== 'reasoning')
-        .map(([key, item]) => [key, stripReasoningFields(item)]),
+        .map(([key, item]) => [key, stripRemovedPublicFields(item)]),
     );
   }
   return value;
@@ -76,9 +83,30 @@ function loadSessions(): ChatSession[] {
   try {
     const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
     if (!raw) return [];
-    return sanitizeStoredSessions(JSON.parse(raw));
+    const envelope = JSON.parse(raw) as StoredSessionEnvelope;
+    if (
+      envelope.schema_version !== SESSIONS_STORAGE_SCHEMA ||
+      !envelope.dataset_generation ||
+      !Array.isArray(envelope.sessions)
+    ) {
+      return [];
+    }
+    return sanitizeStoredSessions(envelope.sessions);
   } catch {
     return [];
+  }
+}
+
+function loadStorageGeneration(): string | null {
+  try {
+    const raw = localStorage.getItem(SESSIONS_STORAGE_KEY);
+    if (!raw) return null;
+    const envelope = JSON.parse(raw) as StoredSessionEnvelope;
+    return envelope.schema_version === SESSIONS_STORAGE_SCHEMA
+      ? envelope.dataset_generation || null
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -93,7 +121,7 @@ function queryResponseToMessage(res: QueryResponse): ChatMessageType {
     role: 'assistant',
     content,
     timestamp: res.timestamp ?? new Date().toISOString(),
-    metadata: stripReasoningFields({
+    metadata: stripRemovedPublicFields({
       action_taken: res.action_taken,
       action_result: res.action_result,
       sources: res.sources,
@@ -122,23 +150,39 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string>(
     () => sessions[0]?.session_id ?? '',
   );
-  const { activePersona } = usePersona();
+  const { activePersona, datasetGeneration } = usePersona();
+  const [storageGeneration, setStorageGeneration] = useState<string | null>(loadStorageGeneration);
   const [busy, setBusy] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const activeSession = sessions.find((s) => s.session_id === activeSessionId) ?? null;
 
-  // Local storage persistence with LRU eviction (keep 20 most recent sessions)
   useEffect(() => {
+    if (!datasetGeneration || storageGeneration === datasetGeneration) return;
+    const fresh = newSession();
+    setSessions([fresh]);
+    setActiveSessionId(fresh.session_id);
+    setPendingSessionId(null);
+    setStorageGeneration(datasetGeneration);
+  }, [datasetGeneration, storageGeneration]);
+
+  // Generation-scoped local persistence with LRU eviction (keep 20 recent sessions).
+  useEffect(() => {
+    if (!datasetGeneration || storageGeneration !== datasetGeneration) return;
     let toSave = sessions;
     if (sessions.length > 20) {
       toSave = [...sessions]
         .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
         .slice(0, 20);
     }
-    localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(toSave));
-  }, [sessions]);
+    const envelope: StoredSessionEnvelope = {
+      schema_version: SESSIONS_STORAGE_SCHEMA,
+      dataset_generation: datasetGeneration,
+      sessions: toSave,
+    };
+    localStorage.setItem(SESSIONS_STORAGE_KEY, JSON.stringify(envelope));
+  }, [datasetGeneration, sessions, storageGeneration]);
 
   const updateSession = useCallback(
     (sessionId: string, updater: (s: ChatSession) => ChatSession) => {
@@ -287,11 +331,11 @@ export default function App() {
       let errorMsg = 'The agent encountered an error processing your request. Please try again.';
       if (e instanceof ApiRequestError) {
         if (e.status === 429) {
-          errorMsg = 'Demo query limit reached. Please retry after the rate-limit window resets.';
+          errorMsg = 'Query limit reached. Please retry after the rate-limit window resets.';
         } else if (e.status === 400) {
           errorMsg = 'The security gateway rejected this prompt. Rephrase it as a legitimate support request.';
         } else if (e.status === 403) {
-          errorMsg = 'This simulated persona does not have permission for that operation.';
+          errorMsg = 'This operational persona does not have permission for that operation.';
         } else if (e.status === 503 || e.status === 504) {
           errorMsg = 'The AI or retrieval provider is temporarily unavailable. Your query remains in this chat.';
         } else {

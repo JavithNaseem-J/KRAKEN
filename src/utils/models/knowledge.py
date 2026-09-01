@@ -46,6 +46,7 @@ class KnowledgeChunkPayload(BaseModel):
     allowed_roles: list[str] = Field(default_factory=lambda: ["public"])
     embedding_model: str
     collection_version: str
+    dataset_generation: str
     scope: str = "shared"
     expires_at: float | None = None
     untrusted_evidence: bool = False

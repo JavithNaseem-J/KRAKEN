@@ -99,7 +99,7 @@ ACTION_POLICY_METADATA: dict[str, dict[str, Any]] = {
         "requires_four_eyes": False,
         "authorizing_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],
         "minimum_approver_clearance": "PUBLIC",
-        "audit_tags": ["RBAC:TICKET_CREATION", "DEMO:SYNTHETIC_WRITE"],
+        "audit_tags": ["RBAC:TICKET_CREATION", "SYNTHETIC_ENVIRONMENT:WRITE"],
     },
     "quarantine_ip": {
         "staging_permitted_roles": ["tier1_analyst", "incident_commander", "admin"],

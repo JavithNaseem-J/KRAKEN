@@ -64,7 +64,7 @@ def test_write_actions_require_explicit_user_intent() -> None:
         True,
         False,
     )
-    assert should_override_to_auto_respond("Please escalate ticket TCK-1001.", "escalate") == (
+    assert should_override_to_auto_respond("Please escalate ticket TCK-24001.", "escalate") == (
         False,
         False,
     )

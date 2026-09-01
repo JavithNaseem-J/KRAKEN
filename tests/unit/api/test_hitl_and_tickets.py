@@ -17,29 +17,29 @@ def test_registry_has_operational_actions():
 
 
 def test_quarantine_ip_handler():
-    """Verify quarantine_ip_handler returns an explicit dry-run receipt."""
+    """Verify quarantine_ip_handler returns an explicit synthetic receipt."""
     res = quarantine_ip_handler("198.51.100.45", reason="Port scanning detected")
     assert res["success"] is True
-    assert res["mode"] == "dry_run"
-    assert res["simulated"] is True
-    assert res["status"] == "would_block"
+    assert res["mode"] == "synthetic"
+    assert res["synthetic"] is True
+    assert res["status"] == "blocked_in_synthetic_environment"
     assert res["ip"] == "198.51.100.45"
     assert "DENY_PERIMETER_198.51.100.45" in res["firewall_rule"]
     assert "transaction_id" in res
     assert "job_id" in res
-    assert "DRY_RUN_ONLY" in res["verification_status"]
-    assert "no perimeter firewall rule was created" in res["message"]
+    assert "NO_EXTERNAL_FIREWALL_CALLED" in res["verification_status"]
+    assert "No external firewall was called" in res["message"]
 
 
 def test_unlock_account_handler():
-    """Verify unlock_account_handler returns an explicit dry-run receipt."""
-    res = unlock_account_handler("alice.smith@company.com", reason="Identity verified")
+    """Verify unlock_account_handler returns an explicit synthetic receipt."""
+    res = unlock_account_handler("alice.smith@northstar.example", reason="Identity verified")
     assert res["success"] is True
-    assert res["mode"] == "dry_run"
-    assert res["simulated"] is True
-    assert res["status"] == "would_unlock"
-    assert res["user_email"] == "alice.smith@company.com"
+    assert res["mode"] == "synthetic"
+    assert res["synthetic"] is True
+    assert res["status"] == "unlocked_in_synthetic_environment"
+    assert res["user_email"] == "alice.smith@northstar.example"
     assert "transaction_id" in res
     assert res["lockout_cleared"] is False
-    assert "DRY_RUN_ONLY" in res["verification_status"]
-    assert "no Microsoft Graph API mutation was sent" in res["message"]
+    assert "NO_EXTERNAL_IDP_CALLED" in res["verification_status"]
+    assert "No external identity provider was called" in res["message"]

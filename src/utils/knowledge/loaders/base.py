@@ -80,6 +80,9 @@ def load_structured_chunks(
                         "priority",
                         "status",
                         "user_id",
+                        "dataset_generation",
+                        "allowed_roles",
+                        "synthetic",
                     ):
                         if field in item:
                             meta_dict[field] = item[field]
@@ -89,6 +92,7 @@ def load_structured_chunks(
                             "id": doc_id,
                             "document": text,
                             "metadata": meta_dict,
+                            "allowed_roles": item.get("allowed_roles"),
                         }
                     )
         except Exception as exc:

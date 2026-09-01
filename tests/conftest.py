@@ -35,8 +35,9 @@ os.environ.update(
         "SEMANTIC_CACHE_ENABLED": "true",
         "HITL_SERVICE_TOKEN": "test-hitl-token-0123456789abcdef0123456789",
         "GATEWAY_API_KEYS": "dev-key-analyst-default:tier1_analyst,dev-key-admin-default:admin",
-        "DEMO_SESSION_SECRET": "test-demo-secret-0123456789abcdef0123456789",
-        "DEMO_COOKIE_SECURE": "false",
+        "PUBLIC_SESSION_SECRET": "test-public-secret-0123456789abcdef0123456789",
+        "PUBLIC_COOKIE_SECURE": "false",
+        "SYNTHETIC_DATASET_GENERATION": "northstar-v1",
     }
 )
 

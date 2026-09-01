@@ -37,7 +37,7 @@ async def _persist_memory_task(
         )
 
         if not store_episodic:
-            log.info("memory_writer.demo_episodic_skipped", session_id=session_id)
+            log.info("memory_writer.public_episodic_skipped", session_id=session_id)
             return
 
         # 2. Store episodic memory (summarised interaction)
@@ -96,7 +96,7 @@ async def memory_writer_node(state: GraphState) -> dict:
                 action_name,
                 risk_level,
                 approval,
-                store_episodic=not bool(state.get("demo_session_id")),
+                store_episodic=not bool(state.get("public_session_id")),
             )
 
     try:

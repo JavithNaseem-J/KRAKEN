@@ -91,7 +91,7 @@ def summarize_audit_data(value: dict[str, Any] | None) -> dict[str, Any] | None:
     if value is None:
         return None
     summary: dict[str, Any] = {"fields": sorted(str(key) for key in value)}
-    for key in ("action", "success", "simulated", "status", "ticket_id"):
+    for key in ("action", "success", "synthetic", "status", "ticket_id"):
         item = value.get(key)
         if isinstance(item, (bool, int, float)):
             summary[key] = item

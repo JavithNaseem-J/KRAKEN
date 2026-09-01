@@ -33,7 +33,7 @@ class CacheContext:
 
 def cache_context(metadata: dict[str, Any]) -> CacheContext:
     settings = get_settings()
-    session_id = str(metadata.get("demo_session_id") or "")
+    session_id = str(metadata.get("public_session_id") or "")
     private = bool(metadata.get("has_private_uploads"))
     return CacheContext(
         role=str(metadata.get("operator_role") or "end_user"),

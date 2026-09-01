@@ -50,8 +50,8 @@ async def _call_action_service(
     payload: dict[str, Any],
     session_id: str,
     user_id: str,
-    demo_session_id: str | None = None,
-    demo_actor_id: str | None = None,
+    public_session_id: str | None = None,
+    public_actor_id: str | None = None,
 ) -> dict[str, Any]:
     """POST to action service /execute and return the result dict."""
     request = ActionRequest(
@@ -59,8 +59,8 @@ async def _call_action_service(
         payload=payload,
         session_id=session_id,
         user_id=user_id,
-        demo_session_id=demo_session_id,
-        demo_actor_id=demo_actor_id,
+        public_session_id=public_session_id,
+        public_actor_id=public_actor_id,
     )
     try:
         resp = await post_with_retry(
@@ -88,8 +88,8 @@ async def executor_node(state: GraphState) -> dict:
     risk_level = state.get("risk_level", "SAFE")
     user_id = state.get("user_id", "system")
     operator_role = state.get("operator_role", "end_user")
-    demo_session_id = state.get("demo_session_id") or None
-    demo_actor_id = state.get("demo_actor_id") or None
+    public_session_id = state.get("public_session_id") or None
+    public_actor_id = state.get("public_actor_id") or None
     execution_id = state.get("execution_id") or f"{session_id}:{state.get('user_message', '')}"
 
     if not selected_actions and primary_action:
@@ -128,8 +128,8 @@ async def executor_node(state: GraphState) -> dict:
                     act.get("action_payload", {}),
                     session_id,
                     user_id,
-                    demo_session_id,
-                    demo_actor_id,
+                    public_session_id,
+                    public_actor_id,
                 )
                 for act in safe_actions
             ]
@@ -157,7 +157,7 @@ async def executor_node(state: GraphState) -> dict:
                     action_name=c_name,
                     payload=c_payload,
                     session_id=session_id,
-                    initiator_id=demo_actor_id or user_id,
+                    initiator_id=public_actor_id or user_id,
                     initiator_role=operator_role,
                     approval_id=approval_id,
                 )
@@ -203,8 +203,8 @@ async def executor_node(state: GraphState) -> dict:
                 c_payload,
                 session_id,
                 user_id,
-                demo_session_id,
-                demo_actor_id,
+                public_session_id,
+                public_actor_id,
             )
             results.append(crit_res)
             return {

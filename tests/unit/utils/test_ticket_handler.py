@@ -50,6 +50,7 @@ def patch_workspace(tmp_path: Path):
     with (
         patch("src.tools.ticket.WORKSPACE_ROOT", fake_workspace),
         patch("src.tools.ticket._TICKETS_FILE", tickets_file),
+        patch("src.tools.ticket._SEED_FILE", tickets_file),
     ):
         yield fake_workspace
 
@@ -82,6 +83,30 @@ class TestTicketHandlers:
 
         saved = json.loads((patch_workspace / "tickets.json").read_text())
         assert saved == _SAMPLE_TICKETS
+
+    def test_ticket_lookup_prefers_canonical_seed_over_stale_workspace(
+        self, patch_workspace: Path
+    ) -> None:
+        canonical_file = patch_workspace / "canonical_tickets.json"
+        canonical_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "ticket_id": "TCK-24001",
+                        "subject": "Canonical ticket",
+                        "status": "resolved",
+                        "priority": "P3",
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        with patch("src.tools.ticket._SEED_FILE", canonical_file):
+            result = execute_get_ticket_status("TCK-24001")
+
+        assert result["subject"] == "Canonical ticket"
+        assert result["status"] == "resolved"
 
     def test_escalate_updates_ticket(self, patch_workspace: Path) -> None:
         res = execute_escalate("TK-002", "Requires Tier 2 review", "SLA policy rule SLA-002")
@@ -129,33 +154,35 @@ class TestTicketHandlers:
             pool = get_pg_pool()
             assert pool is None
 
-    def test_quarantine_ip_returns_explicit_dry_run_receipt(self) -> None:
+    def test_quarantine_ip_returns_explicit_synthetic_receipt(self) -> None:
         res = quarantine_ip_handler(
             "203.0.113.10",
             reason="Suspicious traffic",
             evidence="Firewall alert FW-42",
         )
 
-        assert res["mode"] == "dry_run"
-        assert res["simulated"] is True
-        assert res["status"] == "would_block"
-        assert "simulated_receipt" in res
-        assert "No firewall state was changed" in res["verification_status"]
-        assert "no perimeter firewall rule was created" in res["message"]
-        assert "has been quarantined" not in res["message"]
+        assert res["mode"] == "synthetic"
+        assert res["synthetic"] is True
+        assert res["dataset_generation"] == "northstar-v1"
+        assert res["status"] == "blocked_in_synthetic_environment"
+        assert "synthetic_receipt" in res
+        assert "NO_EXTERNAL_FIREWALL_CALLED" in res["verification_status"]
+        assert "No external firewall was called" in res["message"]
+        assert "simulated" not in str(res).lower()
 
-    def test_unlock_account_returns_explicit_dry_run_receipt(self) -> None:
+    def test_unlock_account_returns_explicit_synthetic_receipt(self) -> None:
         res = unlock_account_handler(
             "user@example.com",
             reason="Verified user",
             evidence="Helpdesk case HD-7",
         )
 
-        assert res["mode"] == "dry_run"
-        assert res["simulated"] is True
-        assert res["status"] == "would_unlock"
+        assert res["mode"] == "synthetic"
+        assert res["synthetic"] is True
+        assert res["dataset_generation"] == "northstar-v1"
+        assert res["status"] == "unlocked_in_synthetic_environment"
         assert res["lockout_cleared"] is False
-        assert "simulated_receipt" in res
-        assert "No identity-provider state was changed" in res["verification_status"]
-        assert "no Microsoft Graph API mutation was sent" in res["message"]
-        assert "has been unlocked successfully" not in res["message"]
+        assert "synthetic_receipt" in res
+        assert "NO_EXTERNAL_IDP_CALLED" in res["verification_status"]
+        assert "No external identity provider was called" in res["message"]
+        assert "simulated" not in str(res).lower()

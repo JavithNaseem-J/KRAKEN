@@ -6,8 +6,9 @@ from fastapi.testclient import TestClient
 
 # We mock settings or environment variables where needed.
 # Since app imports settings, we can patch settings or use them as configured.
-from src.api.gateway import MAX_BODY_SIZE, app
+from src.api.gateway import MAX_BODY_SIZE, _inference_capability_status, app
 from src.utils.middleware.rate_limit import RateLimiterDatabaseError
+from src.utils.models.public import CapabilityState, CapabilityStatus
 
 
 @pytest.fixture
@@ -37,6 +38,18 @@ def test_health_check(client):
     response = client.get("/health")
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"status": "ok", "service": "gateway"}
+
+
+def test_local_embedding_inference_is_ready_when_storage_and_embedder_are_ready():
+    result = _inference_capability_status(
+        CapabilityStatus(state=CapabilityState.READY),
+        cloud_enabled=False,
+        cloud_model="",
+        local_embedder_ready=True,
+    )
+
+    assert result.state == CapabilityState.READY
+    assert result.detail is None
 
 
 def test_missing_api_key(client):
@@ -277,7 +290,7 @@ def test_upload_knowledge_uses_internal_request(client, monkeypatch):
     internal_request = AsyncMock(return_value=mock_response)
     monkeypatch.setattr("src.api.gateway.internal_request", internal_request)
 
-    session = client.post("/v1/demo/session").json()
+    session = client.post("/v1/session").json()
     response = client.post(
         "/v1/knowledge/upload",
         files={"file": ("faq.md", b"hello", "text/markdown")},

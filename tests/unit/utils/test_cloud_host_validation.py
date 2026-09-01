@@ -44,8 +44,9 @@ _CLOUD_URLS = {
             }
         }
     ),
-    "demo_session_secret": "demo-session-secret-0123456789abcdef",
-    "demo_cookie_secure": True,
+    "public_session_secret": "public-session-secret-0123456789abcdef",
+    "public_cookie_secure": True,
+    "synthetic_dataset_generation": "northstar-v1",
 }
 
 

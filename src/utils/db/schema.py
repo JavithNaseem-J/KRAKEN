@@ -26,6 +26,7 @@ def _extract_section(sql: str, section_name: str) -> str:
 
 
 CREATE_TICKETS_TABLE_DDL = _extract_section(SCHEMA_DDL, "tickets")
+CREATE_RUNTIME_METADATA_DDL = _extract_section(SCHEMA_DDL, "runtime-metadata")
 
 
 async def ensure_schema_async(pool: Any) -> None:

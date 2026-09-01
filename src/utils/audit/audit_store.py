@@ -7,6 +7,7 @@ from typing import Any
 import asyncpg
 import structlog
 
+from src.utils.config import get_settings
 from src.utils.logging import summarize_audit_data
 from src.utils.models.audit import AuditLogRequest
 
@@ -23,6 +24,7 @@ class AuditStore:
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
+        self._dataset_generation = get_settings().synthetic_dataset_generation
 
     async def log_action(self, entry: AuditLogRequest) -> str:
         """
@@ -52,7 +54,10 @@ class AuditStore:
             )
 
             # 2. Compute current entry_hash
-            raw_chain_string = f"{previous_hash}:{entry.session_id}:{entry.user_id}:{entry.action_name}:{entry.status}:{payload_str}"
+            raw_chain_string = (
+                f"{previous_hash}:{self._dataset_generation}:{entry.session_id}:"
+                f"{entry.user_id}:{entry.action_name}:{entry.status}:{payload_str}"
+            )
             entry_hash = hashlib.sha256(raw_chain_string.encode("utf-8")).hexdigest()
 
             row = await conn.fetchrow(
@@ -60,12 +65,12 @@ class AuditStore:
                     INSERT INTO audit_log (
                         session_id, user_id, action_type, action_name,
                         risk_level, hitl_required, hitl_decision, status,
-                        payload, result, previous_hash, entry_hash
+                        payload, result, previous_hash, entry_hash, dataset_generation
                     )
                     VALUES (
                         $1, $2, $3, $4,
                         $5, $6, $7, $8,
-                        $9::jsonb, $10::jsonb, $11, $12
+                        $9::jsonb, $10::jsonb, $11, $12, $13
                     )
                     RETURNING id
                     """,
@@ -81,6 +86,7 @@ class AuditStore:
                 result_str,
                 previous_hash,
                 entry_hash,
+                self._dataset_generation,
             )
 
         row_id = row["id"]
@@ -106,11 +112,12 @@ class AuditStore:
                 SELECT id, timestamp, action_type, action_name, risk_level,
                        hitl_required, hitl_decision, status, user_id
                 FROM   audit_log
-                WHERE  session_id = $1
+                WHERE  session_id = $1 AND dataset_generation = $2
                 ORDER  BY timestamp DESC
-                LIMIT  $2
+                LIMIT  $3
                 """,
                 session_id,
+                self._dataset_generation,
                 limit,
             )
 
@@ -141,11 +148,12 @@ class AuditStore:
                 SELECT id, timestamp, session_id, action_name, risk_level,
                        hitl_required, hitl_decision, status
                 FROM   audit_log
-                WHERE  user_id = $1
+                WHERE  user_id = $1 AND dataset_generation = $2
                 ORDER  BY timestamp DESC
-                LIMIT  $2
+                LIMIT  $3
                 """,
                 user_id,
+                self._dataset_generation,
                 limit,
             )
 
@@ -172,10 +180,12 @@ class AuditStore:
                         """
                         SELECT id, timestamp, session_id, user_id, action_name, status, payload, previous_hash, entry_hash
                         FROM audit_log
+                        WHERE dataset_generation = $2
                         ORDER BY timestamp ASC, id ASC
                         LIMIT $1
                         """,
                         page_size,
+                        self._dataset_generation,
                     )
                 else:
                     rows = await conn.fetch(
@@ -183,12 +193,14 @@ class AuditStore:
                         SELECT id, timestamp, session_id, user_id, action_name, status, payload, previous_hash, entry_hash
                         FROM audit_log
                         WHERE (timestamp, id) > ($1, $2)
+                          AND dataset_generation = $4
                         ORDER BY timestamp ASC, id ASC
                         LIMIT $3
                         """,
                         last_timestamp,
                         last_id,
                         page_size,
+                        self._dataset_generation,
                     )
 
                 if not rows:
@@ -206,7 +218,10 @@ class AuditStore:
                             payload_data = {}
                     p_str = json.dumps(payload_data or {}, sort_keys=True)
 
-                    raw = f"{previous_hash}:{row['session_id']}:{row['user_id']}:{row['action_name']}:{row['status']}:{p_str}"
+                    raw = (
+                        f"{previous_hash}:{self._dataset_generation}:{row['session_id']}:"
+                        f"{row['user_id']}:{row['action_name']}:{row['status']}:{p_str}"
+                    )
                     computed = hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
                     if row["previous_hash"] and row["previous_hash"] != previous_hash:

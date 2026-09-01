@@ -25,15 +25,30 @@ from src.utils.privacy import strip_reasoning_fields
 log = structlog.get_logger(__name__)
 SEMANTIC_CACHE_COLLECTION = "kraken_semantic_cache_v2"
 LEGACY_SEMANTIC_CACHE_COLLECTION = "kraken_semantic_cache"
-EXACT_CACHE_GENERATION_KEY = "kraken:semantic-cache:generation"
-EXACT_CACHE_PREFIX = "kraken:semantic-cache:v2:exact"
 LEGACY_EXACT_CACHE_PATTERN = "kraken:semantic-cache:exact:*"
+LEGACY_V2_EXACT_CACHE_PATTERN = "kraken:semantic-cache:v2:exact:*"
 SIMILARITY_THRESHOLD = 0.92
+
+
+def generation_scoped_context(context: dict[str, str] | None) -> dict[str, str]:
+    scoped = dict(context or {})
+    scoped["dataset_generation"] = get_settings().synthetic_dataset_generation
+    return scoped
+
+
+def exact_cache_generation_key(dataset_generation: str | None = None) -> str:
+    generation = dataset_generation or get_settings().synthetic_dataset_generation
+    return f"kraken:{generation}:semantic-cache:generation"
+
+
+def exact_cache_prefix(dataset_generation: str | None = None) -> str:
+    generation = dataset_generation or get_settings().synthetic_dataset_generation
+    return f"kraken:{generation}:semantic-cache:v2:exact"
 
 
 def semantic_cache_point_id(query_text: str, context: dict[str, str] | None) -> str:
     normalized_query = " ".join(query_text.lower().split())
-    context_key = json.dumps(context or {}, sort_keys=True)
+    context_key = json.dumps(generation_scoped_context(context), sort_keys=True)
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{normalized_query}:{context_key}"))
 
 
@@ -81,6 +96,9 @@ class SemanticCache:
             if settings.redis_url and settings.semantic_cache_enabled
             else None
         )
+        self._dataset_generation = settings.synthetic_dataset_generation
+        self._exact_generation_key = exact_cache_generation_key(self._dataset_generation)
+        self._exact_prefix = exact_cache_prefix(self._dataset_generation)
         self._generation_dirty = False
 
     def _exact_cache_key(
@@ -90,9 +108,9 @@ class SemanticCache:
         generation: str = "0",
     ) -> str:
         normalized = " ".join(query_text.lower().split())
-        context_key = json.dumps(context or {}, sort_keys=True)
+        context_key = json.dumps(generation_scoped_context(context), sort_keys=True)
         digest = hashlib.sha256(f"{normalized}:{context_key}".encode()).hexdigest()
-        return f"{EXACT_CACHE_PREFIX}:{generation}:{digest}"
+        return f"{self._exact_prefix}:{generation}:{digest}"
 
     async def _purge_legacy_reasoning_payloads(self) -> None:
         """Remove cache records written before reasoning was removed from public responses."""
@@ -109,12 +127,12 @@ class SemanticCache:
         if not self._redis:
             return
         try:
-            legacy_keys = [
-                key async for key in self._redis.scan_iter(match=LEGACY_EXACT_CACHE_PATTERN)
-            ]
+            legacy_keys: list[Any] = []
+            for pattern in (LEGACY_EXACT_CACHE_PATTERN, LEGACY_V2_EXACT_CACHE_PATTERN):
+                legacy_keys.extend([key async for key in self._redis.scan_iter(match=pattern)])
             if legacy_keys:
                 await self._redis.delete(*legacy_keys)
-                await self._redis.incr(EXACT_CACHE_GENERATION_KEY)
+                await self._redis.incr(self._exact_generation_key)
                 log.info("semantic_cache.legacy_exact_purged", count=len(legacy_keys))
         except Exception as exc:
             log.warning("semantic_cache.legacy_exact_purge_failed", error=str(exc))
@@ -124,10 +142,10 @@ class SemanticCache:
             return None
         try:
             if self._generation_dirty:
-                generation = await self._redis.incr(EXACT_CACHE_GENERATION_KEY)
+                generation = await self._redis.incr(self._exact_generation_key)
                 self._generation_dirty = False
                 return str(int(generation))
-            raw = await self._redis.get(EXACT_CACHE_GENERATION_KEY)
+            raw = await self._redis.get(self._exact_generation_key)
             if raw is None:
                 return "0"
             if isinstance(raw, bytes):
@@ -211,7 +229,13 @@ class SemanticCache:
                         existing_dim=existing_size,
                         configured_dim=vector_dim,
                     )
-            for field_name in ("embedding_model", "knowledge_version", "role", "scope"):
+            for field_name in (
+                "embedding_model",
+                "knowledge_version",
+                "dataset_generation",
+                "role",
+                "scope",
+            ):
                 try:
                     await self._client.create_payload_index(
                         collection_name=SEMANTIC_CACHE_COLLECTION,
@@ -236,6 +260,8 @@ class SemanticCache:
         """Search for semantically similar cached response. Non-blocking; fails open."""
         if not get_settings().semantic_cache_enabled:
             return None
+
+        context = generation_scoped_context(context)
 
         try:
             query_filter = None
@@ -280,6 +306,7 @@ class SemanticCache:
         if not get_settings().semantic_cache_enabled:
             return
 
+        context = generation_scoped_context(context)
         response = strip_reasoning_fields(response)
         point_id = semantic_cache_point_id(query_text, context)
         try:

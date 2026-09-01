@@ -13,7 +13,7 @@ def test_gateway_full_lifespan_boots_offline_without_model_downloads() -> None:
     with offline_gateway_lifespan_patches() as calls, TestClient(app) as client:
         response = client.get(
             "/health",
-            headers={"X-API-Key": "itest-demo-key-0123456789abcdef"},
+            headers={"X-API-Key": "itest-public-key-0123456789abcdef"},
         )
 
     assert response.status_code == 200

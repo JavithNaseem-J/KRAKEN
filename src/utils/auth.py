@@ -118,7 +118,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         # unguessable approval_id + CSRF token) bypass API-key auth.
         if (
             path in ("/", "/health", "/ready", "/metrics", "/docs", "/openapi.json")
-            or path.startswith(("/approve/", "/assets/", "/v1/demo/session"))
+            or path.startswith(("/approve/", "/assets/", "/v1/session"))
             or path in ("/favicon.ico", "/robots.txt")
         ):
             return await call_next(request)
@@ -126,7 +126,7 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         settings = get_settings()
-        if path.startswith("/v1/") and request.cookies.get(settings.demo_session_cookie_name):
+        if path.startswith("/v1/") and request.cookies.get(settings.public_session_cookie_name):
             return await call_next(request)
 
         api_key = request.headers.get("X-API-Key")
@@ -159,9 +159,9 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 
 
 USER_ROLE_MAP: dict[str, str] = {
-    "demo-user-1": "tier1",
-    "demo-user-2": "security_lead",
-    "demo-admin": "admin",
+    "synthetic-operator-1": "tier1",
+    "synthetic-operator-2": "security_lead",
+    "synthetic-admin": "admin",
 }
 
 

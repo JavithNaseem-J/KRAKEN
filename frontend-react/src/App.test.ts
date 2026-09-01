@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 
 import { sanitizeStoredSessions } from './App';
 
-test('removes legacy reasoning metadata from stored chat sessions', () => {
+test('removes retired public metadata from stored chat sessions', () => {
   const sessions = sanitizeStoredSessions([
     {
       session_id: 'session-1',

@@ -27,6 +27,7 @@ pytestmark = pytest.mark.skipif(
 async def memory() -> ShortTermMemory:
     mem = ShortTermMemory.__new__(ShortTermMemory)
     mem._redis = fakeredis.FakeRedis(decode_responses=True)
+    mem._generation = "northstar-v1"
     return mem
 
 
@@ -48,7 +49,7 @@ class TestGetSession:
         assert result == []
 
     async def test_corrupt_value_returns_empty(self, memory: ShortTermMemory) -> None:
-        await memory._redis.set("kraken:session:bad", "NOT JSON")
+        await memory._redis.set("kraken:northstar-v1:session:bad", "NOT JSON")
         result = await memory.get_session("bad")
         assert result == []
 
@@ -69,7 +70,7 @@ class TestUpdateSession:
     async def test_ttl_is_set(self, memory: ShortTermMemory) -> None:
         """Verify that update_session sets a TTL on the Redis key."""
         await memory.update_session("s1", MSGS)
-        ttl = await memory._redis.ttl("kraken:session:s1")
+        ttl = await memory._redis.ttl("kraken:northstar-v1:session:s1")
         # TTL should be close to _SESSION_TTL_SEC (within 5 seconds of tolerance)
         assert _SESSION_TTL_SEC - 5 <= ttl <= _SESSION_TTL_SEC
 

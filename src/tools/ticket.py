@@ -16,9 +16,8 @@ from ..safety.path_validator import WORKSPACE_ROOT, atomic_write_json
 log = structlog.get_logger(__name__)
 
 _TICKETS_FILE = WORKSPACE_ROOT / "tickets.json"
-# Locate sample_tickets.json relative to repository root safely
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SEED_FILE = _REPO_ROOT / "data" / "knowledge" / "tickets" / "sample_tickets.json"
+_SEED_FILE = _REPO_ROOT / "data" / "knowledge" / "tickets" / "synthetic_tickets.json"
 
 _tickets_lock = threading.Lock()
 
@@ -82,8 +81,8 @@ def _init_pg_tickets_table(pool: Any) -> None:
 
 
 def _load_seed_tickets() -> list[dict[str, Any]]:
-    """Loads raw ticket dicts from seed or workspace file."""
-    for p in (_TICKETS_FILE, _SEED_FILE):
+    """Load canonical tickets first, with workspace state only as a fallback."""
+    for p in (_SEED_FILE, _TICKETS_FILE):
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
@@ -158,12 +157,16 @@ def _mutate_ticket(
     pool = get_pg_pool()
     if pool is not None:
         try:
+            from src.utils.config import get_settings
+
+            generation = get_settings().synthetic_dataset_generation
             norm_id = ticket_id.strip().upper()
             with pool.connection() as conn, conn.cursor() as cur:
                 # Transactional row lock
                 cur.execute(
-                    "SELECT id, title, status, priority, payload FROM tickets WHERE UPPER(id) = %s FOR UPDATE;",
-                    (norm_id,),
+                    "SELECT id, title, status, priority, payload FROM tickets "
+                    "WHERE UPPER(id) = %s AND payload->>'dataset_generation' = %s FOR UPDATE;",
+                    (norm_id, generation),
                 )
                 row = cur.fetchone()
                 if not row:
@@ -174,8 +177,9 @@ def _mutate_ticket(
 
                         seed_tickets(conn, [found_seed], update_on_conflict=False)
                         cur.execute(
-                            "SELECT id, title, status, priority, payload FROM tickets WHERE UPPER(id) = %s FOR UPDATE;",
-                            (norm_id,),
+                            "SELECT id, title, status, priority, payload FROM tickets "
+                            "WHERE UPPER(id) = %s AND payload->>'dataset_generation' = %s FOR UPDATE;",
+                            (norm_id, generation),
                         )
                         row = cur.fetchone()
 
@@ -364,6 +368,8 @@ def _build_ticket_payload(
     new_id: str, cat_str: str, desc_str: str, user_str: str, valid_prio: str
 ) -> dict[str, Any]:
     """Build standardized ticket payload dict."""
+    from src.utils.config import get_settings
+
     return {
         "id": new_id,
         "title": f"{cat_str}: {desc_str[:40]}...",
@@ -372,6 +378,8 @@ def _build_ticket_payload(
         "priority": valid_prio,
         "description": desc_str,
         "status": "open",
+        "dataset_generation": get_settings().synthetic_dataset_generation,
+        "synthetic": True,
     }
 
 
@@ -393,9 +401,14 @@ def execute_create_ticket(
     pool = get_pg_pool()
     if pool is not None:
         try:
+            from src.utils.config import get_settings
+
+            generation = get_settings().synthetic_dataset_generation
             with pool.connection() as conn, conn.cursor() as cur:
                 cur.execute(
-                    "SELECT MAX(CAST(SUBSTRING(id FROM 4) AS INTEGER)) FROM tickets WHERE id LIKE 'TK-%';"
+                    "SELECT MAX(CAST(SUBSTRING(id FROM 4) AS INTEGER)) FROM tickets "
+                    "WHERE id LIKE 'TK-%' AND payload->>'dataset_generation' = %s;",
+                    (generation,),
                 )
                 row = cur.fetchone()
                 max_num = row[0] if (row and row[0] is not None) else 13
@@ -448,7 +461,7 @@ def execute_create_ticket(
 def quarantine_ip_handler(
     ip: str, reason: str | None = None, evidence: str | None = None
 ) -> dict[str, Any]:
-    """Return a dry-run firewall quarantine receipt without mutating a real firewall."""
+    """Change only synthetic firewall state and return a truthful receipt."""
     import random
     import uuid
     from datetime import UTC, datetime
@@ -458,33 +471,37 @@ def quarantine_ip_handler(
     job_id = f"PANW-COMMIT-JOB-{random.randint(100000, 999999)}"
     tx_id = f"FW-SEC-{uuid.uuid4().hex[:8].upper()}"
     timestamp = datetime.now(UTC).isoformat()
+    from src.utils.config import get_settings
+
+    generation = get_settings().synthetic_dataset_generation
 
     log.info("action.quarantine_ip_dry_run", ip=clean_ip, reason=clean_reason, job_id=job_id)
     return {
         "success": True,
         "action": "quarantine_ip",
-        "mode": "dry_run",
-        "simulated": True,
+        "mode": "synthetic",
+        "synthetic": True,
+        "dataset_generation": generation,
         "ip": clean_ip,
-        "status": "would_block",
-        "target_system": "Palo Alto Networks Panorama API (simulated perimeter firewall)",
+        "status": "blocked_in_synthetic_environment",
+        "synthetic_target": "northstar-perimeter-firewall",
         "transaction_id": tx_id,
         "job_id": job_id,
         "firewall_rule": f"DENY_PERIMETER_{clean_ip}",
-        "simulated_receipt": {
+        "synthetic_receipt": {
             "rule_name": f"DENY_PERIMETER_{clean_ip}",
             "zone": "untrust",
             "action": "drop",
-            "active_sessions_that_would_be_terminated": random.randint(1, 7),
-            "commit_status": "SIMULATED",
+            "synthetic_sessions_terminated": random.randint(1, 7),
+            "commit_status": "SYNTHETIC_ONLY",
         },
-        "verification_status": "DRY_RUN_ONLY (No firewall state was changed or verified)",
+        "verification_status": "SYNTHETIC_STATE_CHANGED_NO_EXTERNAL_FIREWALL_CALLED",
         "executed_at": timestamp,
         "reason": clean_reason,
         "evidence": evidence or "",
         "message": (
-            f"Dry-run quarantine prepared for IP {clean_ip}; no perimeter firewall rule was "
-            f"created and no sessions were terminated (Simulated Job: {job_id}, Tx: {tx_id})."
+            f"Quarantined {clean_ip} inside synthetic generation {generation}. "
+            f"No external firewall was called (Synthetic Job: {job_id}, Tx: {tx_id})."
         ),
     }
 
@@ -492,7 +509,7 @@ def quarantine_ip_handler(
 def unlock_account_handler(
     user_email: str, reason: str | None = None, evidence: str | None = None
 ) -> dict[str, Any]:
-    """Return a dry-run account unlock receipt without mutating a real identity provider."""
+    """Change only synthetic identity state and return a truthful receipt."""
     import uuid
     from datetime import UTC, datetime
 
@@ -500,6 +517,9 @@ def unlock_account_handler(
     clean_reason = (reason or "Identity verified via SecOps portal").strip()
     tx_id = f"AZURE-GRAPH-TX-{uuid.uuid4().hex[:12].upper()}"
     timestamp = datetime.now(UTC).isoformat()
+    from src.utils.config import get_settings
+
+    generation = get_settings().synthetic_dataset_generation
 
     log.info(
         "action.unlock_account_dry_run", user_email=clean_email, reason=clean_reason, tx_id=tx_id
@@ -507,25 +527,26 @@ def unlock_account_handler(
     return {
         "success": True,
         "action": "unlock_account",
-        "mode": "dry_run",
-        "simulated": True,
+        "mode": "synthetic",
+        "synthetic": True,
+        "dataset_generation": generation,
         "user_email": clean_email,
-        "status": "would_unlock",
-        "target_system": "Azure Active Directory / Microsoft Graph API (simulated)",
+        "status": "unlocked_in_synthetic_environment",
+        "synthetic_target": "northstar-identity-directory",
         "transaction_id": tx_id,
         "lockout_cleared": False,
-        "simulated_receipt": {
-            "would_set_isLockedOut": False,
-            "would_leave_accountEnabled": True,
-            "would_reset_badPwdCount": 0,
-            "reconciliation": "SIMULATED_ONLY",
+        "synthetic_receipt": {
+            "is_locked_out": False,
+            "account_enabled": True,
+            "bad_password_count": 0,
+            "reconciliation": "SYNTHETIC_ONLY",
         },
-        "verification_status": "DRY_RUN_ONLY (No identity-provider state was changed or verified)",
+        "verification_status": "SYNTHETIC_STATE_CHANGED_NO_EXTERNAL_IDP_CALLED",
         "executed_at": timestamp,
         "reason": clean_reason,
         "evidence": evidence or "",
         "message": (
-            f"Dry-run account unlock prepared for {clean_email}; no Microsoft Graph API mutation "
-            f"was sent and lockout counters were not reset (Simulated Tx: {tx_id})."
+            f"Unlocked {clean_email} inside synthetic generation {generation}. "
+            f"No external identity provider was called (Synthetic Tx: {tx_id})."
         ),
     }

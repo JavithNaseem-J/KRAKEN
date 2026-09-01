@@ -9,7 +9,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
-from src.utils.demo_knowledge import build_demo_knowledge_answer
 from src.utils.llm import get_llm, invoke_llm
 
 log = structlog.get_logger(__name__)
@@ -140,16 +139,6 @@ async def responder_node(state: GraphState) -> dict:
             "final_answer": final_answer,
             "action_explanation": "Grounded refusal: insufficient permitted evidence.",
             "messages": [{"role": "assistant", "content": final_answer}],
-        }
-
-    # pyrefly: ignore [bad-argument-type]
-    demo_knowledge_answer = build_demo_knowledge_answer(user_message, retrieved_chunks)
-    if demo_knowledge_answer and selected_action in (None, "auto_respond"):
-        log.info("responder.demo_knowledge_fast_path", session_id=session_id)
-        return {
-            "final_answer": demo_knowledge_answer,
-            "action_explanation": "Grounded public demo answer generated from retrieved chunks.",
-            "messages": [{"role": "assistant", "content": demo_knowledge_answer}],
         }
 
     early_answer = _fallback_answer_from_action_result(action_result) if selected_action else ""

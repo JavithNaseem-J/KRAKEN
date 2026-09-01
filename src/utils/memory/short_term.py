@@ -8,7 +8,6 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-_PREFIX = "kraken:session:"
 _SESSION_TTL_SEC = 86_400  # 24 hours
 
 
@@ -19,12 +18,14 @@ class ShortTermMemory:
     """
 
     def __init__(self, redis_url: str) -> None:
+        from src.utils.config import get_settings
         from src.utils.http_client import create_async_redis_client
 
         self._redis: aioredis.Redis = create_async_redis_client(redis_url)
+        self._generation = get_settings().synthetic_dataset_generation
 
     def _key(self, session_id: str) -> str:
-        return f"{_PREFIX}{session_id}"
+        return f"kraken:{self._generation}:session:{session_id}"
 
     async def ping(self) -> bool:
         """Ping Redis to verify connectivity. Used during startup health check."""

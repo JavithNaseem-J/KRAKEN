@@ -31,6 +31,8 @@ def load_sla_chunks() -> list[dict[str, Any]]:
         if not isinstance(data, dict):
             continue
 
+        dataset_generation = str(data.get("dataset_generation") or "")
+
         severities = data.get("severities", {})
         if isinstance(severities, dict):
             for p_level, p_info in severities.items():
@@ -68,6 +70,7 @@ def load_sla_chunks() -> list[dict[str, Any]]:
                             "response_time_minutes": resp_mins,
                             "resolution_time_hours": res_hours,
                             "file_name": json_path.name,
+                            "dataset_generation": dataset_generation,
                         },
                     }
                 )
@@ -85,6 +88,7 @@ def load_sla_chunks() -> list[dict[str, Any]]:
                     "metadata": {
                         "type": "action_risk_mapping",
                         "file_name": json_path.name,
+                        "dataset_generation": dataset_generation,
                     },
                 }
             )

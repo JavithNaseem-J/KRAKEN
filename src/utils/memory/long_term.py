@@ -81,6 +81,11 @@ class LongTermMemory:
                 field_schema=PayloadSchemaType.KEYWORD,
             )
             log.info("long_term.payload_index_ready", field="user_id")
+            await self._client.create_payload_index(
+                collection_name=self._collection_name,
+                field_name="dataset_generation",
+                field_schema=PayloadSchemaType.KEYWORD,
+            )
         except Exception as exc:
             log.warning("long_term.init_warning", error=str(exc))
 
@@ -114,6 +119,7 @@ class LongTermMemory:
             "content": content,
             "metadata": metadata or {},
             "timestamp": now_iso,
+            "dataset_generation": settings.synthetic_dataset_generation,
         }
 
         try:
@@ -152,7 +158,11 @@ class LongTermMemory:
                 FieldCondition(
                     key="user_id",
                     match=MatchValue(value=user_id),
-                )
+                ),
+                FieldCondition(
+                    key="dataset_generation",
+                    match=MatchValue(value=settings.synthetic_dataset_generation),
+                ),
             ]
         )
 

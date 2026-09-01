@@ -146,7 +146,7 @@ def prune_stale_checkpoints(pool: ConnectionPool | None) -> dict[str, int]:
             )
             deleted_counts["checkpoints"] += cur.rowcount
 
-            # 2. Demo checkpoints are temporary even when no approval row exists.
+            # 2. Public-session checkpoints are temporary even when no approval row exists.
             cur.execute(
                 """
                 WITH inactive AS (
@@ -370,8 +370,8 @@ def _initial_state(body: QueryRequest, session_messages: list[dict[str, Any]]) -
         "session_id": body.session_id,
         "user_id": body.user_id,
         "operator_role": body.metadata.get("operator_role", "end_user"),
-        "demo_session_id": body.metadata.get("demo_session_id", ""),
-        "demo_actor_id": body.metadata.get("actor_id", ""),
+        "public_session_id": body.metadata.get("public_session_id", ""),
+        "public_actor_id": body.metadata.get("actor_id", ""),
         "execution_id": body.metadata.get("execution_id", ""),
         "user_message": body.message,
         "messages": session_messages,

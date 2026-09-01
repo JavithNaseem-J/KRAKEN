@@ -151,7 +151,7 @@ async def ingest(
 async def upload_document(
     file: Annotated[UploadFile, File(...)],
     allowed_roles: Annotated[str, Form()] = "public",
-    demo_session_id: Annotated[str | None, Form()] = None,
+    public_session_id: Annotated[str | None, Form()] = None,
     expires_at: Annotated[float | None, Form()] = None,
     _token: str = Depends(verify_service_token),
 ) -> dict[str, Any]:
@@ -173,7 +173,7 @@ async def upload_document(
             filename=file.filename or "uploaded_doc.txt",
             file_bytes=content_bytes,
             allowed_roles=roles_list,
-            demo_session_id=demo_session_id,
+            public_session_id=public_session_id,
             expires_at=expires_at,
         )
         from src.utils.cache import SemanticCache

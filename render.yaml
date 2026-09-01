@@ -58,6 +58,8 @@ services:
         value: "384"
       - key: KNOWLEDGE_COLLECTION_VERSION
         value: v2
+      - key: SYNTHETIC_DATASET_GENERATION
+        value: northstar-v1
       - key: SEMANTIC_CACHE_ENABLED
         value: "true"
 
@@ -66,10 +68,24 @@ services:
         value: "*"
       - key: HITL_SERVICE_TOKEN
         generateValue: true
-      - key: DEMO_SESSION_SECRET
+      - key: PUBLIC_SESSION_SECRET
         generateValue: true
-      - key: DEMO_COOKIE_SECURE
+      - key: PUBLIC_COOKIE_SECURE
         value: "true"
+      - key: PUBLIC_SESSION_TTL_SECONDS
+        value: "3600"
+      - key: PUBLIC_AUDIT_TTL_SECONDS
+        value: "604800"
+      - key: PUBLIC_QUERY_LIMIT
+        value: "20"
+      - key: PUBLIC_QUERY_WINDOW_SECONDS
+        value: "3600"
+      - key: PUBLIC_WRITE_LIMIT
+        value: "5"
+      - key: PUBLIC_UPLOAD_MAX_BYTES
+        value: "2097152"
+      - key: PUBLIC_UPLOAD_MAX_FILES
+        value: "3"
       - key: GATEWAY_API_KEYS
         sync: false
 

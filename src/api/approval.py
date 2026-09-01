@@ -265,6 +265,8 @@ async def approval_details(approval_id: str) -> dict[str, Any]:
         "payload": strip_reasoning_fields(entry.get("payload", {})),
         "risk_level": risk_level,
         "approval_reason": approval_reason,
+        "synthetic": True,
+        "dataset_generation": settings.synthetic_dataset_generation,
         "session_id": entry.get("session_id", ""),
         "status": entry.get("status", "PENDING"),
         "created_at": entry.get("created_at"),
@@ -299,6 +301,8 @@ async def approval_page(request: Request, approval_id: str) -> HTMLResponse:
             "action_name": entry.get("action_name", ""),
             "risk_level": risk_level,
             "approval_reason": approval_reason,
+            "synthetic": True,
+            "dataset_generation": settings.synthetic_dataset_generation,
             "csrf_token": csrf_token,
         },
     )

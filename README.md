@@ -4,7 +4,7 @@
 
 KRAKEN is a production-grade autonomous AI agent system built with FastAPI, LangGraph, PostgreSQL (Audit & Ticket Store), Redis, and Qdrant (Knowledge RAG, Semantic Cache & Episodic Memory). It handles complex cybersecurity and IT support queries, performs hybrid vector RAG over domain knowledge, executes safe actions autonomously, and routes high-risk operations through a Human-in-the-Loop (HITL) approval queue with an append-only cryptographic audit trail.
 
-The [production demo design](docs/superpowers/specs/2026-08-24-production-demo-design.md) records the public deployment boundaries, safety model, and acceptance contract.
+The [public synthetic environment design](docs/superpowers/specs/2026-08-24-public-synthetic-environment-design.md) records the deployment boundaries, safety model, dataset contract, and acceptance criteria.
 
 ---
 
@@ -15,7 +15,7 @@ The [production demo design](docs/superpowers/specs/2026-08-24-production-demo-d
 - **Human-in-the-Loop (HITL) Security**: Automated risk-classification that pauses CRITICAL actions for human review via CSRF-protected Web UI and API endpoints.
 - **Append-Only Cryptographic Audit Trail**: Every executed action is signed into a SHA-256 hash-chain stored in PostgreSQL with keyset-paginated verification.
 - **Unified Qdrant Vector Engine**: Qdrant Cloud Inference, grounded knowledge RAG, versioned semantic caching, and session-private uploads.
-- **Public Demo Isolation**: Signed one-hour anonymous sessions, server-validated personas, synthetic ticket overlays, query/write quotas, and no browser credentials.
+- **Public Synthetic Environment**: A deterministic 500-ticket, 30-document enterprise corpus with signed anonymous sessions, server-validated personas, isolated synthetic mutations, and no browser credentials.
 - **Private Model Deliberation**: Model reasoning is untracked agent state and is excluded from public APIs, SSE events, browser storage, caches, approvals, action requests, and audit records.
 - **Production Observability**: Prometheus `/metrics`, structured redacted logs, trace IDs, and execution timing without prompt or model-output capture.
 
@@ -44,7 +44,7 @@ uv sync --all-extras
 
 # 3. Configure environment variables
 cp .env.example .env
-# Set Groq, Qdrant, Redis, Postgres, HITL, and demo-session secrets.
+# Set Groq, Qdrant, Redis, Postgres, HITL, and public-session secrets.
 
 # 4. Start the application
 python main.py
@@ -85,6 +85,12 @@ The production Docker image serves the React UI and API together at [http://loca
 
 Public agent responses contain the final answer, action result, grounded sources, cache metadata, timing, and trace ID. They intentionally do not include model reasoning. Approval details use registry-derived `risk_level` and deterministic `approval_reason` fields.
 
+### Public Session API
+
+The browser creates a signed anonymous session with `POST /v1/session`, changes an allowed operational persona with `POST /v1/session/persona`, polls execution state through `GET /v1/session/status`, and replaces its identity through `POST /v1/session/reset`. Browser writes require the session CSRF token.
+
+All synthetic action results include `synthetic: true`, `dataset_generation`, and a synthetic target or receipt. These results record changes inside KRAKEN only; they never claim a real firewall, identity provider, endpoint, or ticket platform was changed.
+
 ---
 
 ## Development Commands
@@ -102,6 +108,24 @@ npm run lint
 npm run build
 ```
 
+### Synthetic Dataset
+
+The committed `northstar-v1` corpus is generated from seed `240831` and validated before use:
+
+```bash
+python scripts/generate_synthetic_data.py --check
+```
+
+Reset planning is read-only by default and prints the exact allowlisted PostgreSQL rows, Redis prefixes, Qdrant collections, and generated paths:
+
+```bash
+python scripts/reset_synthetic_environment.py plan \
+  --expected-generation northstar-v1 \
+  --target-generation northstar-v1
+```
+
+Execution additionally requires `ALLOW_SYNTHETIC_DATA_RESET=true` and the exact confirmation phrase printed by plan mode. Never leave that guard enabled after an authorized reset. The workflow writes redacted JSON and text evidence under `reports/synthetic-reset/`.
+
 ---
 
 ## Production Deployment
@@ -114,3 +138,5 @@ Before the first deployment of this version:
 2. Confirm the GitHub production environment contains `RENDER_DEPLOY_HOOK_URL` and that the URL is never committed or logged.
 3. Confirm the Render service Auto-Deploy setting is **Off**; `render.yaml` also declares `autoDeploy: false`.
 4. After deployment, compare the Render commit with the `deploy_sha` shown by the successful deployment workflow.
+5. Set `SYNTHETIC_DATASET_GENERATION=northstar-v1`, `QDRANT_COLLECTION_NAME=kraken_knowledge`, and all `PUBLIC_SESSION_*` values before the new image starts.
+6. Run `python scripts/acceptance.py --base-url https://kraken-bdtw.onrender.com` after deployment; the release gate is `8/8 passed`.

@@ -64,9 +64,11 @@ class SlidingWindowRateLimiter:
         max_requests: int = 10,
         window_seconds: int = 60,
     ) -> None:
+        from src.utils.config import get_settings
         from src.utils.http_client import create_async_redis_client
 
         self._redis = create_async_redis_client(redis_url)
+        self._generation = get_settings().synthetic_dataset_generation
         self._max = max_requests
         self._window = window_seconds
         # Register Lua script for execution efficiency and atomicity
@@ -84,7 +86,7 @@ class SlidingWindowRateLimiter:
         """
         now = time.time()
         window_start = now - self._window
-        key = f"kraken:rl:{user_id}"
+        key = f"kraken:{self._generation}:rl:{user_id}"
         # Unique member to prevent score/member collision when float time matches
         member = f"{now:.6f}:{uuid.uuid4().hex[:8]}"
 

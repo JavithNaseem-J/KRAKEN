@@ -20,6 +20,7 @@ export interface CacheMetadata {
   scope: string;
   knowledge_version: string | null;
   embedding_model: string | null;
+  dataset_generation: string | null;
 }
 
 /** Successful agent execution response from POST /v1/run. */
@@ -71,6 +72,8 @@ export interface ApprovalDetails {
   action_name: string;
   risk_level: 'CRITICAL' | 'SAFE';
   approval_reason: string;
+  synthetic: true;
+  dataset_generation: string;
   payload: Record<string, unknown>;
   session_id: string;
   status: string;

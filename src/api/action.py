@@ -15,6 +15,7 @@ from src.tools.ticket import (
     execute_escalate,
     execute_get_ticket_status,
     execute_request_info,
+    get_pg_pool,
     quarantine_ip_handler,
     unlock_account_handler,
 )
@@ -22,7 +23,6 @@ from src.tools.write_tool import write_json_file
 from src.utils.audit.client import fire_audit_log
 from src.utils.auth import verify_service_token
 from src.utils.config import get_settings
-from src.utils.demo_tickets import DemoTicketRepository, demo_ticket_repository
 from src.utils.exceptions import (
     ActionExecutionError,
     ActionNotFoundError,
@@ -38,6 +38,10 @@ from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.action import ActionRequest, ActionResult
 from src.utils.registry import REGISTRY, get_action
+from src.utils.synthetic_tickets import (
+    SyntheticTicketRepository,
+    synthetic_ticket_repository,
+)
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -58,6 +62,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         log_level=settings.log_level, log_format=settings.log_format, service="action"
     )
     log.info("action.startup")
+
+    ticket_pool = await asyncio.to_thread(get_pg_pool)
+    log.info("action.synthetic_ticket_store", persistent=ticket_pool is not None)
 
     # Persistent HTTP client for outgoing audit logging calls
     app.state.http = create_async_http_client()
@@ -122,13 +129,13 @@ async def execute(
     error_msg: str | None = None
 
     try:
-        if body.demo_session_id:
+        if body.public_session_id:
             result_data = await asyncio.to_thread(
-                _dispatch_demo,
+                _dispatch_synthetic,
                 body.action_name,
                 body.payload,
-                body.demo_session_id,
-                demo_ticket_repository,
+                body.public_session_id,
+                synthetic_ticket_repository,
             )
         else:
             result_data = await asyncio.to_thread(_dispatch, body.action_name, body.payload)
@@ -237,16 +244,16 @@ def _dispatch(action_name: str, payload: dict[str, Any]) -> dict[str, Any]:
     return handler(payload)
 
 
-def _dispatch_demo(
+def _dispatch_synthetic(
     action_name: str,
     payload: dict[str, Any],
     session_id: str,
-    repository: DemoTicketRepository,
+    repository: SyntheticTicketRepository,
 ) -> dict[str, Any]:
-    """Execute only synthetic, session-scoped public-demo adapters."""
+    """Execute only generation-scoped synthetic environment adapters."""
     validate_action_payload(action_name, payload)
     if action_name == "write_json_file":
-        raise ActionExecutionError("Filesystem actions are unavailable in Demo Mode.")
+        raise ActionExecutionError("Filesystem actions are unavailable in the public environment.")
     if action_name == "create_ticket":
         return repository.create(session_id, payload)
     if action_name == "get_ticket_status":
@@ -254,7 +261,8 @@ def _dispatch_demo(
         return {
             "success": True,
             "action": action_name,
-            "simulated": True,
+            "synthetic": True,
+            "dataset_generation": settings.synthetic_dataset_generation,
             **ticket,
         }
     if action_name == "close":
@@ -296,8 +304,11 @@ def _dispatch_demo(
         return {
             "success": True,
             "action": "auto_respond",
-            "simulated": True,
+            "synthetic": True,
+            "dataset_generation": settings.synthetic_dataset_generation,
             "response": str(payload.get("response_text", "")),
             "evidence_cited": str(payload.get("evidence", "")),
         }
-    raise ActionExecutionError(f"Action '{action_name}' is unavailable in Demo Mode.")
+    raise ActionExecutionError(
+        f"Action '{action_name}' is unavailable in the public synthetic environment."
+    )

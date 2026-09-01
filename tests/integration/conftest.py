@@ -29,7 +29,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 _TEST_HITL_TOKEN = "itest-hitl-token-0123456789abcdef0123456789"
-_TEST_API_KEY = "itest-demo-key-0123456789abcdef"
+_TEST_API_KEY = "itest-public-key-0123456789abcdef"
 
 _INTEGRATION_ENV = {
     "ENVIRONMENT": "dev",
@@ -54,13 +54,15 @@ _INTEGRATION_ENV = {
     "GATEWAY_API_KEYS": json.dumps(
         {
             _TEST_API_KEY: {
-                "user_id": "demo-user-1",
+                "user_id": "synthetic-operator-1",
                 "role": "tier1_analyst",
             }
         }
     ),
     "LOG_LEVEL": "WARNING",
     "LOG_FORMAT": "console",
+    "PUBLIC_SESSION_SECRET": "itest-public-secret-0123456789abcdef0123456789",
+    "SYNTHETIC_DATASET_GENERATION": "northstar-v1",
 }
 
 from src.utils.config import get_settings  # noqa: E402

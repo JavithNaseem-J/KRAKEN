@@ -18,7 +18,7 @@ def _session_data() -> dict:
             },
             {
                 "role": "assistant",
-                "content": "Creating IT ticket TCK-1001 for Alice's laptop issue.",
+                "content": "Creating IT ticket TCK-24001 for a synthetic laptop issue.",
                 "timestamp": "2026-08-14T18:00:02Z",
             },
         ],

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ log = structlog.get_logger(__name__)
 MAX_CHUNK_SIZE = 1200  # characters — balances section continuity vs. embedding model context
 
 FAQ_DIR = resolve_data_dir("faq")
+_METADATA_PATTERN = re.compile(r"^<!-- kraken-metadata: (\{.*\}) -->\s*", re.DOTALL)
 
 
 def _clean_text(text: str) -> str:
@@ -126,6 +128,18 @@ def _load_text(path: Path) -> str:
         return ""
 
 
+def _extract_metadata(text: str) -> tuple[str, dict[str, Any]]:
+    """Read the generator's JSON metadata comment without adding a YAML dependency."""
+    match = _METADATA_PATTERN.match(text)
+    if not match:
+        return text, {}
+    try:
+        metadata = json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid kraken-metadata JSON comment.") from exc
+    return text[match.end() :], metadata if isinstance(metadata, dict) else {}
+
+
 def load_faq_chunks() -> list[dict[str, Any]]:
     """
     Load all FAQ/Policy documents and return Qdrant-ready chunk dicts with structured section metadata.
@@ -150,7 +164,7 @@ def load_faq_chunks() -> list[dict[str, Any]]:
         log.info("faq_loader.loading", file=file_path.name)
 
         if file_path.suffix.lower() == ".md":
-            raw = _load_text(file_path)
+            raw, document_metadata = _extract_metadata(_load_text(file_path))
             if not raw.strip():
                 log.warning("faq_loader.empty_file", file=file_path.name)
                 continue
@@ -161,6 +175,7 @@ def load_faq_chunks() -> list[dict[str, Any]]:
                 if file_path.suffix.lower() == ".pdf"
                 else _load_text(file_path)
             )
+            document_metadata = {}
             if not raw.strip():
                 log.warning("faq_loader.empty_file", file=file_path.name)
                 continue
@@ -168,7 +183,10 @@ def load_faq_chunks() -> list[dict[str, Any]]:
                 (c, file_path.stem.replace("_", " ").title()) for c in _chunk_text(raw)
             ]
 
-        doc_id = hashlib.blake2b(file_path.name.encode(), digest_size=6).hexdigest()
+        doc_id = str(
+            document_metadata.get("document_id")
+            or hashlib.blake2b(file_path.name.encode(), digest_size=6).hexdigest()
+        )
         faq_doc = FAQDocument(
             doc_id=doc_id,
             title=file_path.stem.replace("_", " ").title(),
@@ -190,7 +208,10 @@ def load_faq_chunks() -> list[dict[str, Any]]:
                         "category": faq_doc.category,
                         "chunk_index": i,
                         "total_chunks": len(section_chunks),
+                        **document_metadata,
                     },
+                    "allowed_roles": document_metadata.get("allowed_roles"),
+                    "untrusted_evidence": bool(document_metadata.get("untrusted_evidence", False)),
                 }
             )
 

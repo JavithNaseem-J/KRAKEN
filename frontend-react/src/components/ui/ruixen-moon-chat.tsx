@@ -136,11 +136,11 @@ export default function RuixenMoonChat({
       return;
     }
     if (file.size > 2 * 1024 * 1024) {
-      setUploadNotice('File exceeds the 2 MB Demo Mode limit.');
+      setUploadNotice('File exceeds the 2 MB public-session limit.');
       return;
     }
     if (uploadCount >= 3) {
-      setUploadNotice('This demo session already has three active uploads.');
+      setUploadNotice('This public session already has three active uploads.');
       return;
     }
     setIsUploading(true);
@@ -187,7 +187,7 @@ export default function RuixenMoonChat({
             </span>
           </div>
           <span className="border border-emerald-700/60 bg-emerald-950/40 px-2 py-1 text-[10px] font-semibold text-emerald-300">
-            DEMO MODE · SYNTHETIC DATA
+            SYNTHETIC ENVIRONMENT
           </span>
         </div>
       </header>
@@ -369,8 +369,8 @@ export default function RuixenMoonChat({
             />
             <QuickAction
               icon={<Rocket className="w-3.5 h-3.5 text-emerald-400" />}
-              label="Ticket T-1001 Status"
-              onClick={() => handlePillClick("What is the status of ticket T-1001?")}
+              label="Ticket TCK-24001 Status"
+              onClick={() => handlePillClick("What is the status of ticket TCK-24001?")}
             />
             <QuickAction
               icon={<Code2 className="w-3.5 h-3.5 text-amber-400" />}

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 
-import { bootstrapDemoSession, transitionPersona } from '../services/api';
+import { bootstrapPublicSession, transitionPersona } from '../services/api';
 
 export type PersonaRole = 'end_user' | 'tier1_analyst' | 'incident_commander' | 'admin';
 
@@ -74,13 +74,16 @@ interface PersonaContextType {
   activePersona: Persona;
   setPersona: (role: PersonaRole) => void;
   personas: Persona[];
+  datasetGeneration: string | null;
 }
 
-const PERSONA_STORAGE_KEY = 'kraken.secops.active_persona.v1';
+const PERSONA_STORAGE_KEY = 'kraken.synthetic.active_persona.v2';
+const GENERATION_STORAGE_KEY = 'kraken.synthetic.dataset_generation.v1';
 
 const PersonaContext = createContext<PersonaContextType | undefined>(undefined);
 
 export const PersonaProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [datasetGeneration, setDatasetGeneration] = useState<string | null>(null);
   const [activePersona, setActivePersona] = useState<Persona>(() => {
     try {
       const saved = localStorage.getItem(PERSONA_STORAGE_KEY);
@@ -93,8 +96,17 @@ export const PersonaProvider: React.FC<{ children: React.ReactNode }> = ({ child
   });
 
   useEffect(() => {
-    void bootstrapDemoSession()
+    void bootstrapPublicSession()
       .then((session) => {
+        const storedGeneration = localStorage.getItem(GENERATION_STORAGE_KEY);
+        if (storedGeneration !== session.dataset_generation) {
+          localStorage.removeItem(PERSONA_STORAGE_KEY);
+          localStorage.removeItem('akea.chat.sessions.v1');
+          localStorage.removeItem('kraken.chat.sessions.v1');
+          localStorage.removeItem('kraken.chat.sessions.v2');
+          localStorage.setItem(GENERATION_STORAGE_KEY, session.dataset_generation);
+        }
+        setDatasetGeneration(session.dataset_generation);
         const serverPersona = PERSONAS.find((persona) => persona.role === session.persona);
         if (serverPersona) setActivePersona(serverPersona);
       })
@@ -117,7 +129,9 @@ export const PersonaProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   return (
-    <PersonaContext.Provider value={{ activePersona, setPersona, personas: PERSONAS }}>
+    <PersonaContext.Provider
+      value={{ activePersona, setPersona, personas: PERSONAS, datasetGeneration }}
+    >
       {children}
     </PersonaContext.Provider>
   );

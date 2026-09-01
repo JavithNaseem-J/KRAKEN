@@ -74,10 +74,10 @@ async def retriever_node(state: GraphState) -> dict:
                 "error": "Knowledge retrieval is temporarily unavailable, please try again.",
             }
 
-        # Public demo history is session-scoped in short-term memory. Shared
+        # Public history is session-scoped in short-term memory. Shared
         # persona IDs must never expose episodic memory from another visitor.
         user_id = state.get("user_id", "")
-        if user_id and not state.get("demo_session_id"):
+        if user_id and not state.get("public_session_id"):
             try:
                 mem_resp = await internal_request(
                     "POST",

@@ -5,7 +5,15 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import structlog
-from qdrant_client.models import Document, FieldCondition, Filter, PointIdsList, PointStruct, Range
+from qdrant_client.models import (
+    Document,
+    FieldCondition,
+    Filter,
+    MatchValue,
+    PointIdsList,
+    PointStruct,
+    Range,
+)
 
 from src.utils.config import get_settings
 from src.utils.models.knowledge import KnowledgeChunkPayload, KnowledgeSource
@@ -25,7 +33,13 @@ async def cleanup_expired_private_points(client: AsyncQdrantClient) -> int:
         points, _ = await client.scroll(
             collection_name=settings.qdrant_collection_name,
             scroll_filter=Filter(
-                must=[FieldCondition(key="expires_at", range=Range(lte=time.time()))]
+                must=[
+                    FieldCondition(key="expires_at", range=Range(lte=time.time())),
+                    FieldCondition(
+                        key="dataset_generation",
+                        match=MatchValue(value=settings.synthetic_dataset_generation),
+                    ),
+                ]
             ),
             limit=256,
             with_payload=False,
@@ -90,7 +104,7 @@ async def upsert_chunks_async(
         )
 
         chunk_roles = c.get("allowed_roles") or meta.get("allowed_roles") or roles
-        scope = str(c.get("scope") or meta.get("demo_session_id") or "shared")
+        scope = str(c.get("scope") or meta.get("public_session_id") or "shared")
 
         payload_obj = KnowledgeChunkPayload(
             content=c["document"],
@@ -102,6 +116,7 @@ async def upsert_chunks_async(
             allowed_roles=chunk_roles,
             embedding_model=embedding_model,
             collection_version=settings.knowledge_collection_version,
+            dataset_generation=settings.synthetic_dataset_generation,
             scope=scope,
             expires_at=c.get("expires_at") or meta.get("expires_at"),
             untrusted_evidence=bool(c.get("untrusted_evidence", False)),
@@ -152,7 +167,7 @@ async def ingest_uploaded_file_async(
     filename: str,
     file_bytes: bytes,
     allowed_roles: list[str] | None = None,
-    demo_session_id: str | None = None,
+    public_session_id: str | None = None,
     expires_at: float | None = None,
 ) -> int:
     """
@@ -188,7 +203,7 @@ async def ingest_uploaded_file_async(
                 "id": cid,
                 "document": text_str,
                 "allowed_roles": roles,
-                "scope": demo_session_id or "shared",
+                "scope": public_session_id or "shared",
                 "expires_at": expires_at,
                 "untrusted_evidence": True,
                 "metadata": {
@@ -198,11 +213,12 @@ async def ingest_uploaded_file_async(
                     "category": "user_uploaded",
                     "chunk_index": idx,
                     "allowed_roles": roles,
-                    "demo_session_id": demo_session_id,
+                    "public_session_id": public_session_id,
                     "expires_at": expires_at,
                     "untrusted_evidence": True,
                     "embedding_model": settings.qdrant_inference_model,
                     "collection_version": settings.knowledge_collection_version,
+                    "dataset_generation": settings.synthetic_dataset_generation,
                 },
             }
         )
@@ -255,6 +271,7 @@ async def ensure_collection(
         "allowed_roles": PayloadSchemaType.KEYWORD,
         "embedding_model": PayloadSchemaType.KEYWORD,
         "collection_version": PayloadSchemaType.KEYWORD,
+        "dataset_generation": PayloadSchemaType.KEYWORD,
         "metadata.ticket_id": PayloadSchemaType.KEYWORD,
         "expires_at": PayloadSchemaType.FLOAT,
     }

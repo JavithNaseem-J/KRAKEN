@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import structlog
@@ -12,7 +11,6 @@ from src.prompts.registry import get_prompt
 from src.safety.policy_engine import get_policy_engine, should_override_to_auto_respond
 from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
-from src.utils.demo_knowledge import has_demo_knowledge_answer
 from src.utils.llm import get_llm, invoke_llm
 from src.utils.registry import REGISTRY, get_action
 
@@ -25,7 +23,6 @@ _STATUS_QUERY_KEYWORDS: tuple[str, ...] = (
     "check status",
     "what is the status",
 )
-_IP_ADDRESS_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 
 
 def _ticket_status_fast_path(user_message: str) -> dict[str, Any] | None:
@@ -51,151 +48,6 @@ def _ticket_status_fast_path(user_message: str) -> dict[str, Any] | None:
         "action_payload": payload,
         "risk_level": "SAFE",
         "evidence": f"Read-only ticket status lookup requested for {ticket_id}.",
-    }
-
-
-def _priority_from_message(user_message: str) -> str:
-    msg_lower = user_message.lower()
-    if any(term in msg_lower for term in ("critical", "p1", "sev1")):
-        return "critical"
-    if any(term in msg_lower for term in ("high", "p2", "sev2")):
-        return "high"
-    if any(term in msg_lower for term in ("medium", "p3", "normal")):
-        return "medium"
-    if any(term in msg_lower for term in ("low", "p4")):
-        return "low"
-    return "medium"
-
-
-def _category_from_message(user_message: str) -> str:
-    msg_lower = user_message.lower()
-    if "vpn" in msg_lower or "globalprotect" in msg_lower:
-        return "VPN"
-    if any(term in msg_lower for term in ("monitor", "laptop", "hardware", "keyboard", "mouse")):
-        return "Hardware"
-    if any(term in msg_lower for term in ("account", "password", "login", "mfa")):
-        return "Identity & Access"
-    if "security" in msg_lower or "vulnerability" in msg_lower:
-        return "Security"
-    return "IT Support"
-
-
-def _user_from_message(user_message: str) -> str:
-    match = re.search(
-        r"\bfor\s+(?:user\s+)?([A-Z][A-Za-z0-9_.-]{1,40}(?:\s+[A-Z][A-Za-z0-9_.-]{1,40})?)",
-        user_message,
-    )
-    if match:
-        return match.group(1).strip().rstrip(".")
-    return "Demo User"
-
-
-def _description_from_message(user_message: str) -> str:
-    if ":" in user_message:
-        tail = user_message.split(":", 1)[1].strip()
-        if tail:
-            return tail
-    cleaned = re.sub(
-        r"(?i)\b(create|open)\s+(?:an?\s+)?(?:it\s+|support\s+)?ticket\s+(?:for\s+)?",
-        "",
-        user_message,
-    ).strip()
-    return cleaned or user_message.strip()
-
-
-def _create_ticket_fast_path(user_message: str) -> dict[str, Any] | None:
-    msg_lower = user_message.lower()
-    if not re.search(r"\b(create|open)\b", msg_lower) or "ticket" not in msg_lower:
-        return None
-
-    payload = {
-        "user_name": _user_from_message(user_message),
-        "category": _category_from_message(user_message),
-        "priority": _priority_from_message(user_message),
-        "description": _description_from_message(user_message),
-        "evidence": "User explicitly requested a synthetic demo ticket.",
-    }
-    return {
-        "selected_action": "create_ticket",
-        "selected_actions": [
-            {
-                "action_name": "create_ticket",
-                "action_payload": payload,
-                "risk_level": "SAFE",
-            }
-        ],
-        "action_payload": payload,
-        "risk_level": "SAFE",
-        "evidence": payload["evidence"],
-    }
-
-
-def _quarantine_ip_fast_path(user_message: str, operator_role: str) -> dict[str, Any] | None:
-    msg_lower = user_message.lower()
-    if "quarantine" not in msg_lower and "block" not in msg_lower:
-        return None
-
-    match = _IP_ADDRESS_REGEX.search(user_message)
-    if not match:
-        return None
-
-    payload = {
-        "ip": match.group(0),
-        "reason": _description_from_message(user_message),
-        "evidence": "User supplied a concrete IP and stated malicious activity in the demo flow.",
-    }
-    policy_decision = get_policy_engine().evaluate_action_staging(
-        "quarantine_ip",
-        operator_role,
-        payload,
-    )
-    if not policy_decision.allowed:
-        return {
-            "selected_action": None,
-            "selected_actions": [],
-            "action_payload": None,
-            "risk_level": None,
-            "evidence": payload["evidence"],
-            "error": policy_decision.reason,
-        }
-    return {
-        "selected_action": "quarantine_ip",
-        "selected_actions": [
-            {
-                "action_name": "quarantine_ip",
-                "action_payload": payload,
-                "risk_level": "CRITICAL",
-            }
-        ],
-        "action_payload": payload,
-        "risk_level": "CRITICAL",
-        "evidence": payload["evidence"],
-    }
-
-
-def _deterministic_action_fast_path(user_message: str, operator_role: str) -> dict[str, Any] | None:
-    for candidate in (
-        _ticket_status_fast_path(user_message),
-        _create_ticket_fast_path(user_message),
-        _quarantine_ip_fast_path(user_message, operator_role),
-    ):
-        if candidate is not None:
-            return candidate
-    return None
-
-
-def _demo_knowledge_fast_path(state: GraphState) -> dict[str, Any] | None:
-    user_message = state.get("user_message", "")
-    retrieved_chunks = state.get("retrieved_chunks", [])
-    # pyrefly: ignore [bad-argument-type]
-    if not has_demo_knowledge_answer(user_message, retrieved_chunks):
-        return None
-    return {
-        "selected_action": None,
-        "selected_actions": [],
-        "action_payload": None,
-        "risk_level": "SAFE",
-        "evidence": "Known public demo knowledge answer generated from retrieved chunks.",
     }
 
 
@@ -235,20 +87,6 @@ async def decider_node(state: GraphState) -> dict:
     operator_role = state.get("operator_role", "end_user")
     reasoning = state.get("reasoning", "No reasoning available.")
 
-    fast_path = _deterministic_action_fast_path(user_message, operator_role)
-    if fast_path is not None:
-        log.info(
-            "decider.deterministic_fast_path",
-            session_id=session_id,
-            action=fast_path.get("selected_action"),
-        )
-        return fast_path
-
-    knowledge_fast_path = _demo_knowledge_fast_path(state)
-    if knowledge_fast_path is not None:
-        log.info("decider.demo_knowledge_fast_path", session_id=session_id)
-        return knowledge_fast_path
-
     human_content = f"User request: {user_message}\n\nAnalysis:\n{reasoning}"
 
     try:
@@ -287,6 +125,10 @@ async def decider_node(state: GraphState) -> dict:
                 is_status_query=is_status_query,
                 query=user_message[:50],
             )
+            if is_status_query:
+                status_lookup = _ticket_status_fast_path(user_message)
+                if status_lookup is not None:
+                    return status_lookup
             action_name = "auto_respond"
             actions_to_process = [
                 ActionDecision(
@@ -398,6 +240,10 @@ async def decider_node(state: GraphState) -> dict:
 
     except Exception as exc:
         log.error("decider.error", session_id=session_id, error=exc.__class__.__name__)
+        read_only_fallback = _ticket_status_fast_path(user_message)
+        if read_only_fallback is not None:
+            log.info("decider.provider_failure_ticket_fallback", session_id=session_id)
+            return read_only_fallback
         return {
             "selected_action": None,
             "action_payload": None,

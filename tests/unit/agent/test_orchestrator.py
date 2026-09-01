@@ -47,13 +47,13 @@ class TestRetrieverNode:
 
     @patch("src.agent.nodes.retriever.internal_request")
     @patch("src.agent.nodes.retriever._fetch_knowledge", new_callable=AsyncMock)
-    async def test_demo_session_skips_shared_episodic_memory(
+    async def test_public_session_skips_shared_episodic_memory(
         self, mock_fetch: AsyncMock, mock_internal: AsyncMock
     ) -> None:
         mock_fetch.return_value = []
         state = {
-            "session_id": "demo-session",
-            "demo_session_id": "demo-session",
+            "session_id": "public-session",
+            "public_session_id": "public-session",
             "user_id": "alice",
             "user_message": "What happened earlier?",
         }
@@ -77,10 +77,12 @@ class TestMemoryWriterNode:
         assert res == {}
 
     @patch("src.utils.http_client.post_with_retry", new_callable=AsyncMock)
-    async def test_demo_session_persists_only_short_term_memory(self, mock_post: AsyncMock) -> None:
+    async def test_public_session_persists_only_short_term_memory(
+        self, mock_post: AsyncMock
+    ) -> None:
         await _persist_memory_task(
             AsyncMock(),
-            "demo-session",
+            "public-session",
             "alice",
             [],
             "Question",
@@ -92,7 +94,7 @@ class TestMemoryWriterNode:
         )
 
         assert mock_post.await_count == 1
-        assert "/session/demo-session" in mock_post.await_args.args[1]
+        assert "/session/public-session" in mock_post.await_args.args[1]
 
 
 # ── API Endpoint Tests ────────────────────────────────────────────────────────

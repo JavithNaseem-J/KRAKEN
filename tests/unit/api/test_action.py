@@ -116,7 +116,7 @@ def test_execute_auto_respond_success(mock_handler, client):
 def test_execute_get_ticket_status_success(mock_handler, client):
     mock_handler.return_value = {
         "success": True,
-        "ticket_id": "TCK-1001",
+        "ticket_id": "TCK-24001",
         "status": "OPEN",
     }
     response = client.post(
@@ -125,7 +125,7 @@ def test_execute_get_ticket_status_success(mock_handler, client):
             "action_name": "get_ticket_status",
             "session_id": "s1",
             "user_id": "u1",
-            "payload": {"ticket_id": "TCK-1001"},
+            "payload": {"ticket_id": "TCK-24001"},
         },
         headers=_HEADERS,
     )
@@ -134,7 +134,7 @@ def test_execute_get_ticket_status_success(mock_handler, client):
     res = response.json()
     assert res["success"] is True
     assert res["result"]["status"] == "OPEN"
-    mock_handler.assert_called_once_with("TCK-1001")
+    mock_handler.assert_called_once_with("TCK-24001")
 
 
 def test_execute_write_json_success(client):

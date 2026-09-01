@@ -23,7 +23,7 @@ function getBaseUrl(envUrl: string | undefined): string {
 
 const API_URL = getBaseUrl(import.meta.env.VITE_API_URL);
 
-export interface DemoSession {
+export interface PublicSession {
   session_id: string;
   csrf_token: string;
   persona: PersonaRole;
@@ -31,10 +31,11 @@ export interface DemoSession {
   expires_at: string;
   query_limit: number;
   write_limit: number;
-  demo_mode: true;
+  dataset_generation: string;
+  synthetic_environment: true;
 }
 
-let sessionPromise: Promise<DemoSession> | null = null;
+let sessionPromise: Promise<PublicSession> | null = null;
 
 export class ApiRequestError extends Error {
   constructor(
@@ -46,10 +47,10 @@ export class ApiRequestError extends Error {
   }
 }
 
-export function bootstrapDemoSession(force = false): Promise<DemoSession> {
+export function bootstrapPublicSession(force = false): Promise<PublicSession> {
   if (!sessionPromise || force) {
     sessionPromise = axios
-      .post<DemoSession>(`${API_URL}/v1/demo/session`, undefined, { withCredentials: true })
+      .post<PublicSession>(`${API_URL}/v1/session`, undefined, { withCredentials: true })
       .then(({ data }) => data)
       .catch((error) => {
         sessionPromise = null;
@@ -60,17 +61,17 @@ export function bootstrapDemoSession(force = false): Promise<DemoSession> {
 }
 
 async function sessionHeaders(): Promise<Record<string, string>> {
-  const session = await bootstrapDemoSession();
+  const session = await bootstrapPublicSession();
   return {
     'Content-Type': 'application/json',
     'X-CSRF-Token': session.csrf_token,
   };
 }
 
-export async function transitionPersona(persona: PersonaRole): Promise<DemoSession['persona']> {
-  const session = await bootstrapDemoSession();
-  const { data } = await axios.post<{ persona: DemoSession['persona'] }>(
-    `${API_URL}/v1/demo/persona`,
+export async function transitionPersona(persona: PersonaRole): Promise<PublicSession['persona']> {
+  const session = await bootstrapPublicSession();
+  const { data } = await axios.post<{ persona: PublicSession['persona'] }>(
+    `${API_URL}/v1/session/persona`,
     { persona, csrf_token: session.csrf_token },
     { withCredentials: true },
   );
@@ -80,7 +81,7 @@ export async function transitionPersona(persona: PersonaRole): Promise<DemoSessi
 export function pollSessionStatus(sessionId: string): Promise<RunResponse> {
   void sessionId;
   return axios
-    .get<RunResponse>(`${API_URL}/v1/demo/status`, { withCredentials: true })
+    .get<RunResponse>(`${API_URL}/v1/session/status`, { withCredentials: true })
     .then(({ data }) => data);
 }
 
@@ -88,7 +89,7 @@ export async function uploadKnowledgeDocument(
   file: File,
   allowedRoles = 'public',
 ): Promise<{ status: string; filename: string; chunks_ingested: number }> {
-  const session = await bootstrapDemoSession();
+  const session = await bootstrapPublicSession();
   const formData = new FormData();
   formData.append('file', file);
   formData.append('allowed_roles', allowedRoles);
@@ -110,6 +111,8 @@ export async function fetchApprovalDetails(approvalId: string): Promise<Approval
     payload: Record<string, unknown>;
     risk_level: 'CRITICAL' | 'SAFE';
     approval_reason: string;
+    synthetic: true;
+    dataset_generation: string;
     session_id: string;
     status: string;
     created_at?: string;
@@ -124,6 +127,8 @@ export async function fetchApprovalDetails(approvalId: string): Promise<Approval
     approval_reason:
       data.approval_reason ||
       'This critical action requires approval by an eligible operator before execution.',
+    synthetic: data.synthetic,
+    dataset_generation: data.dataset_generation,
     payload: data.payload || {},
     session_id: data.session_id || '',
     status: data.status || 'PENDING',
@@ -139,11 +144,11 @@ export async function submitApprovalDecision(
   decision: 'approve' | 'reject',
   approvalCsrfToken: string,
 ): Promise<{ session_id: string; agent_response?: QueryResponse }> {
-  const demo = await bootstrapDemoSession();
+  const session = await bootstrapPublicSession();
   const body = new URLSearchParams({
     decision,
     csrf_token: approvalCsrfToken,
-    demo_csrf_token: demo.csrf_token,
+    session_csrf_token: session.csrf_token,
   });
   const { data } = await axios.post<{
     session_id: string;
@@ -177,14 +182,14 @@ export async function streamAgentQuery(
       body: JSON.stringify({ message, session_id: sessionId }),
     });
     if (response.status === 401 && attempt === 0) {
-      await bootstrapDemoSession(true);
+      await bootstrapPublicSession(true);
       continue;
     }
     if (![502, 503, 504].includes(response.status) || attempt === 2) break;
     onEvent({
       node: 'backend_waking',
       status: 'start',
-      message: 'The demo service is waking. Your query is preserved.',
+      message: 'The service is waking. Your query is preserved.',
     });
     await new Promise((resolve) => window.setTimeout(resolve, 1500 * (attempt + 1)));
   }

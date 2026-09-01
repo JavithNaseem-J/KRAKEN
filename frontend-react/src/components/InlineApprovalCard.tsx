@@ -265,6 +265,9 @@ export function InlineApprovalCard({
             <span className="mt-2 inline-block font-mono text-[10px] text-amber-300">
               Risk classification: {details.risk_level}
             </span>
+            <span className="mt-2 ml-3 inline-block font-mono text-[10px] text-emerald-300">
+              Synthetic target · {details.dataset_generation}
+            </span>
           </div>
 
           {/* Collapsible Payload Toggle */}

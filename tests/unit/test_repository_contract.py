@@ -74,3 +74,28 @@ def test_deployment_uses_one_exact_ci_revision() -> None:
     assert "Render deployment request failed" in workflow
     assert "autoDeploy: false" in blueprint
     assert "- key: GATEWAY_API_KEYS\n        sync: false" in blueprint
+
+
+def test_retired_public_contracts_are_absent_from_active_repository() -> None:
+    roots = (
+        ROOT / "src",
+        ROOT / "scripts",
+        ROOT / "frontend-react/src",
+        ROOT / "frontend-react/public",
+        ROOT / "docs",
+    )
+    files = [
+        path
+        for root in roots
+        for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in {".py", ".ts", ".tsx", ".md", ".txt"}
+    ]
+    files.extend((ROOT / name) for name in ("README.md", ".env.example", "render.yaml"))
+    retired = ("/v1/demo", "demo_session", "demo mode", "demo_*", "simulated")
+    violations: list[str] = []
+    for path in files:
+        text = path.read_text(encoding="utf-8").lower()
+        for term in retired:
+            if term in text:
+                violations.append(f"{path.relative_to(ROOT)}: {term}")
+    assert violations == []

@@ -14,10 +14,6 @@ from src.utils.privacy import strip_reasoning_fields
 
 log = structlog.get_logger(__name__)
 
-_PREFIX = "kraken:approval:"
-_INDEX = "kraken:approval:index"
-_RESOLVED_PREFIX = "kraken:approval:resolved:"
-
 
 class ApprovalQueue:
     """
@@ -26,9 +22,15 @@ class ApprovalQueue:
     """
 
     def __init__(self, redis_url: str, timeout_seconds: int = 900) -> None:
+        from src.utils.config import get_settings
         from src.utils.http_client import create_async_redis_client
 
         self._redis: aioredis.Redis = create_async_redis_client(redis_url)
+        self._generation = get_settings().synthetic_dataset_generation
+        self._prefix = f"kraken:{self._generation}:approval:"
+        self._index = f"kraken:{self._generation}:approval:index"
+        self._resolved_prefix = f"kraken:{self._generation}:approval:resolved:"
+        self._csrf_prefix = f"kraken:{self._generation}:csrf:"
         self._timeout = timeout_seconds
         self._in_memory_map: dict[str, dict[str, Any]] = {}
         self._in_memory_csrf: dict[str, str] = {}
@@ -48,7 +50,7 @@ class ApprovalQueue:
     async def stats(self) -> int:
         """Return the count of pending approvals in the index."""
         try:
-            return await self._redis.scard(_INDEX)
+            return await self._redis.scard(self._index)
         except Exception:
             return len(self._in_memory_map)
 
@@ -77,10 +79,11 @@ class ApprovalQueue:
             "initiator_role": initiator_role,
             "expires_at": expires_at,
             "status": "pending",
+            "dataset_generation": self._generation,
         }
 
-        key = f"{_PREFIX}{approval_id}"
-        resolved_key = f"{_RESOLVED_PREFIX}{approval_id}"
+        key = f"{self._prefix}{approval_id}"
+        resolved_key = f"{self._resolved_prefix}{approval_id}"
 
         try:
             if await self._redis.exists(resolved_key):
@@ -93,8 +96,8 @@ class ApprovalQueue:
             )
             if created:
                 pipe = self._redis.pipeline()
-                pipe.sadd(_INDEX, approval_id)
-                pipe.expire(_INDEX, self._timeout + 3600)
+                pipe.sadd(self._index, approval_id)
+                pipe.expire(self._index, self._timeout + 3600)
                 await pipe.execute()
         except Exception as exc:
             log.warning("queue.redis_enqueue_failed_using_in_memory", error=str(exc))
@@ -110,9 +113,9 @@ class ApprovalQueue:
         """Delete pending approvals written by schemas that persisted model reasoning."""
         removed = 0
         try:
-            async for key in self._redis.scan_iter(match=f"{_PREFIX}*"):
+            async for key in self._redis.scan_iter(match=f"{self._prefix}*"):
                 key_text = key.decode() if isinstance(key, bytes) else str(key)
-                if key_text == _INDEX or key_text.startswith(_RESOLVED_PREFIX):
+                if key_text == self._index or key_text.startswith(self._resolved_prefix):
                     continue
                 raw = await self._redis.get(key)
                 if not raw:
@@ -124,7 +127,7 @@ class ApprovalQueue:
                 pipe = self._redis.pipeline()
                 pipe.delete(key)
                 if approval_id:
-                    pipe.srem(_INDEX, approval_id)
+                    pipe.srem(self._index, approval_id)
                 await pipe.execute()
                 removed += 1
         except Exception as exc:
@@ -146,9 +149,11 @@ class ApprovalQueue:
     async def get(self, approval_id: str) -> dict[str, Any] | None:
         """Return the pending entry, or None if expired/not found."""
         try:
-            data = await self._redis.get(f"{_PREFIX}{approval_id}")
+            data = await self._redis.get(f"{self._prefix}{approval_id}")
             if data:
-                return strip_reasoning_fields(json.loads(data))
+                entry = strip_reasoning_fields(json.loads(data))
+                if entry.get("dataset_generation") == self._generation:
+                    return entry
         except Exception as exc:
             log.warning("queue.redis_get_failed_using_in_memory", error=str(exc))
         self.sweep_expired_in_memory()
@@ -160,14 +165,14 @@ class ApprovalQueue:
         Returns None if already resolved or expired.
         Uses atomic GETDEL to prevent race conditions.
         """
-        key = f"{_PREFIX}{approval_id}"
+        key = f"{self._prefix}{approval_id}"
 
         try:
             data = await self._redis.getdel(key)
             if data is not None:
                 pipe = self._redis.pipeline()
-                pipe.srem(_INDEX, approval_id)
-                pipe.set(f"{_RESOLVED_PREFIX}{approval_id}", "1", ex=self._timeout)
+                pipe.srem(self._index, approval_id)
+                pipe.set(f"{self._resolved_prefix}{approval_id}", "1", ex=self._timeout)
                 await pipe.execute()
                 log.info("queue.resolved", approval_id=approval_id)
                 return strip_reasoning_fields(json.loads(data))
@@ -186,7 +191,7 @@ class ApprovalQueue:
     async def set_csrf_token(self, approval_id: str, token: str) -> None:
         """Store a CSRF token for an approval request."""
         try:
-            await self._redis.set(f"kraken:csrf:{approval_id}", token, ex=self._timeout)
+            await self._redis.set(f"{self._csrf_prefix}{approval_id}", token, ex=self._timeout)
         except Exception as exc:
             log.warning(
                 "queue.csrf_set_failed_using_in_memory", approval_id=approval_id, error=str(exc)
@@ -196,7 +201,7 @@ class ApprovalQueue:
     async def verify_csrf_token(self, approval_id: str, token: str) -> bool:
         """Verify CSRF token for an approval request."""
         try:
-            expected = await self._redis.getdel(f"kraken:csrf:{approval_id}")
+            expected = await self._redis.getdel(f"{self._csrf_prefix}{approval_id}")
             if expected is not None:
                 return secrets.compare_digest(str(expected), token)
         except Exception as exc:

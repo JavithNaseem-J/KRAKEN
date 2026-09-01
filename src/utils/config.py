@@ -63,18 +63,19 @@ class Settings(BaseSettings):
     qdrant_inference_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     qdrant_inference_dim: int = 384
     knowledge_collection_version: str = "v2"
+    synthetic_dataset_generation: str = "northstar-v1"
 
-    # Public portfolio demo
-    demo_session_secret: str = "dev-demo-session-secret-change-before-prod"
-    demo_session_ttl_seconds: int = 3600
-    demo_audit_ttl_seconds: int = 604800
-    demo_query_limit: int = 20
-    demo_query_window_seconds: int = 3600
-    demo_write_limit: int = 5
-    demo_upload_max_bytes: int = 2_097_152
-    demo_upload_max_files: int = 3
-    demo_session_cookie_name: str = "kraken_demo_session"
-    demo_cookie_secure: bool = False
+    # Public synthetic environment
+    public_session_secret: str = "dev-public-session-secret-change-before-prod"
+    public_session_ttl_seconds: int = 3600
+    public_audit_ttl_seconds: int = 604800
+    public_query_limit: int = 20
+    public_query_window_seconds: int = 3600
+    public_write_limit: int = 5
+    public_upload_max_bytes: int = 2_097_152
+    public_upload_max_files: int = 3
+    public_session_cookie_name: str = "kraken_public_session"
+    public_cookie_secure: bool = False
     capability_probe_timeout_seconds: float = 3.0
     provider_circuit_breaker_seconds: float = 30.0
 
@@ -121,6 +122,18 @@ class Settings(BaseSettings):
                 "postgres_url must start with 'postgresql+asyncpg://' for asyncpg compatibility."
             )
         return v
+
+    @field_validator("synthetic_dataset_generation")
+    @classmethod
+    def validate_synthetic_dataset_generation(cls, value: str) -> str:
+        import re
+
+        normalized = value.strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{2,31}", normalized):
+            raise ValueError(
+                "synthetic_dataset_generation must be a 3-32 character lowercase slug."
+            )
+        return normalized
 
     # Orchestrator Concurrency
     orchestrator_max_concurrency: int = 5
@@ -247,6 +260,13 @@ class Settings(BaseSettings):
     def validate_prod_environment_keys(self) -> Settings:
         """Enforce strict secret checks when ENVIRONMENT == 'prod'."""
         if self.environment == "prod":
+            from src.utils.synthetic_data import load_manifest
+
+            manifest_generation = load_manifest().generation
+            if self.synthetic_dataset_generation != manifest_generation:
+                raise ValueError(
+                    "SYNTHETIC_DATASET_GENERATION must match the committed synthetic manifest."
+                )
             default_secrets = {
                 "dev-secret-key",
                 "dev-token",
@@ -279,14 +299,14 @@ class Settings(BaseSettings):
                     raise ValueError(
                         "Each production API key requires non-empty user_id and role metadata."
                     )
-            if self.demo_session_secret == "dev-demo-session-secret-change-before-prod":
+            if self.public_session_secret == "dev-public-session-secret-change-before-prod":
                 raise ValueError(
-                    "Production cannot use the shipped demo_session_secret. "
-                    "Set a unique DEMO_SESSION_SECRET of at least 32 characters."
+                    "Production cannot use the shipped public_session_secret. "
+                    "Set a unique PUBLIC_SESSION_SECRET of at least 32 characters."
                 )
-            if len(self.demo_session_secret) < 32:
+            if len(self.public_session_secret) < 32:
                 raise ValueError(
-                    "demo_session_secret must be at least 32 characters in production."
+                    "public_session_secret must be at least 32 characters in production."
                 )
 
             required_providers = {

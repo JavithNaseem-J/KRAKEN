@@ -4,11 +4,14 @@ import time
 from functools import lru_cache
 from typing import Any
 
+import structlog
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from src.utils.config import get_settings
 from src.utils.exceptions import LLMProviderUnavailableError
+
+log = structlog.get_logger(__name__)
 
 
 class ProviderCircuitBreaker:
@@ -25,6 +28,7 @@ class ProviderCircuitBreaker:
             return result
         except Exception as exc:
             self._open_until = now + get_settings().provider_circuit_breaker_seconds
+            log.warning("llm.provider_call_failed", provider_error=exc.__class__.__name__)
             raise LLMProviderUnavailableError("LLM provider is temporarily unavailable.") from exc
 
 

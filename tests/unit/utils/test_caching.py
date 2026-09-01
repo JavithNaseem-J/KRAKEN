@@ -10,7 +10,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.utils.cache import EXACT_CACHE_GENERATION_KEY, SemanticCache, create_async_qdrant_client
+from src.utils.cache import SemanticCache, create_async_qdrant_client, exact_cache_generation_key
 
 
 class TestSemanticCache:
@@ -31,7 +31,7 @@ class TestSemanticCache:
         cache._redis = mock_redis
         asyncio.run(cache.invalidate())
         assert mock_qdrant.delete_collection.call_count == 1
-        mock_redis.incr.assert_awaited_once_with(EXACT_CACHE_GENERATION_KEY)
+        mock_redis.incr.assert_awaited_once_with(exact_cache_generation_key())
 
     def test_cache_init_creates_cloud_filter_indexes(self) -> None:
         mock_qdrant = AsyncMock()
@@ -43,7 +43,13 @@ class TestSemanticCache:
         indexed_fields = {
             call.kwargs["field_name"] for call in mock_qdrant.create_payload_index.await_args_list
         }
-        assert indexed_fields == {"embedding_model", "knowledge_version", "role", "scope"}
+        assert indexed_fields == {
+            "embedding_model",
+            "knowledge_version",
+            "dataset_generation",
+            "role",
+            "scope",
+        }
 
     def test_expired_cache_entry_is_a_miss(self) -> None:
         mock_qdrant = AsyncMock()
@@ -59,7 +65,9 @@ class TestSemanticCache:
             ]
         )
         cache = SemanticCache(client=mock_qdrant, ttl_seconds=60)
-        mock_settings = MagicMock(semantic_cache_enabled=True)
+        mock_settings = MagicMock(
+            semantic_cache_enabled=True, synthetic_dataset_generation="northstar-v1"
+        )
 
         with patch("src.utils.cache.get_settings", return_value=mock_settings):
             assert asyncio.run(cache.get([0.1] * 384)) is None
@@ -74,14 +82,16 @@ class TestSemanticCache:
             "embedding_model": "model-a",
             "knowledge_version": "v1",
         }
-        mock_settings = MagicMock(semantic_cache_enabled=True)
+        mock_settings = MagicMock(
+            semantic_cache_enabled=True, synthetic_dataset_generation="northstar-v1"
+        )
 
         with patch("src.utils.cache.get_settings", return_value=mock_settings):
             assert asyncio.run(cache.get([0.1] * 384, context)) is None
 
         query_filter = mock_qdrant.query_points.await_args.kwargs["query_filter"]
         conditions = {condition.key: condition.match.value for condition in query_filter.must}
-        assert conditions == context
+        assert conditions == {**context, "dataset_generation": "northstar-v1"}
 
     def test_exact_redis_cache_hits_when_qdrant_misses(self) -> None:
         mock_qdrant = AsyncMock()
@@ -91,7 +101,11 @@ class TestSemanticCache:
             b"0",
             '{"answer": "cached VPN answer", "session_id": "old"}',
         ]
-        mock_settings = MagicMock(semantic_cache_enabled=True, redis_url="")
+        mock_settings = MagicMock(
+            semantic_cache_enabled=True,
+            redis_url="",
+            synthetic_dataset_generation="northstar-v1",
+        )
         cache = SemanticCache(client=mock_qdrant)
         cache._redis = mock_redis
 
@@ -131,7 +145,9 @@ class TestSemanticCache:
             "embedding_model": "model",
             "knowledge_version": "v2",
         }
-        mock_settings = MagicMock(semantic_cache_enabled=True)
+        mock_settings = MagicMock(
+            semantic_cache_enabled=True, synthetic_dataset_generation="northstar-v1"
+        )
 
         with patch("src.utils.cache.get_settings", return_value=mock_settings):
             asyncio.run(cache.put([0.1] * 384, "VPN help", {"answer": "old"}, context))
@@ -145,7 +161,9 @@ class TestSemanticCache:
         mock_qdrant = AsyncMock()
         cache = SemanticCache(client=mock_qdrant)
         cache._redis = None
-        mock_settings = MagicMock(semantic_cache_enabled=True)
+        mock_settings = MagicMock(
+            semantic_cache_enabled=True, synthetic_dataset_generation="northstar-v1"
+        )
 
         with patch("src.utils.cache.get_settings", return_value=mock_settings):
             asyncio.run(
@@ -165,7 +183,9 @@ class TestSemanticCache:
     def test_different_cache_context_uses_distinct_qdrant_point_id(self) -> None:
         mock_qdrant = AsyncMock()
         cache = SemanticCache(client=mock_qdrant)
-        mock_settings = MagicMock(semantic_cache_enabled=True)
+        mock_settings = MagicMock(
+            semantic_cache_enabled=True, synthetic_dataset_generation="northstar-v1"
+        )
 
         with patch("src.utils.cache.get_settings", return_value=mock_settings):
             asyncio.run(

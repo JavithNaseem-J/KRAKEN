@@ -63,7 +63,7 @@ async def test_upload_ingestion_marks_private_untrusted_scope() -> None:
         embedder=Embedder(),  # type: ignore[arg-type]
         filename="notes.md",
         file_bytes=b"VPN troubleshooting evidence",
-        demo_session_id="private-session",
+        public_session_id="private-session",
         expires_at=12345.0,
     )
 
@@ -86,6 +86,7 @@ async def test_private_upload_cannot_be_retrieved_by_another_session() -> None:
             "scope": "session-a",
             "allowed_roles": ["public"],
             "collection_version": "v2",
+            "dataset_generation": "northstar-v1",
             "untrusted_evidence": True,
             "metadata": {},
         },
@@ -139,7 +140,7 @@ def test_gateway_enforces_upload_type_size_and_count(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(gateway, "internal_request", fake_internal_request)
     client = TestClient(gateway.app)
-    session = client.post("/v1/demo/session").json()
+    session = client.post("/v1/session").json()
     headers = {"X-CSRF-Token": session["csrf_token"]}
 
     assert (
@@ -182,4 +183,4 @@ def test_gateway_enforces_upload_type_size_and_count(monkeypatch: pytest.MonkeyP
         ).status_code
         == 429
     )
-    assert captured[0]["data"]["demo_session_id"] == session["session_id"]
+    assert captured[0]["data"]["public_session_id"] == session["session_id"]

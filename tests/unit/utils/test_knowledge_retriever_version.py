@@ -20,7 +20,8 @@ def _hit(point_id: str, version: str, *, source: str = "faq") -> SimpleNamespace
             "scope": "shared",
             "allowed_roles": ["public"],
             "collection_version": version,
-            "metadata": {"ticket_id": "TCK-1001"} if source == "tickets" else {},
+            "dataset_generation": settings.synthetic_dataset_generation,
+            "metadata": {"ticket_id": "TCK-24001"} if source == "tickets" else {},
         },
     )
 
@@ -50,6 +51,7 @@ async def test_retrieval_excludes_stale_collection_version() -> None:
     query_filter = client.query_points.await_args.kwargs["query_filter"]
     conditions = {condition.key: condition.match for condition in query_filter.must}
     assert conditions["collection_version"].value == settings.knowledge_collection_version
+    assert conditions["dataset_generation"].value == settings.synthetic_dataset_generation
 
 
 @pytest.mark.asyncio
@@ -79,7 +81,7 @@ async def test_ticket_scroll_uses_active_collection_version() -> None:
 
     await _retriever(client).retrieve(
         RetrievalRequest(
-            query="status of TCK-1001",
+            query="status of TCK-24001",
             sources=[KnowledgeSource.TICKETS],
             session_id="test-session",
         )
@@ -88,3 +90,4 @@ async def test_ticket_scroll_uses_active_collection_version() -> None:
     scroll_filter = client.scroll.await_args.kwargs["scroll_filter"]
     conditions = {condition.key: condition.match for condition in scroll_filter.must}
     assert conditions["collection_version"].value == settings.knowledge_collection_version
+    assert conditions["dataset_generation"].value == settings.synthetic_dataset_generation

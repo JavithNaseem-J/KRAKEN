@@ -27,12 +27,6 @@ from pydantic import ValidationError
 from src.utils.auth import APIKeyMiddleware, parse_api_keys
 from src.utils.config import get_settings
 from src.utils.cors import cors_middleware_kwargs
-from src.utils.demo_sessions import (
-    DemoSession,
-    DemoSessionError,
-    DemoSessionExpiredError,
-    DemoSessionManager,
-)
 from src.utils.http_client import (
     create_async_http_client,
     get_in_process_app_for_url,
@@ -49,14 +43,20 @@ from src.utils.middleware.prompt_guard import (
 from src.utils.middleware.rate_limit import RateLimiterDatabaseError, SlidingWindowRateLimiter
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.agent import QueryRequest
-from src.utils.models.demo import (
+from src.utils.models.public import (
     CapabilityState,
     CapabilityStatus,
     CsrfProof,
-    DemoSessionResetResponse,
     PersonaTransitionRequest,
     PersonaTransitionResponse,
+    PublicSessionResetResponse,
     ReadinessResponse,
+)
+from src.utils.public_sessions import (
+    PublicSession,
+    PublicSessionError,
+    PublicSessionExpiredError,
+    PublicSessionManager,
 )
 from src.utils.registry import get_privileged_action_terms
 
@@ -77,13 +77,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     log.info("gateway.startup")
 
     app.state.api_keys = API_KEYS_MAP
-    app.state.demo_sessions = DemoSessionManager(settings)
+    app.state.public_sessions = PublicSessionManager(settings)
 
     # 2. Initialize rate limiter
     limiter = SlidingWindowRateLimiter(
         redis_url=settings.redis_url,
-        max_requests=settings.demo_query_limit,
-        window_seconds=settings.demo_query_window_seconds,
+        max_requests=settings.public_query_limit,
+        window_seconds=settings.public_query_window_seconds,
     )
     app.state.limiter = limiter
 
@@ -138,7 +138,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             log.warning("gateway.subapp_shutdown_failed", subsystem=name, error=str(exc))
 
     await app.state.limiter.close()
-    await app.state.demo_sessions.close()
+    await app.state.public_sessions.close()
     await app.state.http.aclose()
     log.info("gateway.shutdown")
 
@@ -197,9 +197,9 @@ async def _limit_request_body_size(request: Request) -> None:
 # Helpers
 def _rate_limit_headers(remaining: int, retry_after: int) -> dict[str, str]:
     return {
-        "X-RateLimit-Limit": str(settings.demo_query_limit),
+        "X-RateLimit-Limit": str(settings.public_query_limit),
         "X-RateLimit-Remaining": str(remaining),
-        "X-RateLimit-Window": f"{settings.demo_query_window_seconds}s",
+        "X-RateLimit-Window": f"{settings.public_query_window_seconds}s",
         **({"Retry-After": str(retry_after)} if retry_after > 0 else {}),
     }
 
@@ -244,7 +244,7 @@ async def _check_rate_limit(request: Request) -> tuple[bool, dict[str, str]]:
         headers = _rate_limit_headers(remaining, retry_after)
         return allowed, headers
     except RateLimiterDatabaseError as exc:
-        manager = _demo_manager(request)
+        manager = _public_session_manager(request)
         allowed, remaining, retry_after = manager.check_query_limit(client_ip)
         log.warning(
             "gateway.rate_limit_fallback", client_ip=client_ip, error=exc.__class__.__name__
@@ -252,37 +252,39 @@ async def _check_rate_limit(request: Request) -> tuple[bool, dict[str, str]]:
         return allowed, _rate_limit_headers(remaining, retry_after)
 
 
-def _demo_manager(request: Request) -> DemoSessionManager:
-    manager = getattr(request.app.state, "demo_sessions", None)
+def _public_session_manager(request: Request) -> PublicSessionManager:
+    manager = getattr(request.app.state, "public_sessions", None)
     if manager is None:
-        manager = DemoSessionManager(settings)
-        request.app.state.demo_sessions = manager
+        manager = PublicSessionManager(settings)
+        request.app.state.public_sessions = manager
     return manager
 
 
-async def _resolve_demo_session(request: Request, *, required: bool = False) -> DemoSession | None:
-    cookie = request.cookies.get(settings.demo_session_cookie_name)
+async def _resolve_public_session(
+    request: Request, *, required: bool = False
+) -> PublicSession | None:
+    cookie = request.cookies.get(settings.public_session_cookie_name)
     if not cookie and not required:
         return None
     try:
-        manager = _demo_manager(request)
+        manager = _public_session_manager(request)
         try:
             return manager.resolve(cookie)
-        except DemoSessionError:
+        except PublicSessionError:
             return await manager.restore(cookie)
-    except DemoSessionExpiredError as exc:
-        raise HTTPException(status_code=401, detail="Demo session expired.") from exc
-    except DemoSessionError as exc:
-        raise HTTPException(status_code=401, detail="Invalid demo session.") from exc
+    except PublicSessionExpiredError as exc:
+        raise HTTPException(status_code=401, detail="Public session expired.") from exc
+    except PublicSessionError as exc:
+        raise HTTPException(status_code=401, detail="Invalid public session.") from exc
 
 
-def _set_demo_cookie(response: Response, cookie_value: str) -> None:
+def _set_public_cookie(response: Response, cookie_value: str) -> None:
     response.set_cookie(
-        key=settings.demo_session_cookie_name,
+        key=settings.public_session_cookie_name,
         value=cookie_value,
-        max_age=settings.demo_session_ttl_seconds,
+        max_age=settings.public_session_ttl_seconds,
         httponly=True,
-        secure=settings.demo_cookie_secure,
+        secure=settings.public_cookie_secure,
         samesite="lax",
         path="/",
     )
@@ -316,7 +318,7 @@ async def _proxy(
     if headers:
         forward_headers.update(headers)
 
-    # Preserve the server-validated demo actor prepared for agent requests.
+    # Preserve the server-validated public actor prepared for agent requests.
     body.setdefault("user_id", user_id)
 
     try:
@@ -380,39 +382,41 @@ async def health() -> dict[str, str]:
     return simple_health_response("gateway")
 
 
-@app.post("/v1/demo/session", status_code=status.HTTP_201_CREATED, tags=["demo"])
-async def create_demo_session(request: Request) -> JSONResponse:
-    """Issue a clean anonymous demo identity without exposing server credentials."""
-    manager = _demo_manager(request)
+@app.post("/v1/session", status_code=status.HTTP_201_CREATED, tags=["session"])
+async def create_public_session(request: Request) -> JSONResponse:
+    """Issue a clean anonymous public identity without exposing server credentials."""
+    manager = _public_session_manager(request)
     session, cookie = manager.create()
     await manager.persist(session)
     response = JSONResponse(
         status_code=status.HTTP_201_CREATED,
         content=manager.response(session).model_dump(mode="json"),
     )
-    _set_demo_cookie(response, cookie)
+    _set_public_cookie(response, cookie)
     return response
 
 
-@app.get("/v1/demo/sessions/{session_id}", tags=["demo"])
-async def get_demo_session(request: Request, session_id: str) -> JSONResponse:
-    session = await _resolve_demo_session(request, required=True)
+@app.get("/v1/sessions/{session_id}", tags=["session"])
+async def get_public_session(request: Request, session_id: str) -> JSONResponse:
+    session = await _resolve_public_session(request, required=True)
     assert session is not None
     if not secrets.compare_digest(session.session_id, session_id):
-        raise HTTPException(status_code=404, detail="Demo session not found.")
-    return JSONResponse(content=_demo_manager(request).response(session).model_dump(mode="json"))
+        raise HTTPException(status_code=404, detail="Public session not found.")
+    return JSONResponse(
+        content=_public_session_manager(request).response(session).model_dump(mode="json")
+    )
 
 
-@app.post("/v1/demo/persona", tags=["demo"])
-async def transition_demo_persona(
+@app.post("/v1/session/persona", tags=["session"])
+async def transition_public_persona(
     request: Request, body: PersonaTransitionRequest
 ) -> PersonaTransitionResponse:
-    session = await _resolve_demo_session(request, required=True)
+    session = await _resolve_public_session(request, required=True)
     assert session is not None
-    manager = _demo_manager(request)
+    manager = _public_session_manager(request)
     try:
         manager.require_csrf(session, body.csrf_token)
-    except DemoSessionError as exc:
+    except PublicSessionError as exc:
         raise HTTPException(status_code=403, detail="Invalid CSRF proof.") from exc
     manager.transition(session, body.persona)
     await manager.persist(session)
@@ -430,28 +434,69 @@ async def transition_demo_persona(
     )
 
 
-@app.post("/v1/demo/session/reset", tags=["demo"])
-async def reset_demo_session(request: Request, body: CsrfProof) -> JSONResponse:
-    manager = _demo_manager(request)
-    old_session = await _resolve_demo_session(request, required=True)
+@app.post("/v1/session/reset", tags=["session"])
+async def reset_public_session(request: Request, body: CsrfProof) -> JSONResponse:
+    manager = _public_session_manager(request)
+    old_session = await _resolve_public_session(request, required=True)
     assert old_session is not None
     try:
         manager.require_csrf(old_session, body.csrf_token)
-    except DemoSessionError as exc:
+    except PublicSessionError as exc:
         raise HTTPException(status_code=403, detail="Invalid CSRF proof.") from exc
     await manager.revoke_remote(old_session)
     session, cookie = manager.create()
     await manager.persist(session)
-    payload = DemoSessionResetResponse(
+    payload = PublicSessionResetResponse(
         **manager.response(session).model_dump(), replaced_session=True
     )
     response = JSONResponse(content=payload.model_dump(mode="json"))
-    _set_demo_cookie(response, cookie)
+    _set_public_cookie(response, cookie)
     return response
+
+
+def _generation_capability_status(
+    expected: str, component: str, observed: str | None
+) -> CapabilityStatus:
+    if observed == expected:
+        return CapabilityStatus(state=CapabilityState.READY)
+    return CapabilityStatus(
+        state=CapabilityState.DEGRADED,
+        detail=f"{component} generation mismatch",
+    )
+
+
+def _inference_capability_status(
+    storage: CapabilityStatus,
+    *,
+    cloud_enabled: bool,
+    cloud_model: str,
+    local_embedder_ready: bool,
+) -> CapabilityStatus:
+    inference_ready = bool(cloud_model) if cloud_enabled else local_embedder_ready
+    if storage.state == CapabilityState.READY and inference_ready:
+        return CapabilityStatus(state=CapabilityState.READY)
+    return CapabilityStatus(
+        state=CapabilityState.DEGRADED,
+        detail="storage or inference configuration unavailable",
+    )
 
 
 async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
     timeout = settings.capability_probe_timeout_seconds
+
+    def manifest_generation() -> CapabilityStatus:
+        try:
+            from src.utils.synthetic_data import load_manifest
+
+            manifest = load_manifest()
+            return _generation_capability_status(
+                settings.synthetic_dataset_generation, "manifest", manifest.generation
+            )
+        except Exception:
+            return CapabilityStatus(
+                state=CapabilityState.DEGRADED,
+                detail="manifest unavailable",
+            )
 
     async def groq() -> CapabilityStatus:
         from src.utils.llm_probe import probe_chat_completion
@@ -486,7 +531,11 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
                             FieldCondition(
                                 key="collection_version",
                                 match=MatchValue(value=settings.knowledge_collection_version),
-                            )
+                            ),
+                            FieldCondition(
+                                key="dataset_generation",
+                                match=MatchValue(value=settings.synthetic_dataset_generation),
+                            ),
                         ]
                     ),
                     exact=True,
@@ -497,7 +546,7 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
             if active_points.count < 1:
                 return CapabilityStatus(
                     state=CapabilityState.DEGRADED,
-                    detail="active knowledge version unavailable",
+                    detail="active knowledge generation unavailable",
                 )
             return CapabilityStatus(state=CapabilityState.READY)
         except Exception:
@@ -526,33 +575,41 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
             if pool is None:
                 raise RuntimeError("pool unavailable")
 
-            def check() -> None:
-                with pool.connection(timeout=timeout) as connection:
-                    connection.execute("SELECT 1")
+            def check() -> str | None:
+                with pool.connection(timeout=timeout) as connection, connection.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT key, value FROM kraken_runtime_metadata "
+                        "WHERE key IN ('synthetic_dataset_generation', 'synthetic_dataset_state')"
+                    )
+                    metadata = {str(row[0]): str(row[1]) for row in cursor.fetchall()}
+                    if metadata.get("synthetic_dataset_state") != "active":
+                        return None
+                    cursor.execute(
+                        "SELECT COUNT(*) FROM tickets WHERE payload->>'dataset_generation' = %s",
+                        (settings.synthetic_dataset_generation,),
+                    )
+                    count_row = cursor.fetchone()
+                    if not count_row or int(count_row[0]) < 1:
+                        return None
+                    return metadata.get("synthetic_dataset_generation")
 
-            await asyncio.wait_for(asyncio.to_thread(check), timeout=timeout)
-            return CapabilityStatus(state=CapabilityState.READY)
+            observed = await asyncio.wait_for(asyncio.to_thread(check), timeout=timeout)
+            return _generation_capability_status(
+                settings.synthetic_dataset_generation, "postgres", observed
+            )
         except Exception:
             return CapabilityStatus(state=CapabilityState.DEGRADED, detail="provider unavailable")
 
     groq_state, qdrant_state, redis_state, postgres_state = await asyncio.gather(
         groq(), qdrant_storage(), redis(), postgres()
     )
-    inference_state = CapabilityStatus(
-        state=(
-            CapabilityState.READY
-            if qdrant_state.state == CapabilityState.READY
-            and settings.qdrant_cloud_inference_enabled
-            and bool(settings.qdrant_inference_model)
-            else CapabilityState.DEGRADED
-        ),
-        detail=(
-            None
-            if qdrant_state.state == CapabilityState.READY
-            and settings.qdrant_cloud_inference_enabled
-            and bool(settings.qdrant_inference_model)
-            else "storage or inference configuration unavailable"
-        ),
+    from src.api.knowledge import app as knowledge_app
+
+    inference_state = _inference_capability_status(
+        qdrant_state,
+        cloud_enabled=settings.qdrant_cloud_inference_enabled,
+        cloud_model=settings.qdrant_inference_model,
+        local_embedder_ready=getattr(knowledge_app.state, "embedder", None) is not None,
     )
     from src.api.orchestrator import app as orchestrator_app
 
@@ -612,6 +669,7 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
 
     semantic_cache_state = await semantic_cache()
     capabilities = {
+        "synthetic_dataset": manifest_generation(),
         "groq": groq_state,
         "qdrant_storage": qdrant_state,
         "qdrant_inference": inference_state,
@@ -625,7 +683,11 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
         if all(item.state == CapabilityState.READY for item in capabilities.values())
         else CapabilityState.DEGRADED
     )
-    return ReadinessResponse(status=overall, capabilities=capabilities)
+    return ReadinessResponse(
+        status=overall,
+        dataset_generation=settings.synthetic_dataset_generation,
+        capabilities=capabilities,
+    )
 
 
 @app.get("/ready", tags=["ops"])
@@ -695,19 +757,21 @@ async def _prepare_agent_request(
             ),
         )
 
-    demo_session = await _resolve_demo_session(request)
-    if demo_session is not None:
+    public_session = await _resolve_public_session(request)
+    if public_session is not None:
         try:
-            _demo_manager(request).require_csrf(demo_session, request.headers.get("X-CSRF-Token"))
-        except DemoSessionError:
+            _public_session_manager(request).require_csrf(
+                public_session, request.headers.get("X-CSRF-Token")
+            )
+        except PublicSessionError:
             return (
                 None,
                 rl_headers,
                 JSONResponse(status_code=403, content={"error": "Invalid CSRF proof."}),
             )
-        user_id = demo_session.actor_id
-        operator_role = demo_session.persona.value
-        body["session_id"] = demo_session.session_id
+        user_id = public_session.actor_id
+        operator_role = public_session.persona.value
+        body["session_id"] = public_session.session_id
     else:
         user_id = getattr(request.state, "user_id", "anonymous")
         operator_role = getattr(request.state, "operator_role", "end_user")
@@ -717,10 +781,11 @@ async def _prepare_agent_request(
     if isinstance(metadata, dict):
         metadata["execution_id"] = uuid.uuid4().hex
         metadata["operator_role"] = operator_role
-        if demo_session is not None:
-            metadata["demo_session_id"] = demo_session.session_id
-            metadata["actor_id"] = demo_session.actor_id
-            metadata["has_private_uploads"] = bool(demo_session.upload_ids)
+        if public_session is not None:
+            metadata["public_session_id"] = public_session.session_id
+            metadata["actor_id"] = public_session.actor_id
+            metadata["has_private_uploads"] = bool(public_session.upload_ids)
+            metadata["dataset_generation"] = public_session.dataset_generation
 
     message = body.get("message", "")
     if isinstance(message, str) and message:
@@ -872,10 +937,10 @@ async def run_stream(request: Request) -> Any:
     )
 
 
-@app.get("/v1/demo/status", tags=["demo"])
-async def demo_run_status(request: Request) -> JSONResponse:
+@app.get("/v1/session/status", tags=["session"])
+async def public_run_status(request: Request) -> JSONResponse:
     """Return session-owned execution state without re-running the agent."""
-    session = await _resolve_demo_session(request, required=True)
+    session = await _resolve_public_session(request, required=True)
     assert session is not None
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
     try:
@@ -913,7 +978,7 @@ async def approval_details_proxy(request: Request, approval_id: str) -> JSONResp
     try:
         resp = await internal_request("GET", url, headers={"X-Request-Id": request_id})
         content = resp.json()
-        session = await _resolve_demo_session(request, required=True)
+        session = await _resolve_public_session(request, required=True)
         assert session is not None
         if content.get("session_id") != session.session_id:
             return JSONResponse(status_code=404, content={"detail": "Approval request not found."})
@@ -945,12 +1010,14 @@ async def approval_details_proxy(request: Request, approval_id: str) -> JSONResp
 async def approval_decision_proxy(request: Request, approval_id: str) -> Response:
     """Proxy the approve/reject form submission to the in-process approval app."""
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
-    session = await _resolve_demo_session(request, required=True)
+    session = await _resolve_public_session(request, required=True)
     assert session is not None
     form = await request.form()
     try:
-        _demo_manager(request).require_csrf(session, str(form.get("demo_csrf_token") or ""))
-    except DemoSessionError as exc:
+        _public_session_manager(request).require_csrf(
+            session, str(form.get("session_csrf_token") or "")
+        )
+    except PublicSessionError as exc:
         raise HTTPException(status_code=403, detail="Invalid CSRF proof.") from exc
 
     body = urlencode(
@@ -1009,13 +1076,13 @@ async def upload_knowledge(
     file: Annotated[UploadFile, File(...)],
     allowed_roles: Annotated[str, Form()] = "public",
 ) -> JSONResponse:
-    """Validate and ingest a private, expiring demo document."""
+    """Validate and ingest a private, expiring synthetic-environment document."""
     request_id = request.headers.get("X-Request-Id", str(uuid.uuid4()))
-    session = await _resolve_demo_session(request, required=True)
+    session = await _resolve_public_session(request, required=True)
     assert session is not None
     try:
-        _demo_manager(request).require_csrf(session, request.headers.get("X-CSRF-Token"))
-    except DemoSessionError as exc:
+        _public_session_manager(request).require_csrf(session, request.headers.get("X-CSRF-Token"))
+    except PublicSessionError as exc:
         raise HTTPException(status_code=403, detail="Invalid CSRF proof.") from exc
 
     filename = file.filename or "upload"
@@ -1025,18 +1092,18 @@ async def upload_knowledge(
             status_code=415,
             content={"error": "Only PDF, TXT, and Markdown files are accepted."},
         )
-    if len(session.upload_ids) >= settings.demo_upload_max_files:
+    if len(session.upload_ids) >= settings.public_upload_max_files:
         return JSONResponse(
             status_code=429,
-            content={"error": "This demo session already has three active uploads."},
+            content={"error": "This public session already has three active uploads."},
         )
     headers = service_headers(trace_id=request_id)
     try:
-        content_bytes = await file.read(settings.demo_upload_max_bytes + 1)
-        if len(content_bytes) > settings.demo_upload_max_bytes:
+        content_bytes = await file.read(settings.public_upload_max_bytes + 1)
+        if len(content_bytes) > settings.public_upload_max_bytes:
             return JSONResponse(
                 status_code=413,
-                content={"error": "Upload exceeds the 2 MB Demo Mode limit."},
+                content={"error": "Upload exceeds the 2 MB public-session limit."},
             )
         if suffix == ".pdf" and not content_bytes.startswith(b"%PDF-"):
             return JSONResponse(status_code=415, content={"error": "Invalid PDF file."})
@@ -1054,7 +1121,7 @@ async def upload_knowledge(
         files = {"file": (file.filename, content_bytes, file.content_type)}
         data = {
             "allowed_roles": allowed_roles,
-            "demo_session_id": session.session_id,
+            "public_session_id": session.session_id,
             "expires_at": str(session.expires_at),
         }
         resp = await internal_request(
@@ -1067,7 +1134,7 @@ async def upload_knowledge(
         )
         result = resp.json()
         session.upload_ids.add(uuid.uuid4().hex)
-        await _demo_manager(request).persist(session)
+        await _public_session_manager(request).persist(session)
         return JSONResponse(
             content=result,
             status_code=resp.status_code,
@@ -1158,6 +1225,16 @@ async def audit_history_proxy(request: Request, trace_id: str) -> JSONResponse:
             content={"error": "Audit service unavailable."},
             headers={"X-Request-Id": request_id},
         )
+
+
+@app.api_route(
+    "/{unknown_path:path}",
+    methods=["POST", "PUT", "PATCH", "DELETE"],
+    include_in_schema=False,
+)
+async def unknown_mutation_route(unknown_path: str) -> None:
+    del unknown_path
+    raise HTTPException(status_code=404, detail="Not found.")
 
 
 @app.get("/{browser_path:path}", include_in_schema=False)

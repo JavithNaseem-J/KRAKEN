@@ -20,7 +20,7 @@ def test_spa_root_and_deep_links_share_api_origin(
     client = TestClient(gateway.app)
 
     assert client.get("/").text == "<main>KRAKEN</main>"
-    assert client.get("/demo/session/history").text == "<main>KRAKEN</main>"
+    assert client.get("/sessions/history").text == "<main>KRAKEN</main>"
     assert client.get("/health").json()["service"] == "gateway"
     assert client.get("/v1/not-a-route").status_code == 401
 
@@ -30,7 +30,7 @@ def test_production_rejects_shipped_or_missing_secrets() -> None:
         Settings(
             environment="prod",
             hitl_service_token="test-hitl-token-0123456789abcdef0123456789",
-            demo_cookie_secure=True,
+            public_cookie_secure=True,
         )
 
 
