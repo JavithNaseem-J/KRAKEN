@@ -65,7 +65,7 @@ services:
 
       # ── Security, CORS & HITL Approvals ─────────────────────────────────────
       - key: CORS_ALLOWED_ORIGINS
-        value: "*"
+        value: "https://kraken-bdtw.onrender.com"
       - key: HITL_SERVICE_TOKEN
         generateValue: true
       - key: PUBLIC_SESSION_SECRET
