@@ -34,6 +34,15 @@ class LiveResetOperations:
         self.repo_root = repo_root.resolve()
         self._corpus: Any | None = None
 
+    def _postgres_pool(self) -> Any:
+        from psycopg_pool import ConnectionPool
+
+        return ConnectionPool(
+            conninfo=self.settings.postgres_sync_url,
+            timeout=10,
+            kwargs={"prepare_threshold": None},
+        )
+
     def _require_providers(self) -> None:
         missing = [
             name
@@ -101,10 +110,8 @@ class LiveResetOperations:
         self._require_providers()
 
         def operation() -> dict[str, Any]:
-            from psycopg_pool import ConnectionPool
-
             with (
-                ConnectionPool(conninfo=self.settings.postgres_sync_url, timeout=10) as pool,
+                self._postgres_pool() as pool,
                 pool.connection() as conn,
                 conn.cursor() as cur,
             ):
@@ -132,12 +139,10 @@ class LiveResetOperations:
 
     async def clear_postgres(self, plan: ResetPlan) -> dict[str, Any]:
         def operation() -> dict[str, Any]:
-            from psycopg_pool import ConnectionPool
-
             deleted: dict[str, int] = {}
             generations = tuple(dict.fromkeys((plan.expected_generation, plan.target_generation)))
             with (
-                ConnectionPool(conninfo=self.settings.postgres_sync_url, timeout=10) as pool,
+                self._postgres_pool() as pool,
                 pool.connection() as conn,
                 conn.cursor() as cur,
             ):
@@ -235,14 +240,12 @@ class LiveResetOperations:
 
     async def seed_postgres(self, plan: ResetPlan) -> dict[str, Any]:
         def operation() -> dict[str, Any]:
-            from psycopg_pool import ConnectionPool
-
             from src.utils.db.tickets import seed_tickets
 
             ticket_path = self.repo_root / "data/knowledge/tickets/synthetic_tickets.json"
             tickets = json.loads(ticket_path.read_text(encoding="utf-8"))
             with (
-                ConnectionPool(conninfo=self.settings.postgres_sync_url, timeout=10) as pool,
+                self._postgres_pool() as pool,
                 pool.connection() as conn,
             ):
                 count = seed_tickets(conn, tickets, update_on_conflict=True, activate=False)
@@ -289,10 +292,8 @@ class LiveResetOperations:
 
     async def activate(self, plan: ResetPlan) -> dict[str, Any]:
         def operation() -> dict[str, Any]:
-            from psycopg_pool import ConnectionPool
-
             with (
-                ConnectionPool(conninfo=self.settings.postgres_sync_url, timeout=10) as pool,
+                self._postgres_pool() as pool,
                 pool.connection() as conn,
                 conn.cursor() as cur,
             ):
@@ -318,10 +319,8 @@ class LiveResetOperations:
         counts = await self._active_counts(plan.target_generation)
 
         def metadata() -> dict[str, str]:
-            from psycopg_pool import ConnectionPool
-
             with (
-                ConnectionPool(conninfo=self.settings.postgres_sync_url, timeout=10) as pool,
+                self._postgres_pool() as pool,
                 pool.connection() as conn,
                 conn.cursor() as cur,
             ):
@@ -342,11 +341,9 @@ class LiveResetOperations:
         return {**counts, "state": ACTIVE_STATE, "generation": plan.target_generation}
 
     def _postgres_counts(self, plan: ResetPlan) -> dict[str, int | str | None]:
-        from psycopg_pool import ConnectionPool
-
         counts: dict[str, int | str | None] = {}
         with (
-            ConnectionPool(conninfo=self.settings.postgres_sync_url, timeout=10) as pool,
+            self._postgres_pool() as pool,
             pool.connection() as conn,
             conn.cursor() as cur,
         ):
@@ -401,10 +398,8 @@ class LiveResetOperations:
 
     async def _active_counts(self, generation: str) -> dict[str, int]:
         def postgres_count() -> int:
-            from psycopg_pool import ConnectionPool
-
             with (
-                ConnectionPool(conninfo=self.settings.postgres_sync_url, timeout=10) as pool,
+                self._postgres_pool() as pool,
                 pool.connection() as conn,
                 conn.cursor() as cur,
             ):
