@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 # We mock settings or environment variables where needed.
 # Since app imports settings, we can patch settings or use them as configured.
 from src.api.gateway import MAX_BODY_SIZE, _inference_capability_status, app
+from src.utils.build_info import load_build_info
 from src.utils.middleware.rate_limit import RateLimiterDatabaseError
 from src.utils.models.public import CapabilityState, CapabilityStatus
 
@@ -38,6 +39,39 @@ def test_health_check(client):
     response = client.get("/health")
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"status": "ok", "service": "gateway"}
+
+
+def test_version_exposes_only_non_secret_build_identity(client, monkeypatch):
+    commit_sha = "a" * 40
+    monkeypatch.setenv("KRAKEN_COMMIT_SHA", commit_sha)
+    monkeypatch.setenv("KRAKEN_BUILD_TIME", "2026-09-07T10:30:00Z")
+    monkeypatch.setenv("LLM_API_KEY", "must-not-appear")
+
+    response = client.get("/version")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.json() == {
+        "service": "kraken",
+        "application_version": "0.1.0",
+        "commit_sha": commit_sha,
+        "build_time": "2026-09-07T10:30:00Z",
+    }
+    assert "must-not-appear" not in response.text
+
+
+def test_version_namespace_is_not_served_by_spa(client):
+    response = client.get("/version/not-a-route")
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_production_build_identity_rejects_placeholder(monkeypatch):
+    monkeypatch.setenv("KRAKEN_COMMIT_SHA", "0" * 40)
+    monkeypatch.setenv("KRAKEN_BUILD_TIME", "1970-01-01T00:00:00Z")
+    monkeypatch.delenv("RENDER_GIT_COMMIT", raising=False)
+
+    with pytest.raises(ValueError, match="Production build identity requires"):
+        load_build_info("prod")
 
 
 def test_local_embedding_inference_is_ready_when_storage_and_embedder_are_ready():

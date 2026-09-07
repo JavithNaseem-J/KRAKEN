@@ -64,5 +64,8 @@ Desktop.ini
 .opencode/
 
 # Keep the public repository limited to the curated tracked verification suite.
-/tests/
+/tests/*
+!/tests/unit/
+/tests/unit/*
+!/tests/unit/test_verify_deployment.py
 /openspec/

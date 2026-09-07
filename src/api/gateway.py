@@ -25,6 +25,7 @@ from fastapi.responses import (
 from pydantic import ValidationError
 
 from src.utils.auth import APIKeyMiddleware, parse_api_keys
+from src.utils.build_info import application_version, load_build_info
 from src.utils.config import get_settings
 from src.utils.cors import cors_middleware_kwargs
 from src.utils.http_client import (
@@ -71,6 +72,7 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend-react" / "dist"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    load_build_info(settings.environment)
     configure_logging(
         log_level=settings.log_level, log_format=settings.log_format, service="gateway"
     )
@@ -146,7 +148,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 app = FastAPI(
     title="KRAKEN Gateway",
     description="API Gateway — KRAKEN",
-    version="0.6.0",
+    version=application_version(),
     docs_url=None,  # Disable built-in docs for security
     lifespan=lifespan,
 )
@@ -380,6 +382,16 @@ async def _proxy(
 async def health() -> dict[str, str]:
     """Gateway liveness check (does not leak internal network details)."""
     return simple_health_response("gateway")
+
+
+@app.get("/version", tags=["ops"])
+async def version_info() -> JSONResponse:
+    """Return only immutable, non-secret build identity."""
+    build_info = load_build_info(settings.environment)
+    return JSONResponse(
+        content=build_info.model_dump(mode="json"),
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.post("/v1/session", status_code=status.HTTP_201_CREATED, tags=["session"])
@@ -1240,7 +1252,14 @@ async def unknown_mutation_route(unknown_path: str) -> None:
 @app.get("/{browser_path:path}", include_in_schema=False)
 async def spa_fallback(browser_path: str) -> Response:
     """Serve compiled assets and React deep links after every API route is registered."""
-    if browser_path.split("/", 1)[0] in {"v1", "approve", "health", "ready", "metrics"}:
+    if browser_path.split("/", 1)[0] in {
+        "v1",
+        "approve",
+        "health",
+        "ready",
+        "version",
+        "metrics",
+    }:
         raise HTTPException(status_code=404, detail="Not found.")
     if not FRONTEND_DIST.is_dir():
         raise HTTPException(status_code=404, detail="Frontend is not built.")

@@ -141,6 +141,52 @@ python scripts/reset_synthetic_environment.py verify --expected-generation north
 python scripts/acceptance.py --base-url http://localhost:8000
 ```
 
+## Evidence Commands
+
+Verify that a deployment serves the exact 40-character commit SHA that passed CI:
+
+```powershell
+python scripts/verify_deployment.py `
+  --base-url https://kraken-bdtw.onrender.com `
+  --expected-sha (git rev-parse HEAD) `
+  --report reports/deployment-verification.json
+```
+
+Run the deterministic evaluator. Offline mode validates fixture integrity, routing contracts,
+source recall, required facts, and prohibited claims; it does not measure live model quality.
+
+```powershell
+python tests/evals/eval_harness.py --mode offline `
+  --json-report reports/ai-evaluation.json `
+  --junit-report reports/ai-evaluation.xml
+```
+
+Live evaluation calls a running KRAKEN deployment. Set `EVAL_API_KEY` to a gateway key in the
+shell; do not place it in source control or command history.
+
+```powershell
+python tests/evals/eval_harness.py --mode live `
+  --base-url https://kraken-bdtw.onrender.com `
+  --json-report reports/ai-evaluation-live.json `
+  --junit-report reports/ai-evaluation-live.xml
+```
+
+The critical Playwright suite loads the real frontend and uses deterministic API fixtures to
+verify UI state transitions on desktop and at 390 pixels. Backend integration remains covered by
+the unit/integration tests and the eight-flow acceptance suite.
+
+```powershell
+cd frontend-react
+$env:PLAYWRIGHT_BASE_URL = "http://127.0.0.1:8000"
+npm run test:e2e:critical
+
+$env:PLAYWRIGHT_BASE_URL = "https://kraken-bdtw.onrender.com"
+npm run test:e2e:prod
+```
+
+Deferred follow-up work is intentionally separate: Alembic-managed migrations, automatic Render
+rollback, measured load/soak thresholds, accessibility automation, and additional browser engines.
+
 ---
 
 ## 🌐 Deployment & Endpoints
@@ -148,6 +194,7 @@ python scripts/acceptance.py --base-url http://localhost:8000
 - **Live Production URL**: [https://kraken-bdtw.onrender.com](https://kraken-bdtw.onrender.com)
 - **Interactive UI**: `/` (React SPA served directly from root)
 - **API Health & Readiness**: `GET /health`, `GET /ready`
+- **Build Identity**: `GET /version` (full commit SHA, application version, and UTC build time)
 - **Prometheus Metrics**: `GET /metrics`
 - **Session API**: `POST /v1/session`, `POST /v1/session/persona`, `GET /v1/session/status`
 - **Agent Run & Stream**: `POST /v1/run`, `POST /v1/run/stream` (SSE)

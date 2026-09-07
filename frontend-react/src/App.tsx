@@ -154,7 +154,9 @@ export default function App() {
   const [storageGeneration, setStorageGeneration] = useState<string | null>(loadStorageGeneration);
   const [busy, setBusy] = useState(false);
   const [pendingSessionId, setPendingSessionId] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => typeof window === 'undefined' || window.innerWidth >= 768,
+  );
 
   const activeSession = sessions.find((s) => s.session_id === activeSessionId) ?? null;
 

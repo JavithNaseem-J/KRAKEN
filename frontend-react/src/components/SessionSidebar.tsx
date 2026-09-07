@@ -124,7 +124,7 @@ export function SessionSidebar({
   };
 
   return (
-    <aside className="relative flex h-full w-[21.5rem] flex-col justify-between border-r border-white/10 bg-black/85 backdrop-blur-xl z-20 transition-all duration-300">
+    <aside className="relative flex h-full w-screen max-w-[21.5rem] shrink-0 flex-col justify-between border-r border-white/10 bg-black/85 backdrop-blur-xl z-20 transition-all duration-300">
       {/* Top Header & New Chat Button */}
       <div className="flex flex-col gap-3 p-3 border-b border-white/10">
         <div className="flex items-center justify-between px-1">

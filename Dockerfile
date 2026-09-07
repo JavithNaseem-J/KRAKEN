@@ -27,10 +27,15 @@ RUN uv sync --no-dev --frozen
 # ── STAGE 2: Runner ────────────────────────────────────────────────
 FROM python:3.12-slim AS runner
 
+ARG KRAKEN_COMMIT_SHA=""
+ARG KRAKEN_BUILD_TIME=""
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH="/app" \
-    PORT=8000
+    PORT=8000 \
+    KRAKEN_COMMIT_SHA=${KRAKEN_COMMIT_SHA} \
+    KRAKEN_BUILD_TIME_FILE=/app/build-time.txt
 
 RUN groupadd -r kraken && useradd -r -g kraken -s /sbin/nologin kraken
 
@@ -44,7 +49,10 @@ COPY --chown=kraken:kraken data/ /app/data/
 COPY --chown=kraken:kraken main.py /app/main.py
 COPY --from=frontend-builder --chown=kraken:kraken /frontend/dist/ /app/frontend-react/dist/
 
-RUN mkdir -p /app/data/workspace && chown -R kraken:kraken /app
+RUN BUILD_TIME="${KRAKEN_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \
+    && printf '%s\n' "$BUILD_TIME" > /app/build-time.txt \
+    && mkdir -p /app/data/workspace \
+    && chown -R kraken:kraken /app
 
 USER kraken
 

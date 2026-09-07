@@ -3,7 +3,21 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+class BuildInfo(BaseModel):
+    service: str = Field(min_length=1)
+    application_version: str = Field(min_length=1)
+    commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    build_time: datetime
+
+    @field_validator("build_time")
+    @classmethod
+    def require_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("build_time must include a timezone")
+        return value
 
 
 class OperationalPersona(StrEnum):

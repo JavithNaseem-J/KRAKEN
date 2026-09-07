@@ -6,6 +6,11 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Full commit SHA to deploy (defaults to the selected branch revision)"
+        required: false
+        type: string
 
 concurrency:
   group: kraken-deployment
@@ -26,7 +31,7 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.commit_sha || github.sha }}
 
       - name: Resolve Checked-Out Revision
         id: revision
@@ -38,6 +43,25 @@ jobs:
             exit 1
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify Manual Revision Passed CI
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_SHA: ${{ steps.revision.outputs.sha }}
+        shell: bash
+        run: |
+          SUCCESSFUL_RUNS=$(gh run list \
+            --workflow ci.yml \
+            --commit "$DEPLOY_SHA" \
+            --status completed \
+            --json conclusion \
+            --jq '[.[] | select(.conclusion == "success")] | length')
+          if [ "$SUCCESSFUL_RUNS" -lt 1 ]; then
+            echo "Commit ${DEPLOY_SHA} has no successful completed CI run." >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -65,6 +89,9 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/kraken:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/kraken:sha-${{ steps.revision.outputs.sha }}
+          build-args: |
+            KRAKEN_COMMIT_SHA=${{ steps.revision.outputs.sha }}
+            KRAKEN_BUILD_TIME=${{ steps.revision.outputs.build_time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -77,6 +104,11 @@ jobs:
     needs: [dockerhub-push]
     environment: production
     steps:
+      - name: Checkout Verified Revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.dockerhub-push.outputs.deploy_sha }}
+
       - name: Trigger Backend Render Deploy Hook
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
@@ -98,3 +130,23 @@ jobs:
             echo "Render deployment request failed (HTTP $HTTP_STATUS)." >&2
             exit 1
           fi
+
+      - name: Verify Exact Render Revision
+        env:
+          DEPLOY_SHA: ${{ needs.dockerhub-push.outputs.deploy_sha }}
+          PRODUCTION_BASE_URL: https://kraken-bdtw.onrender.com
+        run: |
+          python scripts/verify_deployment.py \
+            --base-url "$PRODUCTION_BASE_URL" \
+            --expected-sha "$DEPLOY_SHA" \
+            --timeout-seconds 1200 \
+            --report reports/deployment-verification.json
+
+      - name: Upload Deployment Verification Evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-verification-${{ needs.dockerhub-push.outputs.deploy_sha }}
+          path: reports/deployment-verification.json
+          if-no-files-found: warn
+          retention-days: 30

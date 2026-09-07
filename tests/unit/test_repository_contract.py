@@ -55,6 +55,8 @@ def test_readme_uses_only_tracked_local_workflows_and_links() -> None:
         "main.py",
         "scripts/acceptance.py",
         "tests/evals/eval_harness.py",
+        "tests/evals/test_rag_evals.py",
+        "data/synthetic/evaluation_suite.json",
         "frontend-react/package.json",
         "Dockerfile",
     ):
@@ -65,15 +67,59 @@ def test_deployment_uses_one_exact_ci_revision() -> None:
     workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
     blueprint = (ROOT / "render.yaml").read_text(encoding="utf-8")
 
-    assert "github.event.workflow_run.head_sha || github.sha" in workflow
+    assert "github.event.workflow_run.head_sha || inputs.commit_sha || github.sha" in workflow
     assert 'SHA="$(git rev-parse HEAD)"' in workflow
     assert "kraken:sha-${{ steps.revision.outputs.sha }}" in workflow
     assert "DEPLOY_SHA: ${{ needs.dockerhub-push.outputs.deploy_sha }}" in workflow
     assert "ref=${DEPLOY_SHA}" in workflow
     assert "RENDER_DEPLOY_HOOK_URL is not configured" in workflow
     assert "Render deployment request failed" in workflow
+    assert "Verify Manual Revision Passed CI" in workflow
+    assert "--workflow ci.yml" in workflow
+    assert '--commit "$DEPLOY_SHA"' in workflow
+    assert "python scripts/verify_deployment.py" in workflow
+    assert '--expected-sha "$DEPLOY_SHA"' in workflow
+    assert "Upload Deployment Verification Evidence" in workflow
     assert "autoDeploy: false" in blueprint
     assert "- key: GATEWAY_API_KEYS\n        sync: false" in blueprint
+
+
+def test_build_identity_reaches_container_and_public_route() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    gateway = (ROOT / "src/api/gateway.py").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+
+    assert 'ARG KRAKEN_COMMIT_SHA=""' in dockerfile
+    assert 'ARG KRAKEN_BUILD_TIME=""' in dockerfile
+    assert "KRAKEN_BUILD_TIME_FILE=/app/build-time.txt" in dockerfile
+    assert '@app.get("/version"' in gateway
+    assert 'headers={"Cache-Control": "no-store"}' in gateway
+    assert "KRAKEN_COMMIT_SHA=${{ steps.revision.outputs.sha }}" in workflow
+    assert "KRAKEN_BUILD_TIME=${{ steps.revision.outputs.build_time }}" in workflow
+
+
+def test_deterministic_evaluation_is_a_ci_gate_with_retained_reports() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+    assert "Run Deterministic AI Evaluation" in workflow
+    assert "python tests/evals/eval_harness.py" in workflow
+    assert "--mode offline" in workflow
+    assert "Upload AI Evaluation Evidence" in workflow
+    assert "reports/ai-evaluation.json" in workflow
+    assert "reports/ai-evaluation.xml" in workflow
+
+
+def test_critical_browser_suite_runs_against_the_ci_container() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    package = (ROOT / "frontend-react/package.json").read_text(encoding="utf-8")
+    playwright = (ROOT / "frontend-react/playwright.config.ts").read_text(encoding="utf-8")
+
+    assert '"test:e2e:critical"' in package
+    assert "Run Critical Browser UI Contract Tests" in workflow
+    assert "PLAYWRIGHT_BASE_URL: http://127.0.0.1:8000" in workflow
+    assert "npm run test:e2e:critical" in workflow
+    assert "if: failure()" in workflow
+    assert "mobile-chromium" in playwright
 
 
 def test_retired_public_contracts_are_absent_from_active_repository() -> None:
