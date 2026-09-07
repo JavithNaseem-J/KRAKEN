@@ -69,8 +69,9 @@ def test_deployment_uses_one_exact_ci_revision() -> None:
 
     assert "github.event.workflow_run.head_sha || inputs.commit_sha || github.sha" in workflow
     assert 'SHA="$(git rev-parse HEAD)"' in workflow
-    assert "kraken:sha-${{ steps.revision.outputs.sha }}" in workflow
-    assert "DEPLOY_SHA: ${{ needs.dockerhub-push.outputs.deploy_sha }}" in workflow
+    assert "revision-gate:" in workflow
+    assert "needs: [revision-gate]" in workflow
+    assert "DEPLOY_SHA: ${{ needs.revision-gate.outputs.deploy_sha }}" in workflow
     assert "ref=${DEPLOY_SHA}" in workflow
     assert "RENDER_DEPLOY_HOOK_URL is not configured" in workflow
     assert "Render deployment request failed" in workflow
@@ -80,6 +81,15 @@ def test_deployment_uses_one_exact_ci_revision() -> None:
     assert "python scripts/verify_deployment.py" in workflow
     assert '--expected-sha "$DEPLOY_SHA"' in workflow
     assert "Upload Deployment Verification Evidence" in workflow
+    for obsolete_dockerhub_step in (
+        "DOCKERHUB_USERNAME",
+        "DOCKERHUB_TOKEN",
+        "docker/login-action",
+        "docker/build-push-action",
+        "kraken:latest",
+        "kraken:sha-",
+    ):
+        assert obsolete_dockerhub_step not in workflow
     assert "autoDeploy: false" in blueprint
     assert "- key: GATEWAY_API_KEYS\n        sync: false" in blueprint
 
@@ -87,15 +97,15 @@ def test_deployment_uses_one_exact_ci_revision() -> None:
 def test_build_identity_reaches_container_and_public_route() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     gateway = (ROOT / "src/api/gateway.py").read_text(encoding="utf-8")
-    workflow = (ROOT / ".github/workflows/deploy.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert 'ARG KRAKEN_COMMIT_SHA=""' in dockerfile
     assert 'ARG KRAKEN_BUILD_TIME=""' in dockerfile
     assert "KRAKEN_BUILD_TIME_FILE=/app/build-time.txt" in dockerfile
     assert '@app.get("/version"' in gateway
     assert 'headers={"Cache-Control": "no-store"}' in gateway
-    assert "KRAKEN_COMMIT_SHA=${{ steps.revision.outputs.sha }}" in workflow
-    assert "KRAKEN_BUILD_TIME=${{ steps.revision.outputs.build_time }}" in workflow
+    assert '--build-arg KRAKEN_COMMIT_SHA="${GITHUB_SHA}"' in workflow
+    assert '--build-arg KRAKEN_BUILD_TIME="${BUILD_TIME}"' in workflow
 
 
 def test_deterministic_evaluation_is_a_ci_gate_with_retained_reports() -> None:

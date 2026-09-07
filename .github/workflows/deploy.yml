@@ -18,12 +18,11 @@ concurrency:
 
 jobs:
   # ============================================================================
-  # 1. Build and Push to Docker Hub
+  # 1. Resolve the Exact CI-Verified Revision
   # ============================================================================
-  dockerhub-push:
-    name: Build and Push Docker Image to Docker Hub
+  revision-gate:
+    name: Resolve CI-Verified Revision
     runs-on: ubuntu-latest
-    environment: production
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
     outputs:
       deploy_sha: ${{ steps.revision.outputs.sha }}
@@ -43,7 +42,6 @@ jobs:
             exit 1
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Verify Manual Revision Passed CI
         if: ${{ github.event_name == 'workflow_dispatch' }}
@@ -63,56 +61,24 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        if: ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and Push Image
-        if: ${{ env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != '' }}
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/kraken:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/kraken:sha-${{ steps.revision.outputs.sha }}
-          build-args: |
-            KRAKEN_COMMIT_SHA=${{ steps.revision.outputs.sha }}
-            KRAKEN_BUILD_TIME=${{ steps.revision.outputs.build_time }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
   # ============================================================================
   # 2. Trigger Render Service Deployment
   # ============================================================================
   render-deploy:
     name: Trigger Render Service Deployment
     runs-on: ubuntu-latest
-    needs: [dockerhub-push]
+    needs: [revision-gate]
     environment: production
     steps:
       - name: Checkout Verified Revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.dockerhub-push.outputs.deploy_sha }}
+          ref: ${{ needs.revision-gate.outputs.deploy_sha }}
 
       - name: Trigger Backend Render Deploy Hook
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-          DEPLOY_SHA: ${{ needs.dockerhub-push.outputs.deploy_sha }}
+          DEPLOY_SHA: ${{ needs.revision-gate.outputs.deploy_sha }}
         shell: bash
         run: |
           if [[ -z "$RENDER_DEPLOY_HOOK_URL" ]]; then
@@ -133,7 +99,7 @@ jobs:
 
       - name: Verify Exact Render Revision
         env:
-          DEPLOY_SHA: ${{ needs.dockerhub-push.outputs.deploy_sha }}
+          DEPLOY_SHA: ${{ needs.revision-gate.outputs.deploy_sha }}
           PRODUCTION_BASE_URL: https://kraken-bdtw.onrender.com
         run: |
           python scripts/verify_deployment.py \
@@ -146,7 +112,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: deployment-verification-${{ needs.dockerhub-push.outputs.deploy_sha }}
+          name: deployment-verification-${{ needs.revision-gate.outputs.deploy_sha }}
           path: reports/deployment-verification.json
           if-no-files-found: warn
           retention-days: 30
