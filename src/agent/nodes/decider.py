@@ -8,7 +8,11 @@ from pydantic import BaseModel, Field
 
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
-from src.safety.policy_engine import get_policy_engine, should_override_to_auto_respond
+from src.safety.policy_engine import (
+    get_policy_engine,
+    is_ticket_status_query,
+    should_override_to_auto_respond,
+)
 from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
 from src.utils.llm import get_llm, invoke_llm
@@ -17,17 +21,9 @@ from src.utils.registry import REGISTRY, get_action
 log = structlog.get_logger(__name__)
 settings = get_settings()
 
-_STATUS_QUERY_KEYWORDS: tuple[str, ...] = (
-    "status of",
-    "ticket status",
-    "check status",
-    "what is the status",
-)
-
 
 def _ticket_status_fast_path(user_message: str) -> dict[str, Any] | None:
-    msg_lower = user_message.lower()
-    if not any(keyword in msg_lower for keyword in _STATUS_QUERY_KEYWORDS):
+    if not is_ticket_status_query(user_message):
         return None
 
     match = TICKET_ID_REGEX.search(user_message)
@@ -86,6 +82,11 @@ async def decider_node(state: GraphState) -> dict:
     user_message = state.get("user_message", "")
     operator_role = state.get("operator_role", "end_user")
     reasoning = state.get("reasoning", "No reasoning available.")
+
+    status_lookup = _ticket_status_fast_path(user_message)
+    if status_lookup is not None:
+        log.info("decider.ticket_status_fast_path", session_id=session_id)
+        return status_lookup
 
     human_content = f"User request: {user_message}\n\nAnalysis:\n{reasoning}"
 

@@ -21,6 +21,11 @@ _STATUS_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 
+_QUARANTINE_INTENT_PATTERN = re.compile(
+    r"\b(?:quarantine|block|isolate)\s+"
+    r"(?:(?:the|malicious|suspicious|source|remote)\s+){0,3}ip\b"
+)
+
 _WRITE_ACTION_INTENT_PHRASES: dict[str, tuple[str, ...]] = {
     "escalate": ("escalate",),
     "request_info": (
@@ -62,6 +67,11 @@ _WRITE_ACTION_INTENT_PHRASES: dict[str, tuple[str, ...]] = {
 }
 
 
+def is_ticket_status_query(user_message: str) -> bool:
+    normalized_message = re.sub(r"[^a-z0-9]+", " ", user_message.lower()).strip()
+    return any(keyword in normalized_message for keyword in _STATUS_KEYWORDS)
+
+
 def should_override_to_auto_respond(user_message: str, proposed_action: str) -> tuple[bool, bool]:
     """
     Prevent retrieved evidence from manufacturing write-action intent.
@@ -75,7 +85,7 @@ def should_override_to_auto_respond(user_message: str, proposed_action: str) -> 
         return False, False
 
     normalized_message = re.sub(r"[^a-z0-9]+", " ", user_message.lower()).strip()
-    is_status_query = any(kw in normalized_message for kw in _STATUS_KEYWORDS)
+    is_status_query = is_ticket_status_query(normalized_message)
     has_explicit_intent = any(phrase in normalized_message for phrase in intent_phrases)
     if proposed_action == "create_ticket":
         has_explicit_intent = has_explicit_intent or bool(
@@ -83,6 +93,10 @@ def should_override_to_auto_respond(user_message: str, proposed_action: str) -> 
                 r"\b(?:create|open|raise|file|submit)\b(?:\s+\w+){0,4}\s+ticket\b",
                 normalized_message,
             )
+        )
+    elif proposed_action == "quarantine_ip":
+        has_explicit_intent = has_explicit_intent or bool(
+            _QUARANTINE_INTENT_PATTERN.search(normalized_message)
         )
     has_ticket = bool(TICKET_ID_REGEX.search(user_message))
     ticket_mutation_without_id = (

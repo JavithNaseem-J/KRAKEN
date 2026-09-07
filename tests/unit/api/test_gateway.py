@@ -279,7 +279,7 @@ def test_invalid_payload_schema_validation(client):
         json={"message": 12345},  # Invalid type for string message field
         headers={"X-API-Key": "dev-key-analyst-default"},
     )
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
     assert "Invalid request payload" in response.json()["error"]
 
 

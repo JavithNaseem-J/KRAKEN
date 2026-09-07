@@ -12,7 +12,7 @@ import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from src.agent.nodes.memory_writer import _persist_memory_task, memory_writer_node
+from src.agent.nodes.memory_writer import _persist_memory, memory_writer_node
 from src.agent.nodes.retriever import retriever_node
 from src.api.orchestrator import app
 
@@ -65,7 +65,8 @@ class TestRetrieverNode:
 
 # ── Memory Writer Node Tests ──────────────────────────────────────────────────
 class TestMemoryWriterNode:
-    async def test_memory_writer_node_non_blocking(self) -> None:
+    @patch("src.agent.nodes.memory_writer._persist_memory", new_callable=AsyncMock)
+    async def test_memory_writer_node_awaits_persistence(self, mock_persist: AsyncMock) -> None:
         state = {
             "session_id": "s1",
             "user_message": "Hello",
@@ -75,12 +76,13 @@ class TestMemoryWriterNode:
         }
         res = await memory_writer_node(state)
         assert res == {}
+        mock_persist.assert_awaited_once()
 
     @patch("src.utils.http_client.post_with_retry", new_callable=AsyncMock)
     async def test_public_session_persists_only_short_term_memory(
         self, mock_post: AsyncMock
     ) -> None:
-        await _persist_memory_task(
+        await _persist_memory(
             AsyncMock(),
             "public-session",
             "alice",

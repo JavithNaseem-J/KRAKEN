@@ -22,8 +22,6 @@ from collections.abc import Iterator
 from typing import Any
 from unittest.mock import patch
 
-import fakeredis
-import fakeredis.aioredis
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage
@@ -90,24 +88,16 @@ def _fake_get_llm() -> _FakeLLM:
     return _FakeLLM()
 
 
-def _make_redis_factory(server: fakeredis.FakeServer):
-    def factory(url: str, **kwargs: Any) -> fakeredis.aioredis.FakeRedis:
-        return fakeredis.aioredis.FakeRedis(server=server, decode_responses=True)
-
-    return factory
-
-
 # ── Fixture: consolidated app with real lifespans ─────────────────────────────
 @pytest.fixture(scope="module")
-def client() -> Iterator[TestClient]:
+def client(fake_redis_factory) -> Iterator[TestClient]:
     from src.api.gateway import app
 
     SCRIPT.set_safe()
-    server = fakeredis.FakeServer()
     with (
         patch(
             "src.utils.http_client.create_async_redis_client",
-            _make_redis_factory(server),
+            fake_redis_factory,
         ),
         patch("src.agent.nodes.decider.get_llm", _fake_get_llm),
         patch("src.agent.nodes.reasoner.get_llm", _fake_get_llm),

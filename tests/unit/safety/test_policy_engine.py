@@ -60,6 +60,9 @@ def test_write_actions_require_explicit_user_intent() -> None:
         False,
         False,
     )
+    assert should_override_to_auto_respond(
+        "Quarantine malicious IP 198.51.100.44 from the synthetic network.", "quarantine_ip"
+    ) == (False, False)
     assert should_override_to_auto_respond("Please escalate this issue.", "escalate") == (
         True,
         False,

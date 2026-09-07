@@ -99,6 +99,11 @@ def make_fake_redis_factory(server: fakeredis.FakeServer):
     return factory
 
 
+@pytest.fixture(scope="module")
+def fake_redis_factory():
+    return make_fake_redis_factory(fakeredis.FakeServer())
+
+
 @contextmanager
 def offline_gateway_lifespan_patches() -> Iterator[dict[str, int]]:
     """Patch true external services for a full gateway lifespan boot."""

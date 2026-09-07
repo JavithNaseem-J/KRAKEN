@@ -1,4 +1,3 @@
-import asyncio
 import textwrap
 
 import structlog
@@ -11,7 +10,7 @@ log = structlog.get_logger(__name__)
 settings = get_settings()
 
 
-async def _persist_memory_task(
+async def _persist_memory(
     http,
     session_id: str,
     user_id: str,
@@ -23,8 +22,8 @@ async def _persist_memory_task(
     approval_status: str | None,
     store_episodic: bool = True,
 ) -> None:
-    """Async background task that persists session and episodic memory via the memory service."""
-    log.info("memory_writer.background_start", session_id=session_id)
+    """Persist session and episodic memory via the memory service."""
+    log.info("memory_writer.persist_start", session_id=session_id)
     try:
         from src.utils.http_client import post_with_retry
 
@@ -60,18 +59,13 @@ async def _persist_memory_task(
             },
             headers=service_headers(trace_id=session_id),
         )
-        log.info("memory_writer.background_done", session_id=session_id)
+        log.info("memory_writer.persist_done", session_id=session_id)
     except Exception as exc:
-        log.error("memory_writer.background_error", session_id=session_id, error=str(exc))
+        log.error("memory_writer.persist_error", session_id=session_id, error=str(exc))
 
 
 async def memory_writer_node(state: GraphState) -> dict:
-    """
-    Persist session and episodic memory in the background (fire-and-forget).
-
-    Schedules an async task on the current event loop so graph execution
-    returns immediately without blocking.
-    """
+    """Persist session and episodic memory before graph completion."""
 
     session_id = state.get("session_id", "")
     user_id = state.get("user_id", "system")
@@ -84,9 +78,9 @@ async def memory_writer_node(state: GraphState) -> dict:
 
     log.info("memory_writer.start", session_id=session_id)
 
-    async def _write() -> None:
+    try:
         async with create_async_http_client() as http:
-            await _persist_memory_task(
+            await _persist_memory(
                 http,
                 session_id,
                 user_id,
@@ -98,20 +92,7 @@ async def memory_writer_node(state: GraphState) -> dict:
                 approval,
                 store_episodic=not bool(state.get("public_session_id")),
             )
-
-    try:
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(_write())
-        task.add_done_callback(
-            lambda t: (
-                log.error(
-                    "memory_writer.task_exception", session_id=session_id, error=str(t.exception())
-                )
-                if not t.cancelled() and t.exception()
-                else None
-            )
-        )
     except Exception as exc:
-        log.warning("memory_writer.task_scheduling_failed", error=str(exc))
+        log.warning("memory_writer.persistence_failed", session_id=session_id, error=str(exc))
 
     return {}

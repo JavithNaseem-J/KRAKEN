@@ -72,7 +72,7 @@ def test_pending_creation_malformed(client):
         json={"payload": {"missing": "action_name"}},
         headers=_HEADERS,
     )
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def test_pending_creation_success(client):

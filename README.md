@@ -103,9 +103,9 @@ All metrics reflect exact test results and committed configurations in this repo
 | Metric / Parameter | Value in Repository | Source / Verification |
 |---|---|---|
 | **Backend Unit Test Suite** | **300 passed** | `tests/unit/` (`pytest`) |
-| **Production Acceptance Suite** | **8 / 8 passed (100%)** | `scripts/acceptance.py` |
+| **Production Acceptance Suite** | **8-flow deployment gate** | `scripts/acceptance.py` |
 | **Synthetic Dataset (`northstar-v1`)** | **500 tickets, 30 documents, 75 scenarios, 4 SLAs** | `data/synthetic/manifest.json` |
-| **Active Knowledge Vectors** | **626 points** indexed | `scripts/reset_synthetic_environment.py verify` |
+| **Active Knowledge Vectors** | **Generation-validated at runtime** | `scripts/reset_synthetic_environment.py verify` |
 | **Cryptographic Audit Hashing** | **SHA-256** hash-chain | `src/utils/audit/audit_store.py` |
 | **Action Sandboxing** | **`.json` only** within `data/workspace/` | `src/safety/path_validator.py` |
 | **Secret Integrity Standard** | **>= 32 characters** (strict rejection of defaults in prod) | `src/utils/config.py` |
@@ -147,11 +147,11 @@ python scripts/acceptance.py --base-url http://localhost:8000
 
 - **Live Production URL**: [https://kraken-bdtw.onrender.com](https://kraken-bdtw.onrender.com)
 - **Interactive UI**: `/` (React SPA served directly from root)
-- **API Health & Readiness**: `GET /health`, `GET /readiness`
+- **API Health & Readiness**: `GET /health`, `GET /ready`
 - **Prometheus Metrics**: `GET /metrics`
 - **Session API**: `POST /v1/session`, `POST /v1/session/persona`, `GET /v1/session/status`
-- **Agent Run & Stream**: `POST /v1/run`, `POST /v1/stream` (SSE)
-- **HITL Approvals**: `GET /v1/approval/pending`, `POST /v1/approval/decision`
+- **Agent Run & Stream**: `POST /v1/run`, `POST /v1/run/stream` (SSE)
+- **HITL Approvals**: `GET /approve/{approval_id}/details`, `POST /approve/{approval_id}/decision`
 
 ---
 

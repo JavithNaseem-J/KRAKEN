@@ -39,7 +39,7 @@ class TestDeciderNode:
         assert result["selected_action"] == "get_ticket_status"
         assert result["action_payload"] == {"ticket_id": "TCK-24001"}
         assert result["risk_level"] == "SAFE"
-        mock_get_llm.assert_called_once()
+        mock_get_llm.assert_not_called()
 
     @patch("src.agent.nodes.decider.get_llm")
     def test_no_ticket_id_overrides_close_to_auto_respond(self, mock_get_llm: MagicMock) -> None:

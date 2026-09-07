@@ -37,6 +37,21 @@ def require(condition: bool, message: str) -> None:
         raise AcceptanceError(message)
 
 
+def _check_ticket_lookup(result: dict[str, Any], scenario: dict[str, Any]) -> None:
+    serialized = json.dumps(result)
+    require(
+        all(source in serialized for source in scenario["expected_sources"]),
+        "ticket source evidence missing",
+    )
+    require(result.get("action_taken") == "get_ticket_status", "ticket lookup action not selected")
+    answer = str(result.get("answer", ""))
+    require("Ticket Information:" in answer, "ticket details heading missing")
+    require(
+        all(field in answer for field in ("Subject:", "Status:", "Priority:", "Category:")),
+        "ticket details are incomplete",
+    )
+
+
 def run(base_url: str, timeout_seconds: float = 240.0) -> tuple[list[str], list[str]]:
     passed: list[str] = []
     failed: list[str] = []
@@ -82,12 +97,8 @@ def run(base_url: str, timeout_seconds: float = 240.0) -> tuple[list[str], list[
 
         record(
             "ticket_lookup",
-            lambda: require(
-                all(
-                    source in json.dumps(query(scenarios["ticket_lookup"]["query"]))
-                    for source in scenarios["ticket_lookup"]["expected_sources"]
-                ),
-                "ticket details missing",
+            lambda: _check_ticket_lookup(
+                query(scenarios["ticket_lookup"]["query"]), scenarios["ticket_lookup"]
             ),
         )
 

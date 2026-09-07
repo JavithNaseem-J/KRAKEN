@@ -752,7 +752,7 @@ async def _prepare_agent_request(
             None,
             rl_headers,
             JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 content={"error": "Invalid request payload", "details": []},
             ),
         )
@@ -831,7 +831,7 @@ async def _prepare_agent_request(
             None,
             rl_headers,
             JSONResponse(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 content={
                     "error": "Invalid request payload",
                     "details": err.errors(include_url=False),
@@ -915,8 +915,8 @@ async def run_stream(request: Request) -> Any:
                 async for chunk in upstream_resp.aiter_bytes():
                     yield chunk
         else:
-            client: httpx.AsyncClient = request.app.state.http
-            async with client.stream(
+            external_client: httpx.AsyncClient = request.app.state.http
+            async with external_client.stream(
                 "POST",
                 f"{settings.orchestrator_url}/run/stream",
                 json=body,
