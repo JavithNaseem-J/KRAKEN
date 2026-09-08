@@ -16,8 +16,9 @@ The README will contain:
 6. Verified results from the current repository test runs and committed dataset manifest.
 7. Setup, local run, and one basic API example in the README's only fenced code block.
 8. The deployment link.
-9. Repository-backed operational caveats.
-10. Future work already identified by the project or evident from its current test and deployment configuration.
+9. A compact REST API table listing the public gateway's HTTP method, path, and purpose. It will cover operational probes, public sessions, agent execution and SSE streaming, HITL approvals, private knowledge uploads, report export, and audit history.
+10. Repository-backed operational caveats.
+11. Future work already identified by the project or evident from its current test and deployment configuration.
 
 ## Evidence rules
 
@@ -43,6 +44,7 @@ After editing, verify:
 - Exactly one fenced code block is present.
 - Exactly one architecture diagram is present.
 - The demo uses the configured Render URL and no screenshot is referenced.
+- The REST API table matches the routes declared by `src/api/gateway.py`; internal subsystem-only routes are excluded.
 - All required sections exist and problem/features remain combined.
 - Every number can be located in a source file, configuration, committed dataset, or the captured test output.
 - Markdown links and local commands are syntactically valid.
