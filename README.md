@@ -1,24 +1,19 @@
 # KRAKEN — Knowledge Retrieval & Autonomous Knowledge Execution Network
 
-> Production-grade autonomous cybersecurity & IT support agent featuring hybrid vector RAG, LangGraph state machine, Human-in-the-Loop (HITL) safety gates, and append-only cryptographic audit logging.
-
-[![CI/CD Pipeline](https://github.com/JavithNaseem-J/KRAKEN/actions/workflows/ci.yml/badge.svg)](https://github.com/JavithNaseem-J/KRAKEN/actions/workflows/ci.yml)
-[![Deployment](https://github.com/JavithNaseem-J/KRAKEN/actions/workflows/deploy.yml/badge.svg)](https://github.com/JavithNaseem-J/KRAKEN/actions/workflows/deploy.yml)
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+> KRAKEN is an AI agent for cybersecurity and IT support. It answers questions using trusted project knowledge, works with support tickets in a safe sandbox, pauses risky actions for human approval, and records actions with a SHA-256 audit chain.
 
 ---
 
 ## ⚡ Why KRAKEN? (Problem & Features)
 
-Enterprise IT and security operations cannot risk deploying unconstrained LLMs that hallucinate policies, execute unvetted infrastructure changes, or leak sensitive data. KRAKEN solves this with a deterministic, sandboxed, and verified architecture:
+Companies cannot safely use an AI agent if it guesses policies, takes risky actions without approval, or exposes sensitive information. KRAKEN reduces those risks by grounding answers in known data, limiting actions to a sandbox, and requiring human approval for high-risk steps.
 
-- **Grounded Vector RAG**: Dual-scope retrieval over domain documentation (FAQ, SLA, IAM, compliance) and session-private uploads using Qdrant vector search with cosine distance.
-- **Human-in-the-Loop (HITL) Governance**: Automated policy engine intercepts `CRITICAL` risk operations (e.g., ticket escalation, closing, account actions), pausing LangGraph execution until approved via CSRF-protected UI/API with strict four-eyes clearance.
-- **Cryptographic Audit Hash-Chain**: Every executed action writes to an append-only PostgreSQL table linked by SHA-256 hashes (`previous_hash` + `record_hash`) for tamper-evident compliance.
-- **Deterministic Synthetic Environment (`northstar-v1`)**: 500 tickets and 30 documents running in a sandbox where actions produce verifiable receipts without touching real infrastructure.
-- **Private Model Deliberation**: LLM reasoning remains ephemeral inside the agent graph and is strictly excluded from public APIs, SSE streams, audit trails, and browser storage.
-- **Multi-Tier Memory & Caching**: Fast exact/semantic response caching in Redis and Qdrant, paired with atomic short-term session history and long-term episodic memory.
+- **Grounded Vector RAG**: KRAKEN searches trusted documents and user-uploaded session files before answering. It uses Qdrant vector search to find relevant information.
+- **Human Approval for Risky Actions**: If an action is marked `CRITICAL`, such as escalating or closing a ticket, KRAKEN pauses and waits for an approved human reviewer.
+- **Tamper-Detectable Audit Logs**: KRAKEN stores action records in PostgreSQL. Each record is linked with SHA-256 hashes using `previous_hash` and `entry_hash`, so changes can be detected.
+- **Synthetic Test Environment**: The `northstar-v1` dataset includes 500 tickets and 30 documents. Actions run in this sandbox, not against real infrastructure.
+- **Private Model Reasoning**: Internal LLM reasoning stays inside the agent workflow. It is not exposed through public APIs, SSE streams, audit logs, or browser storage.
+- **Memory and Caching**: KRAKEN uses Redis and Qdrant to cache responses and store short-term and long-term memory.
 
 ---
 
@@ -29,8 +24,8 @@ Enterprise IT and security operations cannot risk deploying unconstrained LLMs t
 ```mermaid
 graph TD
     Client[React Frontend / REST Client] -->|HTTP / SSE / CSRF| Gateway[Edge API Gateway :8000]
-    
-    subgraph KRAKEN Core [Consolidated In-Process Subsystems]
+
+    subgraph Core["Consolidated In-Process Subsystems"]
         Gateway -->|Route| Orchestrator[LangGraph Orchestrator]
         Gateway -->|Rate Limit / Auth| Safety[Policy Engine & RBAC]
         Orchestrator --> Knowledge[Knowledge Engine]
@@ -40,11 +35,11 @@ graph TD
         Orchestrator --> Audit[Audit Logger]
     end
 
-    subgraph Infrastructure [Data & Provider Layer]
+    subgraph Infra["Data & Provider Layer"]
         Knowledge -->|Vectors & Embeddings| Qdrant[(Qdrant Cloud Vector DB)]
         Memory -->|Episodic Vectors| Qdrant
-        Memory -->|Session State & Cache| Redis[(Redis 7+)]
-        Action -->|Synthetic Tickets & Metadata| Postgres[(PostgreSQL 15+)]
+        Memory -->|Session State & Cache| Redis[(Redis)]
+        Action -->|Synthetic Tickets & Metadata| Postgres[(PostgreSQL)]
         Audit -->|SHA-256 Audit Chain| Postgres
         Orchestrator -->|ReAct Reasoning & Prompts| LLM[Groq / OpenAI API]
     end
@@ -57,26 +52,26 @@ stateDiagram-v2
     [*] --> Retriever: User Prompt
     Retriever --> Reasoner: Relevant Chunks
     Reasoner --> Decider: Context & State
-    
+
     state Decider <<choice>>
     Decider --> Responder: Safe / Auto-Respond
     Decider --> Executor: Tool Execution Needed
-    
+
     state RiskCheck <<choice>>
     Executor --> RiskCheck: Evaluate Action Risk
-    
+
     RiskCheck --> ActionExecution: SAFE Action
     RiskCheck --> ApprovalQueue: CRITICAL Action
-    
+
     ApprovalQueue --> InterruptedState: LangGraph Checkpoint Pause
     InterruptedState --> HumanReview: Wait for Human Decision
-    
+
     state Decision <<choice>>
     HumanReview --> Decision: Operator Submits
     Decision --> ActionExecution: Approved
     Decision --> Responder: Rejected / Cancelled
-    
-    ActionExecution --> MemoryWriter: Record Action Receipt
+
+    ActionExecution --> Responder: Action Receipt
     Responder --> MemoryWriter: Synthesize Final Grounded Answer
     MemoryWriter --> [*]: Stream SSE / Output
 ```
@@ -89,129 +84,76 @@ stateDiagram-v2
 |---|---|
 | **Backend & API** | Python 3.12, FastAPI, Uvicorn, Pydantic v2, Structlog |
 | **Agent & State Graph** | LangGraph 0.1+, LangChain Core, `AsyncPostgresSaver` |
-| **Vector Search & Embeddings** | Qdrant Client, Qdrant Cloud Inference / fastembed, sentence-transformers |
-| **Databases & State** | PostgreSQL 15+ (asyncpg & psycopg-pool), Redis 7+ (redis-py / fakeredis) |
+| **Vector Search & Embeddings** | Qdrant Client, Qdrant Cloud Inference, sentence-transformers |
+| **Databases & State** | PostgreSQL (asyncpg & psycopg-pool), Redis (redis-py / fakeredis) |
 | **Frontend** | React 18, TypeScript, Vite, Tailwind CSS, Lucide React, Radix UI |
 | **Testing & Tooling** | Pytest, Pytest-Asyncio, Vitest, Playwright, Ruff, Mypy, uv, Docker |
 
 ---
 
-## 📊 Verified Metrics & Capabilities
+## 📊 Key Results
 
-All metrics reflect exact test results and committed configurations in this repository:
+| Result | Verified Value | Source |
+|---|---:|---|
+| **Automated tests** | **327 passed**: 314 backend unit, 7 backend integration, 6 frontend | Latest local `pytest` / `vitest` run; suites in `tests/unit`, `tests/integration`, `frontend-react` |
+| **Offline evaluator** | **50 cases**; 100.0% source recall, 100.0% required-fact coverage, 100.0% response-contract compliance, 0 prohibited-claim violations, 0 request errors | Latest local offline evaluator run; harness in `tests/evals/eval_harness.py` |
+| **Synthetic corpus (`northstar-v1`)** | **500 tickets, 30 documents, 75 capability scenarios** | `data/synthetic/manifest.json` |
 
-| Metric / Parameter | Value in Repository | Source / Verification |
-|---|---|---|
-| **Backend Unit Test Suite** | **300 passed** | `tests/unit/` (`pytest`) |
-| **Production Acceptance Suite** | **8-flow deployment gate** | `scripts/acceptance.py` |
-| **Synthetic Dataset (`northstar-v1`)** | **500 tickets, 30 documents, 75 scenarios, 4 SLAs** | `data/synthetic/manifest.json` |
-| **Active Knowledge Vectors** | **Generation-validated at runtime** | `scripts/reset_synthetic_environment.py verify` |
-| **Cryptographic Audit Hashing** | **SHA-256** hash-chain | `src/utils/audit/audit_store.py` |
-| **Action Sandboxing** | **`.json` only** within `data/workspace/` | `src/safety/path_validator.py` |
-| **Secret Integrity Standard** | **>= 32 characters** (strict rejection of defaults in prod) | `src/utils/config.py` |
+The offline evaluator is fixture-based and validates retrieval/response contracts; it does not measure live model quality.
 
 ---
 
 ## 🚀 Quickstart: Setup, Run & Verify
 
-Run the full stack locally via Python or Docker:
+Prerequisites: Python 3.12, Node.js 22, npm, and uv. Configure `.env` with your LLM, Qdrant, Postgres, and Redis credentials before running the full stack.
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/JavithNaseem-J/KRAKEN.git
 cd KRAKEN
-
-# 2. Setup environment and install dependencies using uv
 cp .env.example .env
+# Set HITL_SERVICE_TOKEN to a unique value with at least 32 characters.
+# Set LLM_API_KEY and any Qdrant/Postgres/Redis settings needed for your environment.
 uv sync --all-extras
-
-# 3. Configure .env with your LLM (Groq), Qdrant, Postgres, and Redis credentials
-# (Ensure SYNTHETIC_DATASET_GENERATION=northstar-v1 and QDRANT_COLLECTION_NAME=kraken_knowledge)
-
-# 4. Start the application (serves API & bundled React UI at http://localhost:8000)
-python main.py
-
-# --- OR RUN VIA DOCKER ---
-# docker build -t kraken:local .
-# docker run --rm -p 8000:8000 --env-file .env -e PORT=8000 kraken:local
-
-# 5. Run tests & verification in a separate terminal
-pytest tests/unit --basetemp=.pytest_tmp -q
-python scripts/reset_synthetic_environment.py verify --expected-generation northstar-v1 --target-generation northstar-v1
-python scripts/acceptance.py --base-url http://localhost:8000
-```
-
-## Evidence Commands
-
-Verify that a deployment serves the exact 40-character commit SHA that passed CI:
-
-```powershell
-python scripts/verify_deployment.py `
-  --base-url https://kraken-bdtw.onrender.com `
-  --expected-sha (git rev-parse HEAD) `
-  --report reports/deployment-verification.json
-```
-
-Run the deterministic evaluator. Offline mode validates fixture integrity, routing contracts,
-source recall, required facts, and prohibited claims; it does not measure live model quality.
-
-```powershell
-python tests/evals/eval_harness.py --mode offline `
-  --json-report reports/ai-evaluation.json `
-  --junit-report reports/ai-evaluation.xml
-```
-
-Live evaluation calls a running KRAKEN deployment. Set `EVAL_API_KEY` to a gateway key in the
-shell; do not place it in source control or command history.
-
-```powershell
-python tests/evals/eval_harness.py --mode live `
-  --base-url https://kraken-bdtw.onrender.com `
-  --json-report reports/ai-evaluation-live.json `
-  --junit-report reports/ai-evaluation-live.xml
-```
-
-The critical Playwright suite loads the real frontend and uses deterministic API fixtures to
-verify UI state transitions on desktop and at 390 pixels. Backend integration remains covered by
-the unit/integration tests and the eight-flow acceptance suite.
-
-```powershell
 cd frontend-react
-$env:PLAYWRIGHT_BASE_URL = "http://127.0.0.1:8000"
-npm run test:e2e:critical
+npm ci
+npm run build
+cd ..
+uv run python main.py
 
-$env:PLAYWRIGHT_BASE_URL = "https://kraken-bdtw.onrender.com"
-npm run test:e2e:prod
+# From another terminal:
+curl http://localhost:8000/health
 ```
 
-Deferred follow-up work is intentionally separate: Alembic-managed migrations, automatic Render
-rollback, measured load/soak thresholds, accessibility automation, and additional browser engines.
+Open `http://localhost:8000` for the React UI, or call the REST API directly.
 
 ---
 
-## 🌐 Deployment & Endpoints
+## 🌐 Deployment & REST API
 
-- **Live Production URL**: [https://kraken-bdtw.onrender.com](https://kraken-bdtw.onrender.com)
-- **Interactive UI**: `/` (React SPA served directly from root)
-- **API Health & Readiness**: `GET /health`, `GET /ready`
-- **Build Identity**: `GET /version` (full commit SHA, application version, and UTC build time)
-- **Prometheus Metrics**: `GET /metrics`
-- **Session API**: `POST /v1/session`, `POST /v1/session/persona`, `GET /v1/session/status`
-- **Agent Run & Stream**: `POST /v1/run`, `POST /v1/run/stream` (SSE)
-- **HITL Approvals**: `GET /approve/{approval_id}/details`, `POST /approve/{approval_id}/decision`
+**Deployment URL**: [https://kraken-bdtw.onrender.com](https://kraken-bdtw.onrender.com)
 
----
-
-## ⚠️ What to Keep in Mind
-
-- **Synthetic Boundaries**: All ticket mutations, IP quarantines, and account operations affect synthetic state only; they never modify real production cloud providers or firewalls.
-- **HITL Four-Eyes Policy**: By design, an analyst cannot approve an action they initiated. High-risk operations require an `incident_commander` or `security_lead` persona.
-- **Session Isolation**: Uploaded files and session modifications are cryptographically signed to the caller's session and purged upon session reset or generation rollover.
+| Area | Public Gateway Routes | Purpose |
+|---|---|---|
+| **UI** | `GET /` | Serve the compiled React app |
+| **Operations** | `GET /health`, `GET /ready`, `GET /version`, `GET /metrics` | Liveness, readiness, build identity, and Prometheus metrics |
+| **Sessions** | `POST /v1/session`, `GET /v1/sessions/{session_id}`, `POST /v1/session/persona`, `POST /v1/session/reset`, `GET /v1/session/status` | Create, inspect, update persona, reset, and check session state |
+| **Agent** | `POST /v1/run`, `POST /v1/run/stream` | Run the agent synchronously or stream responses over SSE |
+| **Approvals** | `GET /approve/{approval_id}/details`, `POST /approve/{approval_id}/decision` | Review and approve/reject HITL-gated actions |
+| **Knowledge** | `POST /v1/knowledge/upload` | Upload session-scoped knowledge files |
+| **Reports** | `POST /v1/report/export` | Export an HTML report for a trace/session |
+| **Audit** | `GET /v1/audit/events/{trace_id}`, `GET /v1/audit/history/{trace_id}` | Retrieve audit events and audit history |
 
 ---
 
 ## 🔮 Future Work
 
-- **Multi-Modal Evidence Attachments**: Support for image and packet-capture (`.pcap`) vector analysis.
-- **Distributed Agent Mesh**: Extension of LangGraph nodes into distributed workers using Redis Streams for high-throughput batch incident triage.
-- **Automated Red-Teaming CI Gate**: Direct integration of continuous adversarial prompt-injection fuzzing inside GitHub Actions.
+These are proposed next steps, not implemented capabilities:
+
+- **Multi-Modal Evidence Attachments**: Support image and packet-capture (`.pcap`) evidence analysis.
+- **Distributed Agent Mesh**: Extend LangGraph nodes into distributed workers for batch incident triage.
+- **Automated Red-Teaming CI Gate**: Add continuous adversarial prompt-injection fuzzing to CI.
+- **Alembic Migrations**: Move schema evolution into versioned database migrations.
+- **Automatic Render Rollback**: Roll back a failed production deployment automatically.
+- **Load & Soak Testing**: Add measured sustained-traffic thresholds.
+- **Accessibility Automation**: Add automated accessibility checks for the React UI.
+- **Additional Browser Coverage**: Expand browser coverage beyond the current frontend test path.
