@@ -83,6 +83,9 @@ class _FakeLLM:
     async def ainvoke(self, messages: Any, **kwargs: Any) -> AIMessage:
         return AIMessage(content=SCRIPT.answer)
 
+    async def astream(self, messages: Any, **kwargs: Any):
+        yield AIMessage(content=SCRIPT.answer)
+
 
 def _fake_get_llm() -> _FakeLLM:
     return _FakeLLM()
@@ -261,6 +264,7 @@ class TestConsolidatedFlow:
 
     def test_run_stream_ends_with_done_event(self, client: TestClient) -> None:
         SCRIPT.set_safe()
+        client.cookies.clear()
         events: list[dict[str, Any]] = []
         with client.stream(
             "POST",
@@ -288,6 +292,7 @@ class TestConsolidatedFlow:
         assert done["response"]["session_id"] == "itest-stream-1"
 
     def test_run_stream_invalid_payload_returns_422(self, client: TestClient) -> None:
+        client.cookies.clear()
         resp = client.post(
             "/v1/run/stream",
             json={"message": "hello", "session_id": "bad session id!"},
