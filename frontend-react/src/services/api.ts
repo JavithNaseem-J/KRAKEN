@@ -162,10 +162,11 @@ export async function submitApprovalDecision(
 
 export interface AgentStreamEvent {
   node: string;
-  status: 'start' | 'end' | 'error' | 'pending_approval' | 'cache_hit';
+  status: 'start' | 'end' | 'error' | 'pending_approval' | 'cache_hit' | 'delta';
   elapsed_ms?: number;
   response?: RunResponse;
   message?: string;
+  content?: string;
 }
 
 export async function streamAgentQuery(

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import sys
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Coroutine
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
@@ -53,6 +54,77 @@ from src.utils.semantic_cache_policy import cache_context, cache_query, is_cache
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
+
+_CASUAL_RESPONSES = {
+    "hi": "Hello! How can I help with IT or security support today?",
+    "hello": "Hello! How can I help with IT or security support today?",
+    "hey": "Hello! How can I help with IT or security support today?",
+    "good morning": "Good morning! How can I help with IT or security support today?",
+    "good afternoon": "Good afternoon! How can I help with IT or security support today?",
+    "good evening": "Good evening! How can I help with IT or security support today?",
+    "thanks": "You're welcome. Let me know if you need anything else.",
+    "thank you": "You're welcome. Let me know if you need anything else.",
+}
+
+
+def _casual_response(body: QueryRequest) -> QueryResponse | None:
+    """Return a deterministic response only for exact casual messages."""
+    normalized = body.message.strip().casefold().rstrip(".!?,")
+    answer = _CASUAL_RESPONSES.get(normalized)
+    if not answer:
+        return None
+    return QueryResponse(
+        session_id=body.session_id,
+        answer=answer,
+        confidence=1.0,
+        execution_time_sec=0.0,
+        execution_ms=0,
+        trace_id=body.trace_id or str(uuid.uuid4()),
+    )
+
+
+def _responder_stream_delta(event: dict[str, Any]) -> str:
+    """Return visible text only from the responder's model stream."""
+    if event.get("event") != "on_chat_model_stream":
+        return ""
+    metadata = event.get("metadata")
+    if not isinstance(metadata, dict) or metadata.get("langgraph_node") != "responder":
+        return ""
+    data = event.get("data")
+    if not isinstance(data, dict):
+        return ""
+    content = getattr(data.get("chunk"), "content", "")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        block.get("text", "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+    )
+
+
+def _schedule_background_task(
+    coroutine: Coroutine[Any, Any, None], *, task_name: str, session_id: str
+) -> None:
+    """Run non-critical persistence without extending request completion time."""
+    task = asyncio.create_task(coroutine, name=task_name)
+
+    def report_failure(completed: asyncio.Task[None]) -> None:
+        try:
+            completed.result()
+        except asyncio.CancelledError:
+            log.info("orchestrator.background_task_cancelled", task=task_name, session_id=session_id)
+        except Exception as exc:  # pragma: no cover - defensive task supervision
+            log.error(
+                "orchestrator.background_task_failed",
+                task=task_name,
+                session_id=session_id,
+                error=exc.__class__.__name__,
+            )
+
+    task.add_done_callback(report_failure)
 
 
 async def _open_async_checkpointer() -> tuple[Any, Any]:
@@ -571,6 +643,11 @@ async def run(body: QueryRequest) -> Any:
     """
     log.info("orchestrator.run", session_id=body.session_id, user_id=body.user_id)
 
+    casual_response = _casual_response(body)
+    if casual_response is not None:
+        log.info("orchestrator.casual_fast_path", session_id=body.session_id)
+        return casual_response
+
     # _get_graph() returns a healthy (graph, config) pair — auto-reconnects if
     # the Postgres async connection was dropped by Supabase's idle timeout.
     try:
@@ -688,7 +765,11 @@ async def run(body: QueryRequest) -> Any:
         }
 
     response = _build_response(body.session_id, result)
-    await _semantic_cache_store(body, response, cache_query_value, cache_scope)
+    _schedule_background_task(
+        _semantic_cache_store(body, response, cache_query_value, cache_scope),
+        task_name=f"semantic-cache-store:{body.session_id}",
+        session_id=body.session_id,
+    )
     return response
 
 
@@ -701,6 +782,26 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
     Each event carries: {node, status, elapsed_ms} JSON.
     A ':ping' comment is sent every 15 s to keep Render free-tier connections alive.
     """
+    casual_response = _casual_response(body)
+    if casual_response is not None:
+        log.info("orchestrator.casual_fast_path", session_id=body.session_id)
+
+        async def casual_event_generator() -> AsyncGenerator[str, None]:
+            payload = json.dumps(
+                {
+                    "node": "done",
+                    "status": "end",
+                    "elapsed_ms": 0,
+                    "response": casual_response.model_dump(mode="json"),
+                }
+            )
+            yield f"data: {payload}\n\n"
+
+        return StreamingResponse(
+            casual_event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
     # _get_graph() returns a healthy (graph, config) pair — auto-reconnects if
     # the Postgres async connection was dropped by Supabase's idle timeout.
     try:
@@ -745,6 +846,7 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
 
         start = time.monotonic()
         last_ping = start
+        first_delta_emitted = False
 
         cached_response, cache_query_value, cache_scope = await _semantic_cache_lookup(body)
         if cached_response is not None:
@@ -787,6 +889,26 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
 
                 kind = event.get("event", "")
                 name = event.get("name", "")
+                delta = _responder_stream_delta(event)
+                if delta:
+                    elapsed_ms = round((now - start) * 1000)
+                    if not first_delta_emitted:
+                        first_delta_emitted = True
+                        log.info(
+                            "orchestrator.stream_first_delta",
+                            session_id=body.session_id,
+                            elapsed_ms=elapsed_ms,
+                        )
+                    payload = json.dumps(
+                        {
+                            "node": "responder",
+                            "status": "delta",
+                            "content": delta,
+                            "elapsed_ms": elapsed_ms,
+                        }
+                    )
+                    yield f"data: {payload}\n\n"
+                    continue
                 if not name or name in ("LangGraph", ""):
                     continue
                 if kind == "on_chain_start":
@@ -834,7 +956,11 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                 yield f"data: {hitl_payload}\n\n"
             elif snapshot.values:
                 response = _build_response(body.session_id, snapshot.values)
-                await _semantic_cache_store(body, response, cache_query_value, cache_scope)
+                _schedule_background_task(
+                    _semantic_cache_store(body, response, cache_query_value, cache_scope),
+                    task_name=f"semantic-cache-store:{body.session_id}",
+                    session_id=body.session_id,
+                )
                 extra_done = {"response": response.model_dump(mode="json")}
 
             done_payload = json.dumps(
@@ -847,6 +973,21 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
             )
             yield f"data: {done_payload}\n\n"
 
+            log.info(
+                "orchestrator.stream_completed",
+                session_id=body.session_id,
+                elapsed_ms=round((time.monotonic() - start) * 1000),
+                responder_streamed=first_delta_emitted,
+            )
+
+        except asyncio.CancelledError:
+            log.info(
+                "orchestrator.stream_cancelled",
+                session_id=body.session_id,
+                elapsed_ms=round((time.monotonic() - start) * 1000),
+                responder_streamed=first_delta_emitted,
+            )
+            raise
         except Exception as exc:
             trace_id = str(uuid.uuid4())
             log.error(

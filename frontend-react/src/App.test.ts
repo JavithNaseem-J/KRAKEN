@@ -1,6 +1,12 @@
 import { expect, test } from 'vitest';
 
-import { sanitizeStoredSessions } from './App';
+import {
+  applyStreamDelta,
+  finalizeStreamedMessage,
+  markStreamInterrupted,
+  sanitizeStoredSessions,
+} from './App';
+import type { QueryResponse } from './types/agent';
 
 test('removes retired public metadata from stored chat sessions', () => {
   const sessions = sanitizeStoredSessions([
@@ -34,4 +40,24 @@ test('removes retired public metadata from stored chat sessions', () => {
     sources: ['faq'],
     action_result: { status: 'safe', nested: {} },
   });
+});
+
+test('finalizes one streamed assistant message without duplication', () => {
+  const messageId = 'streamed-message';
+  const streamed = applyStreamDelta([], messageId, 'Hello', '2026-01-01T00:00:00.000Z');
+  const accumulated = applyStreamDelta(streamed, messageId, ' world', '2026-01-01T00:00:01.000Z');
+  const response = { answer: 'Hello world' } as QueryResponse;
+
+  const finalized = finalizeStreamedMessage(accumulated, messageId, response);
+
+  expect(finalized).toHaveLength(1);
+  expect(finalized[0]).toMatchObject({ id: messageId, role: 'assistant', content: 'Hello world' });
+});
+
+test('marks a partial streamed message as incomplete after a disconnect', () => {
+  const messages = applyStreamDelta([], 'streamed-message', 'Partial answer', '2026-01-01T00:00:00.000Z');
+
+  const interrupted = markStreamInterrupted(messages, 'streamed-message');
+
+  expect(interrupted[0].content).toContain('Streaming interrupted. Please retry.');
 });

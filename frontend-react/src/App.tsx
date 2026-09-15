@@ -138,6 +138,47 @@ function queryResponseToMessage(res: QueryResponse): ChatMessageType {
   };
 }
 
+export function applyStreamDelta(
+  messages: ChatMessageType[],
+  messageId: string,
+  delta: string,
+  timestamp: string,
+): ChatMessageType[] {
+  const existing = messages.find((message) => message.id === messageId);
+  if (!existing) {
+    return [
+      ...messages,
+      { id: messageId, role: 'assistant', content: delta, timestamp },
+    ];
+  }
+  return messages.map((message) =>
+    message.id === messageId ? { ...message, content: message.content + delta } : message,
+  );
+}
+
+export function finalizeStreamedMessage(
+  messages: ChatMessageType[],
+  messageId: string,
+  response: QueryResponse,
+): ChatMessageType[] {
+  const finalMessage = { ...queryResponseToMessage(response), id: messageId };
+  if (!messages.some((message) => message.id === messageId)) {
+    return [...messages, finalMessage];
+  }
+  return messages.map((message) => (message.id === messageId ? finalMessage : message));
+}
+
+export function markStreamInterrupted(
+  messages: ChatMessageType[],
+  messageId: string,
+): ChatMessageType[] {
+  return messages.map((message) =>
+    message.id === messageId
+      ? { ...message, content: `${message.content}\n\n_Streaming interrupted. Please retry._` }
+      : message,
+  );
+}
+
 export default function App() {
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     const loaded = loadSessions();
@@ -271,13 +312,62 @@ export default function App() {
     setBusy(true);
     setStreamingSteps([]);
 
+    let streamedMessageId: string | null = null;
+    let pendingDelta = '';
+    let animationFrame: number | null = null;
+    const flushDelta = () => {
+      if (!pendingDelta) return;
+      const delta = pendingDelta;
+      pendingDelta = '';
+      streamedMessageId ??= crypto.randomUUID();
+      const messageId = streamedMessageId;
+      updateSession(sessionId, (session) => ({
+        ...session,
+        messages: applyStreamDelta(session.messages, messageId, delta, new Date().toISOString()),
+      }));
+    };
+    const queueDelta = (delta: string) => {
+      pendingDelta += delta;
+      if (animationFrame !== null) return;
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null;
+        flushDelta();
+      });
+    };
+    const flushPendingDelta = () => {
+      if (animationFrame !== null) {
+        window.cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+      }
+      flushDelta();
+    };
+    const appendOrFinalizeResponse = (response: QueryResponse) => {
+      flushPendingDelta();
+      if (streamedMessageId) {
+        const messageId = streamedMessageId;
+        updateSession(sessionId, (session) => ({
+          ...session,
+          messages: finalizeStreamedMessage(session.messages, messageId, response),
+        }));
+        return;
+      }
+      appendMessage(sessionId, queryResponseToMessage(response));
+    };
+
     try {
       const finalRes = await streamAgentQuery(
         text,
         sessionId,
-        (event) => setStreamingSteps((prev) => [...prev, event]),
+        (event) => {
+          if (event.status === 'delta' && event.content) {
+            queueDelta(event.content);
+            return;
+          }
+          setStreamingSteps((prev) => [...prev, event]);
+        },
       );
       setStreamingSteps([]);
+      flushPendingDelta();
 
       if (finalRes && !isRunningExecution(finalRes)) {
         if (isPendingApproval(finalRes)) {
@@ -291,7 +381,7 @@ export default function App() {
           });
           setPendingSessionId(sessionId);
         } else {
-          appendMessage(sessionId, queryResponseToMessage(finalRes));
+          appendOrFinalizeResponse(finalRes);
         }
       } else {
         // SSE ended without a terminal payload. Poll state without re-running actions.
@@ -318,7 +408,7 @@ export default function App() {
           });
           if (res.approval_id) setPendingSessionId(sessionId);
         } else if (res && (res.answer || res.action_result || res.action_taken)) {
-          appendMessage(sessionId, queryResponseToMessage(res));
+          appendOrFinalizeResponse(res);
         } else {
           appendMessage(sessionId, {
             id: crypto.randomUUID(),
@@ -329,6 +419,7 @@ export default function App() {
         }
       }
     } catch (e: unknown) {
+      flushPendingDelta();
       setStreamingSteps([]);
       let errorMsg = 'The agent encountered an error processing your request. Please try again.';
       if (e instanceof ApiRequestError) {
@@ -357,6 +448,13 @@ export default function App() {
         } else {
           errorMsg = serverError || 'The agent encountered an error. Please try again.';
         }
+      }
+      if (streamedMessageId) {
+        const messageId = streamedMessageId;
+        updateSession(sessionId, (session) => ({
+          ...session,
+          messages: markStreamInterrupted(session.messages, messageId),
+        }));
       }
       appendMessage(sessionId, {
         id: crypto.randomUUID(),

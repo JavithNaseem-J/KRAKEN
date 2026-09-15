@@ -186,9 +186,6 @@ export default function RuixenMoonChat({
               {sessionTitle || "KRAKEN Operations Console"}
             </span>
           </div>
-          <span className="border border-emerald-700/60 bg-emerald-950/40 px-2 py-1 text-[10px] font-semibold text-emerald-300">
-            SYNTHETIC ENVIRONMENT
-          </span>
         </div>
       </header>
 

@@ -6,6 +6,8 @@ Uses mock databases, HTTP clients, and LLMs — zero external dependencies.
 from __future__ import annotations
 
 import asyncio
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,7 +16,8 @@ from fastapi.testclient import TestClient
 
 from src.agent.nodes.memory_writer import _persist_memory, memory_writer_node
 from src.agent.nodes.retriever import retriever_node
-from src.api.orchestrator import app
+from src.api.orchestrator import _casual_response, _schedule_background_task, app, run, run_stream
+from src.utils.models.agent import QueryRequest
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
 _HEADERS = {"X-Service-Token": _TOKEN}
@@ -66,7 +69,7 @@ class TestRetrieverNode:
 # ── Memory Writer Node Tests ──────────────────────────────────────────────────
 class TestMemoryWriterNode:
     @patch("src.agent.nodes.memory_writer._persist_memory", new_callable=AsyncMock)
-    async def test_memory_writer_node_awaits_persistence(self, mock_persist: AsyncMock) -> None:
+    async def test_memory_writer_node_schedules_persistence(self, mock_persist: AsyncMock) -> None:
         state = {
             "session_id": "s1",
             "user_message": "Hello",
@@ -76,6 +79,8 @@ class TestMemoryWriterNode:
         }
         res = await memory_writer_node(state)
         assert res == {}
+        mock_persist.assert_not_awaited()
+        await asyncio.sleep(0)
         mock_persist.assert_awaited_once()
 
     @patch("src.utils.http_client.post_with_retry", new_callable=AsyncMock)
@@ -97,6 +102,126 @@ class TestMemoryWriterNode:
 
         assert mock_post.await_count == 1
         assert "/session/public-session" in mock_post.await_args.args[1]
+
+
+class TestLatencyFastPath:
+    @staticmethod
+    def _request(message: str) -> QueryRequest:
+        return QueryRequest(session_id="latency-session", user_id="anonymous", message=message)
+
+    def test_exact_greeting_has_a_deterministic_response(self) -> None:
+        response = _casual_response(self._request(" Hi! "))
+
+        assert response is not None
+        assert response.answer.startswith("Hello!")
+        assert response.action_taken is None
+        assert response.retrieved_chunks == []
+        assert response.execution_ms == 0
+
+    def test_substantive_request_is_not_a_casual_message(self) -> None:
+        assert _casual_response(self._request("Hi, create a ticket for a broken laptop")) is None
+
+    async def test_sync_greeting_bypasses_graph_initialization(self) -> None:
+        with patch("src.api.orchestrator._get_graph", new_callable=AsyncMock) as get_graph:
+            response = await run(self._request("hello"))
+
+        assert response.answer.startswith("Hello!")
+        get_graph.assert_not_awaited()
+
+    async def test_streamed_greeting_bypasses_graph_initialization(self) -> None:
+        with patch("src.api.orchestrator._get_graph", new_callable=AsyncMock) as get_graph:
+            response = await run_stream(self._request("thanks"))
+            events = []
+            async for chunk in response.body_iterator:
+                for line in chunk.splitlines():
+                    if line.startswith("data: "):
+                        events.append(json.loads(line[6:]))
+
+        assert len(events) == 1
+        assert events[0]["node"] == "done"
+        assert events[0]["response"]["answer"].startswith("You're welcome")
+        get_graph.assert_not_awaited()
+
+    async def test_background_task_does_not_block_the_caller(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_persistence() -> None:
+            started.set()
+            await release.wait()
+
+        _schedule_background_task(
+            slow_persistence(), task_name="test-persistence", session_id="latency-session"
+        )
+        await asyncio.wait_for(started.wait(), timeout=0.1)
+        assert release.is_set() is False
+        release.set()
+        await asyncio.sleep(0)
+
+    async def test_stream_forwards_only_responder_chunks_and_final_response(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class FakeGraph:
+            def __init__(self) -> None:
+                self.state_calls = 0
+
+            async def aget_state(self, _config):
+                self.state_calls += 1
+                if self.state_calls == 1:
+                    return SimpleNamespace(next=[], values={})
+                return SimpleNamespace(
+                    next=[],
+                    values={"final_answer": "Hello world", "selected_action": None},
+                )
+
+            async def astream_events(self, *_args, **_kwargs):
+                yield {"event": "on_chain_start", "name": "reasoner"}
+                yield {
+                    "event": "on_chat_model_stream",
+                    "name": "ChatOpenAI",
+                    "metadata": {"langgraph_node": "reasoner"},
+                    "data": {"chunk": SimpleNamespace(content="private reasoning")},
+                }
+                yield {
+                    "event": "on_chat_model_stream",
+                    "name": "ChatOpenAI",
+                    "metadata": {"langgraph_node": "responder"},
+                    "data": {"chunk": SimpleNamespace(content="Hello")},
+                }
+                yield {
+                    "event": "on_chat_model_stream",
+                    "name": "ChatOpenAI",
+                    "metadata": {"langgraph_node": "responder"},
+                    "data": {"chunk": SimpleNamespace(content=" world")},
+                }
+
+        graph = FakeGraph()
+
+        async def fake_get_graph(**_kwargs):
+            return graph, {}
+
+        async def no_cache(_body):
+            return None, None, None
+
+        async def no_history(*_args, **_kwargs):
+            return []
+
+        def discard_background(coroutine, **_kwargs):
+            coroutine.close()
+
+        monkeypatch.setattr("src.api.orchestrator._get_graph", fake_get_graph)
+        monkeypatch.setattr("src.api.orchestrator._semantic_cache_lookup", no_cache)
+        monkeypatch.setattr("src.api.orchestrator._fetch_session_messages", no_history)
+        monkeypatch.setattr("src.api.orchestrator._schedule_background_task", discard_background)
+
+        response = await run_stream(self._request("How do I use VPN?"))
+        payload = "".join([chunk async for chunk in response.body_iterator])
+        events = [json.loads(line[6:]) for line in payload.splitlines() if line.startswith("data: ")]
+
+        deltas = [event["content"] for event in events if event["status"] == "delta"]
+        assert deltas == ["Hello", " world"]
+        assert "private reasoning" not in payload
+        assert events[-1]["response"]["answer"] == "".join(deltas)
 
 
 # ── API Endpoint Tests ────────────────────────────────────────────────────────

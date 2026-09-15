@@ -1,3 +1,4 @@
+import asyncio
 import textwrap
 
 import structlog
@@ -8,6 +9,7 @@ from src.utils.http_client import create_async_http_client, service_headers
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
+_PERSISTENCE_TIMEOUT_SECONDS = 2.0
 
 
 async def _persist_memory(
@@ -65,7 +67,7 @@ async def _persist_memory(
 
 
 async def memory_writer_node(state: GraphState) -> dict:
-    """Persist session and episodic memory before graph completion."""
+    """Schedule best-effort persistence without delaying graph completion."""
 
     session_id = state.get("session_id", "")
     user_id = state.get("user_id", "system")
@@ -78,21 +80,36 @@ async def memory_writer_node(state: GraphState) -> dict:
 
     log.info("memory_writer.start", session_id=session_id)
 
-    try:
-        async with create_async_http_client() as http:
-            await _persist_memory(
-                http,
-                session_id,
-                user_id,
-                messages,
-                user_message,
-                final_answer,
-                action_name,
-                risk_level,
-                approval,
-                store_episodic=not bool(state.get("public_session_id")),
-            )
-    except Exception as exc:
-        log.warning("memory_writer.persistence_failed", session_id=session_id, error=str(exc))
+    async def persist() -> None:
+        try:
+            async with create_async_http_client(
+                timeout_seconds=_PERSISTENCE_TIMEOUT_SECONDS
+            ) as http:
+                await _persist_memory(
+                    http,
+                    session_id,
+                    user_id,
+                    messages,
+                    user_message,
+                    final_answer,
+                    action_name,
+                    risk_level,
+                    approval,
+                    store_episodic=not bool(state.get("public_session_id")),
+                )
+        except Exception as exc:
+            log.warning("memory_writer.persistence_failed", session_id=session_id, error=str(exc))
+
+    task = asyncio.create_task(persist(), name=f"memory-persist:{session_id}")
+
+    def report_background_failure(completed: asyncio.Task[None]) -> None:
+        try:
+            completed.result()
+        except asyncio.CancelledError:
+            log.info("memory_writer.persistence_cancelled", session_id=session_id)
+        except Exception as exc:  # pragma: no cover - defensive task supervision
+            log.error("memory_writer.persistence_task_failed", session_id=session_id, error=str(exc))
+
+    task.add_done_callback(report_background_failure)
 
     return {}

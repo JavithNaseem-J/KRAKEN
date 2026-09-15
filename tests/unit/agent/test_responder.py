@@ -4,6 +4,14 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.agent.nodes.responder import responder_node
+from src.utils.llm import ProviderCircuitBreaker
+
+
+def _streaming_answer(content: str):
+    async def stream(*_args):
+        yield MagicMock(content=content)
+
+    return stream
 
 
 @patch("src.agent.nodes.responder.get_llm")
@@ -75,68 +83,75 @@ def test_responder_uses_retrieved_chunks_when_llm_fails(mock_get_llm: MagicMock)
     assert "temporarily unavailable" not in result["final_answer"]
 
 
-@patch("src.agent.nodes.responder.invoke_llm", new_callable=AsyncMock)
 @patch("src.agent.nodes.responder.get_llm")
 def test_responder_uses_standard_composition_for_vpn_question(
-    mock_get_llm: MagicMock, mock_invoke: AsyncMock
+    mock_get_llm: MagicMock,
 ) -> None:
-    mock_invoke.return_value = MagicMock(
-        content="### Corporate VPN Guidance\n\nUse GlobalProtect with MFA.\n\n**Sources:** faq"
-    )
-    result = asyncio.run(
-        responder_node(
-            {
-                "session_id": "s1",
-                "user_message": "How do I connect to the corporate VPN?",
-                "reasoning": "Retrieved current VPN policy.",
-                "selected_action": None,
-                "retrieved_chunks": [
-                    {
-                        "source": "faq",
-                        "content": "GlobalProtect VPN Access uses Azure AD SAML and Duo MFA.",
-                        "relevance_score": 0.91,
-                        "metadata": {},
-                    }
-                ],
-            }
+    answer = "### Corporate VPN Guidance\n\nUse GlobalProtect with MFA.\n\n**Sources:** faq"
+    with patch("src.agent.nodes.responder.stream_llm", _streaming_answer(answer)):
+        result = asyncio.run(
+            responder_node(
+                {
+                    "session_id": "s1",
+                    "user_message": "How do I connect to the corporate VPN?",
+                    "reasoning": "Retrieved current VPN policy.",
+                    "selected_action": None,
+                    "retrieved_chunks": [
+                        {
+                            "source": "faq",
+                            "content": "GlobalProtect VPN Access uses Azure AD SAML and Duo MFA.",
+                            "relevance_score": 0.91,
+                            "metadata": {},
+                        }
+                    ],
+                }
+            )
         )
-    )
 
     assert "Corporate VPN Guidance" in result["final_answer"]
     assert "**Sources:** faq" in result["final_answer"]
     mock_get_llm.assert_called_once()
-    mock_invoke.assert_awaited_once()
 
 
-@patch("src.agent.nodes.responder.invoke_llm", new_callable=AsyncMock)
 @patch("src.agent.nodes.responder.get_llm")
 def test_responder_uses_standard_composition_for_sla_question(
-    mock_get_llm: MagicMock, mock_invoke: AsyncMock
+    mock_get_llm: MagicMock,
 ) -> None:
-    mock_invoke.return_value = MagicMock(
-        content="### Critical Vulnerability SLA Guidance\n\nP1 response: 15 minutes."
-    )
-    result = asyncio.run(
-        responder_node(
-            {
-                "session_id": "s1",
-                "user_message": "What is the critical vulnerability SLA?",
-                "reasoning": "Retrieved current P1 SLA.",
-                "selected_action": "auto_respond",
-                "retrieved_chunks": [
-                    {
-                        "source": "sla",
-                        "content": "P1 Critical Response SLA: 15 minutes. Resolution SLA: 2 hours.",
-                        "relevance_score": 0.91,
-                        "metadata": {},
-                    }
-                ],
-            }
+    answer = "### Critical Vulnerability SLA Guidance\n\nP1 response: 15 minutes."
+    with patch("src.agent.nodes.responder.stream_llm", _streaming_answer(answer)):
+        result = asyncio.run(
+            responder_node(
+                {
+                    "session_id": "s1",
+                    "user_message": "What is the critical vulnerability SLA?",
+                    "reasoning": "Retrieved current P1 SLA.",
+                    "selected_action": "auto_respond",
+                    "retrieved_chunks": [
+                        {
+                            "source": "sla",
+                            "content": "P1 Critical Response SLA: 15 minutes. Resolution SLA: 2 hours.",
+                            "relevance_score": 0.91,
+                            "metadata": {},
+                        }
+                    ],
+                }
+            )
         )
-    )
 
     assert "Critical Vulnerability SLA Guidance" in result["final_answer"]
     assert "Transaction ID" not in result["final_answer"]
     assert "Human approval was granted" not in result["final_answer"]
     mock_get_llm.assert_called_once()
-    mock_invoke.assert_awaited_once()
+
+
+def test_provider_stream_resets_the_circuit_after_all_chunks() -> None:
+    class FakeRunnable:
+        async def astream(self, _messages):
+            yield MagicMock(content="Hello")
+            yield MagicMock(content=" world")
+
+    async def consume() -> list[str]:
+        breaker = ProviderCircuitBreaker()
+        return [chunk.content async for chunk in breaker.stream(FakeRunnable(), [])]
+
+    assert asyncio.run(consume()) == ["Hello", " world"]

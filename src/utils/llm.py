@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Any
 
@@ -31,12 +32,31 @@ class ProviderCircuitBreaker:
             log.warning("llm.provider_call_failed", provider_error=exc.__class__.__name__)
             raise LLMProviderUnavailableError("LLM provider is temporarily unavailable.") from exc
 
+    async def stream(self, runnable: Any, messages: list[Any]) -> AsyncIterator[Any]:
+        now = time.monotonic()
+        if now < self._open_until:
+            raise LLMProviderUnavailableError("LLM provider circuit is temporarily open.")
+        try:
+            async for chunk in runnable.astream(messages):
+                yield chunk
+            self._open_until = 0.0
+        except Exception as exc:
+            self._open_until = now + get_settings().provider_circuit_breaker_seconds
+            log.warning("llm.provider_stream_failed", provider_error=exc.__class__.__name__)
+            raise LLMProviderUnavailableError("LLM provider is temporarily unavailable.") from exc
+
 
 _provider_breaker = ProviderCircuitBreaker()
 
 
 async def invoke_llm(runnable: Any, messages: list[Any]) -> Any:
     return await _provider_breaker.invoke(runnable, messages)
+
+
+async def stream_llm(runnable: Any, messages: list[Any]) -> AsyncIterator[Any]:
+    """Yield provider chunks while applying the shared circuit-breaker policy."""
+    async for chunk in _provider_breaker.stream(runnable, messages):
+        yield chunk
 
 
 def validate_llm_config() -> None:
