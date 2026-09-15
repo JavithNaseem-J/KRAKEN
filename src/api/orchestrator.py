@@ -101,7 +101,9 @@ def _responder_stream_delta(event: dict[str, Any]) -> str:
     return "".join(
         block.get("text", "")
         for block in content
-        if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+        if isinstance(block, dict)
+        and block.get("type") == "text"
+        and isinstance(block.get("text"), str)
     )
 
 
@@ -115,7 +117,9 @@ def _schedule_background_task(
         try:
             completed.result()
         except asyncio.CancelledError:
-            log.info("orchestrator.background_task_cancelled", task=task_name, session_id=session_id)
+            log.info(
+                "orchestrator.background_task_cancelled", task=task_name, session_id=session_id
+            )
         except Exception as exc:  # pragma: no cover - defensive task supervision
             log.error(
                 "orchestrator.background_task_failed",

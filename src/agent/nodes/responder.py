@@ -53,7 +53,9 @@ def _stream_chunk_text(chunk: Any) -> str:
     return "".join(
         block.get("text", "")
         for block in content
-        if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)
+        if isinstance(block, dict)
+        and block.get("type") == "text"
+        and isinstance(block.get("text"), str)
     )
 
 

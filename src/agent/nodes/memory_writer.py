@@ -108,7 +108,9 @@ async def memory_writer_node(state: GraphState) -> dict:
         except asyncio.CancelledError:
             log.info("memory_writer.persistence_cancelled", session_id=session_id)
         except Exception as exc:  # pragma: no cover - defensive task supervision
-            log.error("memory_writer.persistence_task_failed", session_id=session_id, error=str(exc))
+            log.error(
+                "memory_writer.persistence_task_failed", session_id=session_id, error=str(exc)
+            )
 
     task.add_done_callback(report_background_failure)
 
