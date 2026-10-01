@@ -25,6 +25,11 @@ _QUARANTINE_INTENT_PATTERN = re.compile(
     r"\b(?:quarantine|block|isolate)\s+"
     r"(?:(?:the|malicious|suspicious|source|remote)\s+){0,3}ip\b"
 )
+_QUARANTINE_ADDRESS_PATTERN = re.compile(
+    r"\b(?:quarantine|block|isolate)\s+"
+    r"(?:(?:the|malicious|suspicious|source|remote)\s+){0,3}"
+    r"(?:ip\s+)?(?:\d{1,3}\.){3}\d{1,3}\b"
+)
 
 _WRITE_ACTION_INTENT_PHRASES: dict[str, tuple[str, ...]] = {
     "escalate": ("escalate",),
@@ -96,6 +101,7 @@ def should_override_to_auto_respond(user_message: str, proposed_action: str) -> 
     elif proposed_action == "quarantine_ip":
         has_explicit_intent = has_explicit_intent or bool(
             _QUARANTINE_INTENT_PATTERN.search(normalized_message)
+            or _QUARANTINE_ADDRESS_PATTERN.search(user_message.lower())
         )
     has_ticket = bool(TICKET_ID_REGEX.search(user_message))
     ticket_mutation_without_id = (
