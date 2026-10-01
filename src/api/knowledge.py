@@ -6,6 +6,7 @@ from typing import Annotated, Any
 
 import structlog
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from src.utils.auth import verify_service_token
 from src.utils.config import get_settings
@@ -50,8 +51,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             client=client, embedder=embedder, collection_name=settings.qdrant_collection_name
         )
 
-        info = await client.get_collection(settings.qdrant_collection_name)
-        if (info.points_count or 0) == 0:
+        active_points = await client.count(
+            collection_name=settings.qdrant_collection_name,
+            count_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="collection_version",
+                        match=MatchValue(value=settings.knowledge_collection_version),
+                    ),
+                    FieldCondition(
+                        key="dataset_generation",
+                        match=MatchValue(value=settings.synthetic_dataset_generation),
+                    ),
+                ]
+            ),
+            exact=True,
+        )
+        if active_points.count == 0:
             log.info("knowledge.startup.auto_ingest_starting")
             from src.utils.knowledge.ingest import run_ingest_async
 

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
-from src.api.knowledge import app
+from src.api.knowledge import app, settings
 from src.utils.models.knowledge import KnowledgeChunk, KnowledgeSource, RetrievalResult
 
 _TOKEN = "f0a1e0e914479e4b4c31dc7d467d088a5bf51758dfff9fc062f4158620a14bd0"
@@ -19,6 +20,7 @@ def client(monkeypatch):
     # Mock lifespan dependencies (BAAI embedder and Qdrant client)
     mock_embedder = MagicMock()
     mock_qdrant = AsyncMock()
+    mock_qdrant.count.return_value = SimpleNamespace(count=1)
     mock_retriever = AsyncMock()
 
     with (
@@ -30,6 +32,34 @@ def client(monkeypatch):
     ):
         c.app.state.retriever = mock_retriever
         yield c
+
+
+@pytest.mark.parametrize("active_count,expected_ingests", [(0, 1), (1, 0)])
+def test_startup_ingests_when_active_knowledge_is_absent(
+    active_count: int, expected_ingests: int
+) -> None:
+    mock_qdrant = AsyncMock()
+    mock_qdrant.get_collection.return_value = SimpleNamespace(points_count=12)
+    mock_qdrant.count.return_value = SimpleNamespace(count=active_count)
+
+    with (
+        patch("src.utils.embedder.get_embedder", return_value=MagicMock()),
+        patch("src.utils.cache.create_async_qdrant_client", return_value=mock_qdrant),
+        patch("src.utils.knowledge.ingest.ensure_collection", new_callable=AsyncMock),
+        patch("src.utils.knowledge.ingest.run_ingest_async", new_callable=AsyncMock) as ingest,
+        TestClient(app),
+    ):
+        assert app.state.client is mock_qdrant
+
+    assert ingest.await_count == expected_ingests
+    conditions = {
+        condition.key: condition.match.value
+        for condition in mock_qdrant.count.await_args.kwargs["count_filter"].must
+    }
+    assert conditions == {
+        "collection_version": settings.knowledge_collection_version,
+        "dataset_generation": settings.synthetic_dataset_generation,
+    }
 
 
 class TestKnowledgeAPI:
