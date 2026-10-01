@@ -254,11 +254,8 @@ class LiveResetOperations:
         return await asyncio.to_thread(operation)
 
     async def ingest_qdrant(self, plan: ResetPlan) -> dict[str, Any]:
-        from qdrant_client.models import Distance, VectorParams
-
         from src.utils.cache import create_async_qdrant_client
         from src.utils.knowledge.ingest import run_ingest_async
-        from src.utils.memory.long_term import EPISODIC_MEMORY_COLLECTION
 
         embedder = None
         if not self.settings.qdrant_cloud_inference_enabled:
@@ -268,18 +265,6 @@ class LiveResetOperations:
         client = create_async_qdrant_client()
         try:
             counts = await run_ingest_async(client, embedder)
-            if not await client.collection_exists(EPISODIC_MEMORY_COLLECTION):
-                await client.create_collection(
-                    collection_name=EPISODIC_MEMORY_COLLECTION,
-                    vectors_config=VectorParams(
-                        size=(
-                            self.settings.qdrant_inference_dim
-                            if self.settings.qdrant_cloud_inference_enabled
-                            else self.settings.embedding_dim
-                        ),
-                        distance=Distance.COSINE,
-                    ),
-                )
         finally:
             await client.close()
         return {"ingested": counts, "generation": plan.target_generation}

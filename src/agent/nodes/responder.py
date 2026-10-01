@@ -87,6 +87,59 @@ def _fallback_answer_from_action_result(action_result: Any) -> str:
     return ""
 
 
+def _action_receipt(
+    selected_action: str | None, action_result: Any, approval_status: str | None
+) -> str:
+    """Describe only action outcomes established by structured state."""
+    results = action_result if isinstance(action_result, list) else [action_result]
+    lines: list[str] = []
+    if approval_status == "approved":
+        lines.append("Approval was granted for the critical action.")
+    elif approval_status in {"reject", "rejected", "denied", "timeout"}:
+        lines.append("The critical action was not approved. No critical action was performed.")
+    elif approval_status == "failed":
+        lines.append(
+            "The approval request could not be completed. No critical action was performed."
+        )
+    else:
+        lines.append("No human approval was required for the completed safe action.")
+
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("action_name") or selected_action or "Action")
+        payload = _action_result_payload(item) or {}
+        if item.get("cancelled"):
+            lines.append(f"{name}: not executed ({item.get('reason') or 'approval denied'}).")
+            continue
+        if item.get("success") is False or payload.get("success") is False:
+            lines.append(
+                f"{name}: execution failed ({item.get('error') or payload.get('error') or 'unknown error'})."
+            )
+            continue
+        if item.get("success") is not True and payload.get("success") is not True:
+            lines.append(
+                f"{name}: execution status is unverified; no successful mutation is claimed."
+            )
+            continue
+        detail = payload.get("message") or payload.get("response")
+        summary = f"{name}: completed successfully."
+        if detail:
+            summary += f" {detail}"
+        if payload.get("synthetic") is True:
+            summary += " This changed synthetic environment state only."
+        for key, label in (("transaction_id", "Transaction ID"), ("job_id", "Job ID")):
+            if payload.get(key):
+                summary += f" {label}: {payload[key]}."
+        if payload.get("verification_status"):
+            summary += f" Verification: {payload['verification_status']}."
+        lines.append(summary)
+
+    if len(lines) == 1:
+        lines.append("No verified execution result is available.")
+    return "\n\n".join(lines)
+
+
 def _fallback_answer_from_retrieved_chunks(
     user_message: str,
     retrieved_chunks: Sequence[Mapping[str, Any]],
@@ -96,7 +149,6 @@ def _fallback_answer_from_retrieved_chunks(
         chunk
         for chunk in retrieved_chunks
         if float(chunk.get("relevance_score", 0.0)) >= threshold
-        and str(chunk.get("source", "")).lower() != "episodic_memory"
         and str(chunk.get("content", "")).strip()
     ]
     if not chunks:
@@ -158,6 +210,12 @@ async def responder_node(state: GraphState) -> dict:
         }
 
     early_answer = _fallback_answer_from_action_result(action_result) if selected_action else ""
+    if selected_action not in (None, "auto_respond") and (
+        action_result is not None or approval_status is not None
+    ):
+        early_answer = (
+            f"{early_answer}\n\n" if selected_action == "get_ticket_status" and early_answer else ""
+        ) + _action_receipt(selected_action, action_result, approval_status)
     if early_answer:
         explanation = f"Action '{selected_action}' was selected."
         if evidence:
@@ -191,15 +249,6 @@ async def responder_node(state: GraphState) -> dict:
     human_content = "\n".join(context_parts)
 
     system_prompt_to_use = get_prompt("responder")
-    if approval_status == "approved" or (
-        isinstance(action_result, dict)
-        and (action_result.get("success") or action_result.get("ticket_id"))
-    ):
-        truncated_res = _truncate_result(action_result)
-        system_prompt_to_use += get_prompt("responder", "APPROVAL_MANDATE_TEMPLATE").format(
-            selected_action=selected_action,
-            truncated_res=truncated_res,
-        )
 
     try:
         llm = get_llm()

@@ -12,6 +12,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.utils.registry import REGISTRY
+
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
 KNOWLEDGE_ROOT = DATA_ROOT / "knowledge"
 SYNTHETIC_ROOT = DATA_ROOT / "synthetic"
@@ -962,16 +964,7 @@ def generate_sla(config: GenerationConfig) -> dict[str, Any]:
                 "escalation_chain": ["service-desk@northstar.example"],
             },
         },
-        "action_risk_mapping": {
-            "auto_respond": "SAFE",
-            "request_info": "SAFE",
-            "create_ticket": "SAFE",
-            "close_ticket": "MEDIUM",
-            "escalate_ticket": "MEDIUM",
-            "quarantine_ip": "CRITICAL",
-            "unlock_account": "CRITICAL",
-            "write_json_file": "CRITICAL",
-        },
+        "action_risk_mapping": {name: REGISTRY[name].risk_level.value for name in sorted(REGISTRY)},
     }
 
 

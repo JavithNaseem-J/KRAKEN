@@ -13,15 +13,21 @@ import json
 import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from tests.evals.eval_harness import (
     GoldenCase,
     build_report,
+    establish_case_session,
     evaluate_cases,
     load_suite,
+    make_live_responder,
+    measure_stream,
     offline_responder,
     score_response,
+    summarize_stream_samples,
+    target_revision,
     write_reports,
 )
 from tests.evals.llm_judge import EvaluationResult, evaluate_rag_response
@@ -157,6 +163,131 @@ def test_stale_manifest_checksum_is_rejected(tmp_path, monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="checksums"):
         harness.load_suite()
+
+
+def _live_transport(*, role: str = "tier1_analyst", sha: str = "a" * 40, stream: str | None = None):
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/version":
+            return httpx.Response(200, json={"commit_sha": sha})
+        if request.url.path == "/v1/session" and request.method == "POST":
+            return httpx.Response(
+                201,
+                json={
+                    "session_id": "s1",
+                    "csrf_token": "x" * 32,
+                    "dataset_generation": "northstar-v1",
+                },
+                headers={"set-cookie": "session=test"},
+            )
+        if request.url.path == "/v1/session/persona":
+            return httpx.Response(200, json={"persona": role})
+        if request.url.path == "/v1/sessions/s1":
+            return httpx.Response(200, json={"session_id": "s1", "persona": role})
+        if request.url.path == "/v1/run/stream":
+            return httpx.Response(200, text=stream or 'data: {"node":"done","status":"end"}\n\n')
+        if request.url.path == "/v1/run":
+            return httpx.Response(
+                200,
+                json={"session_id": "s1", "answer": "MFA", "sources": [], "cache": {"hit": False}},
+            )
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handle)
+
+
+def test_live_identity_and_revision_are_verified() -> None:
+    with httpx.Client(base_url="https://example.test", transport=_live_transport()) as client:
+        assert target_revision(client, "a" * 40) == "a" * 40
+        case = GoldenCase(
+            case_id="HOLDOUT-999",
+            category="knowledge_rag",
+            query="MFA?",
+            expected_outcome="answer",
+            required_role="tier1_analyst",
+            source="holdout",
+        )
+        result, _ = make_live_responder(client, "northstar-v1")(case)
+        assert result["_verified_role"] == "tier1_analyst"
+    with (
+        httpx.Client(
+            base_url="https://example.test", transport=_live_transport(role="end_user")
+        ) as client,
+        pytest.raises(ValueError, match="required role"),
+    ):
+        establish_case_session(client, "tier1_analyst", "northstar-v1")
+    with (
+        httpx.Client(
+            base_url="https://example.test", transport=_live_transport(sha="0" * 40)
+        ) as client,
+        pytest.raises(ValueError, match="verified commit"),
+    ):
+        target_revision(client)
+    with (
+        httpx.Client(base_url="https://example.test", transport=_live_transport()) as client,
+        pytest.raises(ValueError, match="does not match expected"),
+    ):
+        target_revision(client, "b" * 40)
+
+
+def test_stream_measurement_requires_terminal_and_records_disconnect() -> None:
+    payload = 'data: {"node":"responder","status":"delta","content":"Hello"}\n\ndata: {"node":"done","status":"end"}\n\n'
+    with httpx.Client(
+        base_url="https://example.test", transport=_live_transport(stream=payload)
+    ) as client:
+        complete = measure_stream(
+            client, message="hello", role="tier1_analyst", generation="northstar-v1"
+        )
+        disconnected = measure_stream(
+            client,
+            message="hello",
+            role="tier1_analyst",
+            generation="northstar-v1",
+            disconnect_after_delta=True,
+        )
+    assert complete["first_delta_ms"] is not None and complete["terminal_ms"] is not None
+    assert disconnected["disconnected_after_delta"] is True and disconnected["terminal_ms"] is None
+    assert summarize_stream_samples([complete, disconnected])["greeting"]["terminal_samples"] == 1
+    with httpx.Client(
+        base_url="https://example.test",
+        transport=_live_transport(
+            stream='data: {"node":"responder","status":"delta","content":"x"}\n\n'
+        ),
+    ) as client:
+        assert (
+            measure_stream(client, message="VPN?", role="tier1_analyst", generation="northstar-v1")[
+                "error"
+            ]
+            == "stream ended without terminal event"
+        )
+
+
+def test_stream_measurement_keeps_cache_and_missing_delta_out_of_generated_samples() -> None:
+    cache_events = (
+        'data: {"node":"semantic_cache","status":"cache_hit"}\n\n'
+        'data: {"node":"done","status":"end","response":{"answer":"Cached"}}\n\n'
+    )
+    with httpx.Client(
+        base_url="https://example.test", transport=_live_transport(stream=cache_events)
+    ) as client:
+        cached = measure_stream(
+            client, message="VPN?", role="tier1_analyst", generation="northstar-v1"
+        )
+    assert cached["category"] == "cache"
+    assert cached["first_delta_ms"] is None
+    assert cached["terminal_ms"] is not None
+    summary = summarize_stream_samples([cached])
+    assert summary["cache"]["samples"] == 1
+    assert summary["cache"]["first_delta_samples"] == 0
+
+    error_event = 'data: {"node":"error","status":"error","message":"provider unavailable"}\n\n'
+    with httpx.Client(
+        base_url="https://example.test", transport=_live_transport(stream=error_event)
+    ) as client:
+        failed = measure_stream(
+            client, message="VPN?", role="tier1_analyst", generation="northstar-v1"
+        )
+    assert failed["error"] == "provider unavailable"
+    assert failed["terminal_ms"] is None
 
 
 def test_deterministic_scoring_rejects_reasoning_and_prohibited_claims() -> None:

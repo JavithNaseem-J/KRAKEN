@@ -29,9 +29,11 @@ def client(monkeypatch):
     c.app.state.http = MagicMock()
     c.app.state.http.post = AsyncMock()
     c.app.state.http.aclose = AsyncMock()
+    c.app.state.proxy_client_override = c.app.state.http
     try:
         yield c
     finally:
+        del c.app.state.proxy_client_override
         c.close()
 
 

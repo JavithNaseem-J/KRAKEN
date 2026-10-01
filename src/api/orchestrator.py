@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 
 from src.agent.agent import build_graph_async
 from src.utils.auth import verify_service_token
+from src.utils.background_tasks import background_tasks
 from src.utils.cache import SemanticCache
 from src.utils.config import get_settings
 from src.utils.db import create_sync_pool
@@ -111,24 +112,7 @@ def _schedule_background_task(
     coroutine: Coroutine[Any, Any, None], *, task_name: str, session_id: str
 ) -> None:
     """Run non-critical persistence without extending request completion time."""
-    task = asyncio.create_task(coroutine, name=task_name)
-
-    def report_failure(completed: asyncio.Task[None]) -> None:
-        try:
-            completed.result()
-        except asyncio.CancelledError:
-            log.info(
-                "orchestrator.background_task_cancelled", task=task_name, session_id=session_id
-            )
-        except Exception as exc:  # pragma: no cover - defensive task supervision
-            log.error(
-                "orchestrator.background_task_failed",
-                task=task_name,
-                session_id=session_id,
-                error=exc.__class__.__name__,
-            )
-
-    task.add_done_callback(report_failure)
+    background_tasks.schedule(coroutine, task_name=task_name, session_id=session_id)
 
 
 async def _open_async_checkpointer() -> tuple[Any, Any]:
@@ -341,6 +325,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         for _ in range(settings.orchestrator_max_concurrency):
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(semaphore.acquire(), timeout=5.0)
+
+    await background_tasks.drain()
 
     await app.state.http.aclose()
     reaper_task.cancel()

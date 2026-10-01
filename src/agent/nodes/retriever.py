@@ -8,7 +8,7 @@ import structlog
 from src.agent.state import GraphState
 from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
-from src.utils.http_client import internal_request, post_with_retry, service_headers
+from src.utils.http_client import post_with_retry, service_headers
 from src.utils.models.knowledge import KnowledgeSource, RetrievalRequest
 
 log = structlog.get_logger(__name__)
@@ -73,33 +73,6 @@ async def retriever_node(state: GraphState) -> dict:
                 "retrieved_chunks": [],
                 "error": "Knowledge retrieval is temporarily unavailable, please try again.",
             }
-
-        # Public history is session-scoped in short-term memory. Shared
-        # persona IDs must never expose episodic memory from another visitor.
-        user_id = state.get("user_id", "")
-        if user_id and not state.get("public_session_id"):
-            try:
-                mem_resp = await internal_request(
-                    "POST",
-                    f"{settings.memory_url}/long-term/search",
-                    json_payload={"query": user_message, "user_id": user_id, "top_k": 3},
-                    headers=service_headers(trace_id=session_id),
-                    client=client,
-                )
-                episodes = mem_resp.json().get("results", [])
-                for ep in episodes:
-                    chunks.append(
-                        {
-                            "id": ep.get("id", "episodic_memory"),
-                            "content": f"Past Experience / Episodic Memory: {ep.get('content', '')}",
-                            "source": "episodic_memory",
-                            "relevance_score": ep.get("similarity", ep.get("score", 0.8)),
-                            "metadata": ep.get("metadata", {}),
-                        }
-                    )
-                log.info("retriever.episodic_memory_fetched", count=len(episodes))
-            except Exception as exc:
-                log.warning("retriever.episodic_memory_search_failed", error=str(exc))
 
     log.info("retriever.done", session_id=session_id, chunks=len(chunks))
     return {"retrieved_chunks": chunks}

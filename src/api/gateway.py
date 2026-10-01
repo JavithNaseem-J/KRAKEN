@@ -30,11 +30,11 @@ from src.utils.config import get_settings
 from src.utils.cors import cors_middleware_kwargs
 from src.utils.http_client import (
     create_async_http_client,
-    get_in_process_app_for_url,
     internal_request,
     metrics_text,
     service_headers,
     simple_health_response,
+    upstream_client,
 )
 from src.utils.logging import configure_logging
 from src.utils.middleware.prompt_guard import (
@@ -324,21 +324,13 @@ async def _proxy(
     body.setdefault("user_id", user_id)
 
     try:
-        is_mock_http = type(getattr(request.app.state, "http", None)).__name__ in (
-            "MagicMock",
-            "AsyncMock",
-            "Mock",
-        )
-        target_app = None if is_mock_http else get_in_process_app_for_url(upstream_url)
-        if target_app is not None:
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(app=target_app),
-                base_url="http://internal",
-                timeout=120.0,
-            ) as client:
-                resp = await client.post(upstream_url, json=body, headers=forward_headers)
-        else:
-            resp = await request.app.state.http.post(
+        async with upstream_client(
+            upstream_url,
+            timeout_seconds=120.0,
+            shared_client=request.app.state.http,
+            client_override=getattr(request.app.state, "proxy_client_override", None),
+        ) as client:
+            resp = await client.post(
                 upstream_url,
                 json=body,
                 headers=forward_headers,
@@ -903,40 +895,23 @@ async def run_stream(request: Request) -> Any:
     )
 
     async def stream_generator():
-        is_mock_http = type(getattr(request.app.state, "http", None)).__name__ in (
-            "MagicMock",
-            "AsyncMock",
-            "Mock",
-        )
-        target_app = None if is_mock_http else get_in_process_app_for_url(settings.orchestrator_url)
-        if target_app is not None:
-            async with (
-                httpx.AsyncClient(
-                    transport=httpx.ASGITransport(app=target_app),
-                    base_url="http://internal",
-                    timeout=120.0,
-                ) as client,
-                client.stream(
-                    "POST",
-                    f"{settings.orchestrator_url}/run/stream",
-                    json=body,
-                    headers=forward_headers,
-                    timeout=120.0,
-                ) as upstream_resp,
-            ):
-                async for chunk in upstream_resp.aiter_bytes():
-                    yield chunk
-        else:
-            external_client: httpx.AsyncClient = request.app.state.http
-            async with external_client.stream(
+        async with (
+            upstream_client(
+                settings.orchestrator_url,
+                timeout_seconds=120.0,
+                shared_client=request.app.state.http,
+                client_override=getattr(request.app.state, "proxy_client_override", None),
+            ) as client,
+            client.stream(
                 "POST",
                 f"{settings.orchestrator_url}/run/stream",
                 json=body,
                 headers=forward_headers,
                 timeout=120.0,
-            ) as upstream_resp:
-                async for chunk in upstream_resp.aiter_bytes():
-                    yield chunk
+            ) as upstream_resp,
+        ):
+            async for chunk in upstream_resp.aiter_bytes():
+                yield chunk
 
     return StreamingResponse(
         stream_generator(),
@@ -1058,6 +1033,7 @@ async def approval_decision_proxy(request: Request, approval_id: str) -> Respons
                 "Content-Type": content_type,
                 "Accept": "application/json",
                 "X-Request-Id": request_id,
+                **service_headers(trace_id=request_id),
             },
         )
         return Response(

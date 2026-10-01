@@ -45,14 +45,6 @@ REGISTRY: dict[str, ActionDefinition] = {
         requires_hitl=True,
         parameter_schema={"ticket_id": "str", "reason": "str", "evidence": "str"},
     ),
-    "write_json_file": ActionDefinition(
-        name="write_json_file",
-        description="Write structured data as a JSON file inside the workspace sandbox.",
-        action_type=ActionType.WRITE,
-        risk_level=RiskLevel.CRITICAL,
-        requires_hitl=True,
-        parameter_schema={"target_path": "str", "content": "dict"},
-    ),
     "create_ticket": ActionDefinition(
         name="create_ticket",
         description="Create a new IT or security support ticket in the ticketing system.",
@@ -135,13 +127,6 @@ ACTION_POLICY_METADATA: dict[str, dict[str, Any]] = {
         "authorizing_roles": ["incident_commander", "admin"],
         "minimum_approver_clearance": "TIER_2",
         "audit_tags": ["RBAC:TICKET_CLOSURE", "GOVERNANCE:FOUR_EYES"],
-    },
-    "write_json_file": {
-        "staging_permitted_roles": ["tier1_analyst", "incident_commander", "admin"],
-        "requires_four_eyes": True,
-        "authorizing_roles": ["incident_commander", "admin"],
-        "minimum_approver_clearance": "TIER_2",
-        "audit_tags": ["SANDBOX:WRITE_FILE", "GOVERNANCE:FOUR_EYES"],
     },
     "auto_respond": {
         "staging_permitted_roles": ["end_user", "tier1_analyst", "incident_commander", "admin"],

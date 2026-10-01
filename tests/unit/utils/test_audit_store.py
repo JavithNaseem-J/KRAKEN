@@ -59,7 +59,7 @@ class TestLogAction:
                 session_id="s1",
                 user_id="u1",
                 action_type="WRITE",
-                action_name="write_json_file",
+                action_name="create_ticket",
                 risk_level="CRITICAL",
                 hitl_required=True,
                 status="success",

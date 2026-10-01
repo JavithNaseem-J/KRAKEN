@@ -53,9 +53,9 @@ def test_seed_mutation_is_an_isolated_overlay() -> None:
     assert repo.get("session-b", "TCK-24001")["status"] == "OPEN"
 
 
-def test_public_environment_rejects_filesystem_actions_and_sixth_write() -> None:
+def test_public_environment_rejects_removed_action_and_sixth_write() -> None:
     repo = repository(write_limit=5)
-    with pytest.raises(ActionExecutionError, match="Filesystem"):
+    with pytest.raises(Exception, match="not registered"):
         _dispatch_synthetic("write_json_file", {"target_path": "x.json", "content": {}}, "s", repo)
 
     for _ in range(5):

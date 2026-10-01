@@ -3,13 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import sys
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -98,6 +98,9 @@ class CaseResult(BaseModel):
     prohibited_claims: list[str] = Field(default_factory=list)
     latency_seconds: float = Field(ge=0.0)
     error: str | None = None
+    verified_role: str | None = None
+    cache_hit: bool | None = None
+    response_origin: str = "unknown"
     judge: JudgeResult = Field(default_factory=JudgeResult)
 
 
@@ -120,6 +123,7 @@ class EvaluationReport(BaseModel):
     provider: str | None
     model: str | None
     cache_mode: str
+    excluded_count: int = 0
     case_count: int
     metrics: EvaluationMetrics
     thresholds: EvaluationThresholds
@@ -193,6 +197,13 @@ def score_response(
         response_contract=float(contract_ok),
         prohibited_claims=violations,
         latency_seconds=round(max(latency_seconds, 0.0), 3),
+        verified_role=response.get("_verified_role"),
+        cache_hit=(response.get("cache") or {}).get("hit")
+        if isinstance(response.get("cache"), dict)
+        else None,
+        response_origin="cache"
+        if isinstance(response.get("cache"), dict) and response["cache"].get("hit") is True
+        else "unknown",
     )
     if judge_enabled:
         result.judge = _judge(case, response)
@@ -221,7 +232,11 @@ def evaluate_cases(
                     response_contract=0.0,
                     prohibited_claims=[],
                     latency_seconds=0.0,
-                    error=exc.__class__.__name__,
+                    error=(
+                        f"{exc.__class__.__name__}: {exc}"
+                        if isinstance(exc, ValueError)
+                        else exc.__class__.__name__
+                    ),
                 )
             )
     return results
@@ -236,6 +251,7 @@ def build_report(
     provider: str | None = None,
     model: str | None = None,
     cache_mode: str = "controlled",
+    target_sha: str | None = None,
 ) -> EvaluationReport:
     if len(cases) != len(results):
         raise ValueError("case and result counts must match")
@@ -268,7 +284,7 @@ def build_report(
             "evaluator_contract_only" if mode == "offline" else "observed_application_response"
         ),
         generation=suite.generation,
-        commit_sha=(os.getenv("KRAKEN_COMMIT_SHA") or os.getenv("RENDER_GIT_COMMIT") or "unknown"),
+        commit_sha=target_sha or ("offline_fixture" if mode == "offline" else "unknown"),
         provider=provider,
         model=model,
         cache_mode=cache_mode,
@@ -284,25 +300,152 @@ def offline_responder(case: GoldenCase) -> tuple[dict[str, Any], float]:
     return {"answer": answer, "sources": case.expected_sources}, 0.0
 
 
-def make_live_responder(client: httpx.Client) -> Responder:
+def target_revision(client: httpx.Client, expected_sha: str | None = None) -> str:
+    """Read build identity from the target, rejecting placeholders and mismatches."""
+    response = client.get("/version")
+    response.raise_for_status()
+    body = response.json()
+    sha = body.get("commit_sha") if isinstance(body, dict) else None
+    if (
+        not isinstance(sha, str)
+        or len(sha) != 40
+        or not all(c in "0123456789abcdef" for c in sha)
+        or sha == "0" * 40
+    ):
+        raise ValueError("target /version did not provide a verified commit SHA")
+    if expected_sha and sha != expected_sha:
+        raise ValueError(f"target revision {sha} does not match expected {expected_sha}")
+    return sha
+
+
+def establish_case_session(client: httpx.Client, role: str, generation: str) -> tuple[str, str]:
+    identity_response = client.post("/v1/session")
+    identity_response.raise_for_status()
+    identity = identity_response.json()
+    session_id = identity.get("session_id")
+    csrf_token = identity.get("csrf_token")
+    if not session_id or not csrf_token or identity.get("dataset_generation") != generation:
+        raise ValueError("target public session identity or generation is invalid")
+    transition = client.post(
+        "/v1/session/persona", json={"persona": role, "csrf_token": csrf_token}
+    )
+    transition.raise_for_status()
+    verified = client.get(f"/v1/sessions/{session_id}")
+    verified.raise_for_status()
+    verified_identity = verified.json()
+    if (
+        verified_identity.get("persona") != role
+        or verified_identity.get("session_id") != session_id
+    ):
+        raise ValueError(f"target did not establish required role {role}")
+    return session_id, csrf_token
+
+
+def make_live_responder(client: httpx.Client, generation: str) -> Responder:
     def respond(case: GoldenCase) -> tuple[dict[str, Any], float]:
+        session_id, csrf_token = establish_case_session(client, case.required_role, generation)
         started = time.perf_counter()
         response = client.post(
             "/v1/run",
-            json={
-                "message": case.query,
-                "session_id": f"eval-{case.case_id.lower()}",
-                "user_id": "evaluation-runner",
-                "metadata": {"operator_role": case.required_role},
-            },
+            json={"message": case.query},
+            headers={"X-CSRF-Token": csrf_token},
         )
         response.raise_for_status()
         body = response.json()
         if not isinstance(body, dict):
             raise TypeError("evaluation response must be a JSON object")
+        if body.get("session_id") != session_id:
+            raise ValueError("response session does not match verified identity")
+        body["_verified_role"] = case.required_role
         return body, time.perf_counter() - started
 
     return respond
+
+
+def measure_stream(
+    client: httpx.Client,
+    *,
+    message: str,
+    role: str,
+    generation: str,
+    disconnect_after_delta: bool = False,
+) -> dict[str, Any]:
+    session_id, csrf_token = establish_case_session(client, role, generation)
+    started = time.perf_counter()
+    first_delta_ms: float | None = None
+    terminal_ms: float | None = None
+    cache_hit = False
+    error: str | None = None
+    disconnected = False
+    with client.stream(
+        "POST",
+        "/v1/run/stream",
+        json={"message": message},
+        headers={"X-CSRF-Token": csrf_token},
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line.startswith("data: "):
+                continue
+            try:
+                event = json.loads(line[6:])
+            except ValueError:
+                error = "malformed SSE event"
+                break
+            if event.get("status") == "cache_hit":
+                cache_hit = True
+            if event.get("status") == "error":
+                error = str(event.get("message") or "stream error")
+                break
+            if event.get("status") == "delta" and event.get("content") and first_delta_ms is None:
+                first_delta_ms = round((time.perf_counter() - started) * 1000, 1)
+                if disconnect_after_delta:
+                    disconnected = True
+                    break
+            if event.get("node") == "done" and event.get("status") == "end":
+                terminal_ms = round((time.perf_counter() - started) * 1000, 1)
+                break
+    if not disconnected and terminal_ms is None and error is None:
+        error = "stream ended without terminal event"
+    return {
+        "session_id": session_id,
+        "verified_role": role,
+        "category": "cache"
+        if cache_hit
+        else (
+            "greeting"
+            if message.strip().casefold() in {"hi", "hello", "hey"}
+            else "generated_or_fallback"
+        ),
+        "first_delta_ms": first_delta_ms,
+        "terminal_ms": terminal_ms,
+        "disconnected_after_delta": disconnected,
+        "error": error,
+    }
+
+
+def summarize_stream_samples(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    by_category: dict[str, dict[str, Any]] = {}
+    for category in sorted({sample["category"] for sample in samples}):
+        group = [sample for sample in samples if sample["category"] == category]
+        first = sorted(
+            sample["first_delta_ms"] for sample in group if sample["first_delta_ms"] is not None
+        )
+        terminal = sorted(
+            sample["terminal_ms"] for sample in group if sample["terminal_ms"] is not None
+        )
+        by_category[category] = {
+            "samples": len(group),
+            "errors": sum(bool(sample["error"]) for sample in group),
+            "first_delta_samples": len(first),
+            "terminal_samples": len(terminal),
+            "first_delta_median_ms": statistics.median(first) if first else None,
+            "terminal_median_ms": statistics.median(terminal) if terminal else None,
+            "terminal_p95_ms": terminal[min(len(terminal) - 1, int(0.95 * len(terminal)))]
+            if terminal
+            else None,
+        }
+    return by_category
 
 
 def write_reports(report: EvaluationReport, json_path: Path, junit_path: Path) -> None:
@@ -388,19 +531,20 @@ def _mean(values: list[float]) -> float:
     return round(sum(values) / len(values), 4) if values else 1.0
 
 
-def _provider_label(base_url: str) -> str:
-    return urlparse(base_url).hostname or "unknown"
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="KRAKEN deterministic AI evaluation")
-    parser.add_argument("--mode", choices=("offline", "live"), default="offline")
+    parser.add_argument("--mode", choices=("offline", "live", "stream"), default="offline")
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--api-key", default=os.getenv("EVAL_API_KEY", ""))
+    parser.add_argument("--expected-sha", help="Require an exact target /version commit SHA")
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
     parser.add_argument("--cache-mode", default="configured")
     parser.add_argument("--judge", action="store_true")
     parser.add_argument("--case")
+    parser.add_argument(
+        "--samples", type=int, default=5, help="Stream measurements per selected case"
+    )
+    parser.add_argument("--disconnect-after-delta", action="store_true")
     parser.add_argument("--json-report", type=Path, default=Path("reports/ai-evaluation.json"))
     parser.add_argument("--junit-report", type=Path, default=Path("reports/ai-evaluation.xml"))
     args = parser.parse_args()
@@ -411,26 +555,76 @@ def main() -> int:
         if not cases:
             parser.error(f"unknown case ID: {args.case}")
 
-    if args.mode == "live":
-        if not args.api_key:
-            parser.error("--api-key or EVAL_API_KEY is required in live mode")
-        provider_url = os.getenv("LLM_BASE_URL", "")
-        provider = _provider_label(provider_url) if provider_url else "configured-by-target"
-        model = os.getenv("LLM_MODEL", "configured-by-target")
+    if args.mode in {"live", "stream"}:
+        provider = None
+        model = None
         with httpx.Client(
             base_url=args.base_url.rstrip("/"),
-            headers={"X-API-Key": args.api_key},
+            headers={"X-API-Key": args.api_key} if args.api_key else {},
             timeout=args.timeout_seconds,
             follow_redirects=True,
         ) as client:
+            try:
+                target_sha = target_revision(client, args.expected_sha)
+            except (httpx.HTTPError, ValueError) as exc:
+                parser.error(str(exc))
+            if args.mode == "stream":
+                if not args.case:
+                    parser.error("--case is required for stream measurements")
+                if args.samples < 1:
+                    parser.error("--samples must be positive")
+                samples = []
+                for _ in range(args.samples):
+                    try:
+                        samples.append(
+                            measure_stream(
+                                client,
+                                message=cases[0].query,
+                                role=cases[0].required_role,
+                                generation=suite.generation,
+                                disconnect_after_delta=args.disconnect_after_delta,
+                            )
+                        )
+                    except (httpx.HTTPError, ValueError) as exc:
+                        samples.append(
+                            {
+                                "category": "unknown",
+                                "first_delta_ms": None,
+                                "terminal_ms": None,
+                                "error": exc.__class__.__name__,
+                                "disconnected_after_delta": False,
+                            }
+                        )
+                stream_report = {
+                    "mode": "stream",
+                    "evidence_scope": "observed_application_stream",
+                    "commit_sha": target_sha,
+                    "generation": suite.generation,
+                    "case_id": cases[0].case_id,
+                    "sample_count": len(samples),
+                    "excluded_count": sum(bool(sample["error"]) for sample in samples),
+                    "provider": None,
+                    "model": None,
+                    "categories": summarize_stream_samples(samples),
+                    "samples": samples,
+                }
+                args.json_report.parent.mkdir(parents=True, exist_ok=True)
+                args.json_report.write_text(
+                    json.dumps(stream_report, indent=2) + "\n", encoding="utf-8"
+                )
+                print(
+                    f"Stream measurements: {len(samples)} samples, {stream_report['excluded_count']} errors"
+                )
+                return 1 if stream_report["excluded_count"] else 0
             results = evaluate_cases(
                 cases,
-                make_live_responder(client),
+                make_live_responder(client, suite.generation),
                 judge_enabled=args.judge,
             )
     else:
         provider = None
         model = None
+        target_sha = None
         results = evaluate_cases(cases, offline_responder, judge_enabled=args.judge)
 
     report = build_report(
@@ -441,6 +635,7 @@ def main() -> int:
         provider=provider,
         model=model,
         cache_mode="controlled" if args.mode == "offline" else args.cache_mode,
+        target_sha=target_sha,
     )
     write_reports(report, args.json_report, args.junit_report)
     print_report(report)

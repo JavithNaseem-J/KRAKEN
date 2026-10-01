@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import pytest
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import PointStruct
 
+from src.utils.knowledge.ingest import ensure_collection, upsert_chunks_async
+from src.utils.knowledge.loaders.sla_loader import load_sla_chunks
 from src.utils.knowledge.retriever import KnowledgeRetriever, settings
 from src.utils.models.knowledge import KnowledgeSource, RetrievalRequest
 
@@ -91,3 +96,46 @@ async def test_ticket_scroll_uses_active_collection_version() -> None:
     conditions = {condition.key: condition.match for condition in scroll_filter.must}
     assert conditions["collection_version"].value == settings.knowledge_collection_version
     assert conditions["dataset_generation"].value == settings.synthetic_dataset_generation
+
+
+@pytest.mark.asyncio
+async def test_disposable_qdrant_only_returns_current_sla_risk_knowledge() -> None:
+    client = AsyncQdrantClient(location=":memory:")
+    embedder = MagicMock()
+    embedder.embed_query.return_value = [0.1] * settings.embedding_dim
+    embedder.embed_documents.side_effect = lambda texts: [
+        [0.1] * settings.embedding_dim for _ in texts
+    ]
+    try:
+        await ensure_collection(client, settings.qdrant_collection_name)
+        chunks = load_sla_chunks()
+        assert any("quarantine_ip: CRITICAL" in chunk["document"] for chunk in chunks)
+        await upsert_chunks_async(client, embedder, chunks, KnowledgeSource.SLA.value)
+        await client.upsert(
+            collection_name=settings.qdrant_collection_name,
+            points=[
+                PointStruct(
+                    id=str(uuid4()),
+                    vector=[0.1] * settings.embedding_dim,
+                    payload={
+                        "content": "obsolete risk mapping",
+                        "source": KnowledgeSource.SLA.value,
+                        "scope": "shared",
+                        "allowed_roles": ["public"],
+                        "collection_version": "v2",
+                        "dataset_generation": settings.synthetic_dataset_generation,
+                    },
+                )
+            ],
+        )
+        result = await KnowledgeRetriever(client, embedder).retrieve(
+            RetrievalRequest(
+                query="quarantine_ip risk mapping",
+                sources=[KnowledgeSource.SLA],
+                session_id="disposable-session",
+            )
+        )
+        assert any("quarantine_ip: CRITICAL" in chunk.content for chunk in result.chunks)
+        assert all("obsolete risk mapping" not in chunk.content for chunk in result.chunks)
+    finally:
+        await client.close()

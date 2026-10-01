@@ -1,19 +1,21 @@
 # KRAKEN — Knowledge Retrieval & Autonomous Knowledge Execution Network
 
-> KRAKEN is an AI agent for cybersecurity and IT support. It answers questions using trusted project knowledge, works with support tickets in a safe sandbox, pauses risky actions for human approval, and records actions with a SHA-256 audit chain.
+> KRAKEN is a portfolio demonstration of grounded IT and security support over synthetic data. It answers policy questions, manages synthetic tickets, pauses critical actions for an approval decision, and records best-effort audit events in a SHA-256 chain.
+
+For the interview walkthrough, measured checks, cleanup decisions, and limits, see the [portfolio guide](docs/portfolio.md).
 
 ---
 
 ## ⚡ Why KRAKEN? (Problem & Features)
 
-Companies cannot safely use an AI agent if it guesses policies, takes risky actions without approval, or exposes sensitive information. KRAKEN reduces those risks by grounding answers in known data, limiting actions to a sandbox, and requiring human approval for high-risk steps.
+An AI support workflow needs grounded answers and a visible decision point before risky changes. KRAKEN demonstrates those controls with test personas and synthetic operations. It has no measured business impact or real users.
 
 - **Grounded Vector RAG**: KRAKEN searches trusted documents and user-uploaded session files before answering. It uses Qdrant vector search to find relevant information.
-- **Human Approval for Risky Actions**: If an action is marked `CRITICAL`, such as escalating or closing a ticket, KRAKEN pauses and waits for an approved human reviewer.
-- **Tamper-Detectable Audit Logs**: KRAKEN stores action records in PostgreSQL. Each record is linked with SHA-256 hashes using `previous_hash` and `entry_hash`, so changes can be detected.
+- **Approval for Risky Actions**: If an action is marked `CRITICAL`, KRAKEN pauses and requires a verified decision record before execution. Public personas simulate roles; they do not establish two independent humans.
+- **Tamper-Detectable Audit Logs**: KRAKEN stores action records in PostgreSQL. Each record is linked with SHA-256 hashes using `previous_hash` and `entry_hash`, so changes can be detected when delivery succeeds. Audit delivery is best-effort.
 - **Synthetic Test Environment**: The `northstar-v1` dataset includes 500 tickets and 30 documents. Actions run in this sandbox, not against real infrastructure.
 - **Private Model Reasoning**: Internal LLM reasoning stays inside the agent workflow. It is not exposed through public APIs, SSE streams, audit logs, or browser storage.
-- **Memory and Caching**: KRAKEN uses Redis and Qdrant to cache responses and store short-term and long-term memory.
+- **Session Memory and Caching**: Redis stores session history and approval state. Qdrant stores knowledge and semantic cache entries.
 
 ---
 
@@ -31,13 +33,12 @@ graph TD
         Orchestrator --> Knowledge[Knowledge Engine]
         Orchestrator --> Action[Action Dispatcher]
         Orchestrator --> Approval[HITL Approval Queue]
-        Orchestrator --> Memory[Dual-Tier Memory]
+        Orchestrator --> Memory[Session Memory]
         Orchestrator --> Audit[Audit Logger]
     end
 
     subgraph Infra["Data & Provider Layer"]
         Knowledge -->|Vectors & Embeddings| Qdrant[(Qdrant Cloud Vector DB)]
-        Memory -->|Episodic Vectors| Qdrant
         Memory -->|Session State & Cache| Redis[(Redis)]
         Action -->|Synthetic Tickets & Metadata| Postgres[(PostgreSQL)]
         Audit -->|SHA-256 Audit Chain| Postgres
@@ -95,11 +96,11 @@ stateDiagram-v2
 
 | Result | Verified Value | Source |
 |---|---:|---|
-| **Automated tests** | **327 passed**: 314 backend unit, 7 backend integration, 6 frontend | Latest local `pytest` / `vitest` run; suites in `tests/unit`, `tests/integration`, `frontend-react` |
+| **Automated tests** | **340 Python unit/eval, 7 backend integration, 9 frontend passed** | Local `pytest` and `vitest` runs on this change; suites in `tests/unit`, `tests/evals`, `tests/integration`, `frontend-react` |
 | **Offline evaluator** | **50 cases**; 100.0% source recall, 100.0% required-fact coverage, 100.0% response-contract compliance, 0 prohibited-claim violations, 0 request errors | Latest local offline evaluator run; harness in `tests/evals/eval_harness.py` |
 | **Synthetic corpus (`northstar-v1`)** | **500 tickets, 30 documents, 75 capability scenarios** | `data/synthetic/manifest.json` |
 
-The offline evaluator is fixture-based and validates retrieval/response contracts; it does not measure live model quality.
+The offline evaluator is fixture-based and checks the evaluator contract. It does not measure live model quality. No verified staging latency or live quality result is included yet.
 
 ---
 
@@ -147,13 +148,4 @@ Open `http://localhost:8000` for the React UI, or call the REST API directly.
 
 ## 🔮 Future Work
 
-These are proposed next steps, not implemented capabilities:
-
-- **Multi-Modal Evidence Attachments**: Support image and packet-capture (`.pcap`) evidence analysis.
-- **Distributed Agent Mesh**: Extend LangGraph nodes into distributed workers for batch incident triage.
-- **Automated Red-Teaming CI Gate**: Add continuous adversarial prompt-injection fuzzing to CI.
-- **Alembic Migrations**: Move schema evolution into versioned database migrations.
-- **Automatic Render Rollback**: Roll back a failed production deployment automatically.
-- **Load & Soak Testing**: Add measured sustained-traffic thresholds.
-- **Accessibility Automation**: Add automated accessibility checks for the React UI.
-- **Additional Browser Coverage**: Expand browser coverage beyond the current frontend test path.
+The next evidence step is to ingest knowledge version `v3` in staging, run the live golden suite and repeated SSE measurements against the intended commit, and publish the redacted results. A durable audit outbox would be needed before claiming guaranteed audit delivery.

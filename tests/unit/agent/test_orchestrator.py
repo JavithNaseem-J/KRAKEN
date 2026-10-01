@@ -48,11 +48,8 @@ class TestRetrieverNode:
         args, kwargs = mock_client.post.call_args
         assert "X-Service-Token" in kwargs["headers"]
 
-    @patch("src.agent.nodes.retriever.internal_request")
     @patch("src.agent.nodes.retriever._fetch_knowledge", new_callable=AsyncMock)
-    async def test_public_session_skips_shared_episodic_memory(
-        self, mock_fetch: AsyncMock, mock_internal: AsyncMock
-    ) -> None:
+    async def test_public_session_fetches_knowledge(self, mock_fetch: AsyncMock) -> None:
         mock_fetch.return_value = []
         state = {
             "session_id": "public-session",
@@ -61,9 +58,9 @@ class TestRetrieverNode:
             "user_message": "What happened earlier?",
         }
 
-        await retriever_node(state)
-
-        mock_internal.assert_not_awaited()
+        result = await retriever_node(state)
+        assert result["retrieved_chunks"] == []
+        mock_fetch.assert_awaited_once()
 
 
 # ── Memory Writer Node Tests ──────────────────────────────────────────────────
@@ -84,21 +81,8 @@ class TestMemoryWriterNode:
         mock_persist.assert_awaited_once()
 
     @patch("src.utils.http_client.post_with_retry", new_callable=AsyncMock)
-    async def test_public_session_persists_only_short_term_memory(
-        self, mock_post: AsyncMock
-    ) -> None:
-        await _persist_memory(
-            AsyncMock(),
-            "public-session",
-            "alice",
-            [],
-            "Question",
-            "Answer",
-            "auto_respond",
-            None,
-            None,
-            store_episodic=False,
-        )
+    async def test_session_persists_history(self, mock_post: AsyncMock) -> None:
+        await _persist_memory(AsyncMock(), "public-session", [])
 
         assert mock_post.await_count == 1
         assert "/session/public-session" in mock_post.await_args.args[1]
@@ -216,7 +200,9 @@ class TestLatencyFastPath:
 
         response = await run_stream(self._request("How do I use VPN?"))
         payload = "".join([chunk async for chunk in response.body_iterator])
-        events = [json.loads(line[6:]) for line in payload.splitlines() if line.startswith("data: ")]
+        events = [
+            json.loads(line[6:]) for line in payload.splitlines() if line.startswith("data: ")
+        ]
 
         deltas = [event["content"] for event in events if event["status"] == "delta"]
         assert deltas == ["Hello", " world"]

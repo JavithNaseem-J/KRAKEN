@@ -61,6 +61,20 @@ class TestGetPut:
         result = await cache.get(_VECTOR_384)
         assert result is not None
 
+    async def test_prior_knowledge_version_is_not_reused(self, cache: SemanticCache) -> None:
+        cache._redis = None
+        old_context = {
+            "role": "tier1_analyst",
+            "scope": "shared",
+            "embedding_model": "test",
+            "knowledge_version": "v2",
+        }
+        new_context = {**old_context, "knowledge_version": "v3"}
+        await cache.put(_VECTOR_384, "VPN policy", _RESPONSE, old_context)
+
+        assert await cache.get(_VECTOR_384, old_context) == _RESPONSE
+        assert await cache.get(_VECTOR_384, new_context) is None
+
 
 # ── fail-open behaviour ────────────────────────────────────────────────────────
 

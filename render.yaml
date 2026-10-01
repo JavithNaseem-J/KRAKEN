@@ -57,7 +57,7 @@ services:
       - key: QDRANT_INFERENCE_DIM
         value: "384"
       - key: KNOWLEDGE_COLLECTION_VERSION
-        value: v2
+        value: v3
       - key: SYNTHETIC_DATASET_GENERATION
         value: northstar-v1
       - key: SEMANTIC_CACHE_ENABLED

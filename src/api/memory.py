@@ -5,23 +5,14 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel, Field
 
 from src.utils.auth import verify_service_token
-from src.utils.cache import create_async_qdrant_client
 from src.utils.config import get_settings
-from src.utils.db import create_pool, ensure_schema_async
 from src.utils.logging import configure_logging
-from src.utils.memory.long_term import LongTermMemory
 from src.utils.memory.short_term import ShortTermMemory
 from src.utils.middleware.trace_id import TraceIdMiddleware
-from src.utils.models.memory import (
-    EpisodeChunk,
-    EpisodeSearchRequest,
-    EpisodeSearchResponse,
-    EpisodeStoreRequest,
-)
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
@@ -48,53 +39,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.short_term = short_term
     log.info("memory.startup.redis_ready")
 
-    # Long-term: Qdrant
-    log.info("memory.startup.qdrant")
-    try:
-        qdrant_client = create_async_qdrant_client()
-        long_term = LongTermMemory(
-            client=qdrant_client,
-            embedding_model=settings.embedding_model,
-            device=settings.embedding_device,
-        )
-        await long_term.init()
-        app.state.long_term = long_term
-        app.state.qdrant_client = qdrant_client
-        log.info("memory.startup.long_term_ready")
-    except Exception as exc:
-        log.error("memory.startup.qdrant_failed", error=str(exc))
-        app.state.long_term = None
-        app.state.qdrant_client = None
-
-    # PostgreSQL connection pool (Relational state & tickets)
-    try:
-        pool = await create_pool(
-            postgres_url=settings.postgres_url,
-            min_size=2,
-            max_size=5,
-        )
-        await ensure_schema_async(pool)
-        app.state.db_pool = pool
-        log.info("memory.startup.db_pool_ready")
-    except Exception as exc:
-        log.warning("memory.startup.db_pool_failed", error=str(exc))
-        app.state.db_pool = None
-
     log.info("memory.startup.complete")
     yield
 
-    # Shutdown
     await short_term.close()
-    if getattr(app.state, "db_pool", None):
-        await app.state.db_pool.close()
-    if getattr(app.state, "qdrant_client", None):
-        await app.state.qdrant_client.close()
     log.info("memory.shutdown")
 
 
 app = FastAPI(
     title="KRAKEN Memory",
-    description="Session & Episodic Memory Service — KRAKEN",
+    description="Session Memory Service — KRAKEN",
     version="0.8.0",
     lifespan=lifespan,
 )
@@ -105,14 +59,14 @@ app.add_middleware(TraceIdMiddleware)
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, Any]:
     """
-    Liveness probe. Returns degraded status if long-term memory is unavailable.
+    Report the availability of the retained Redis session store.
     """
-    long_term_ok = getattr(app.state, "long_term", None) is not None
+    short_term = getattr(app.state, "short_term", None)
+    short_term_ok = bool(short_term and await short_term.ping())
     return {
-        "status": "ok" if long_term_ok else "degraded",
+        "status": "ok" if short_term_ok else "degraded",
         "service": "memory",
-        "short_term": True,
-        "long_term": long_term_ok,
+        "short_term": short_term_ok,
     }
 
 
@@ -157,44 +111,3 @@ async def clear_session(
     """Delete session from Redis."""
     await app.state.short_term.clear_session(session_id)
     return {"session_id": session_id, "status": "cleared"}
-
-
-# Long-term memory
-@app.post("/long-term", tags=["long-term"])
-async def store_episode(
-    body: EpisodeStoreRequest,
-    _token: str = Depends(verify_service_token),
-) -> dict[str, str]:
-    """Store an episodic memory entry with its embedding in Qdrant."""
-    if getattr(app.state, "long_term", None) is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Long-term memory unavailable (Qdrant not connected).",
-        )
-    memory_id = await app.state.long_term.store(
-        session_id=body.session_id,
-        user_id=body.user_id,
-        content=body.content,
-        metadata=body.metadata,
-    )
-    return {"memory_id": memory_id, "status": "stored"}
-
-
-@app.post("/long-term/search", response_model=EpisodeSearchResponse, tags=["long-term"])
-async def search_episodes(
-    body: EpisodeSearchRequest,
-    _token: str = Depends(verify_service_token),
-) -> EpisodeSearchResponse:
-    """Semantic search over past episodic memories for a user in Qdrant."""
-    if getattr(app.state, "long_term", None) is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Long-term memory unavailable (Qdrant not connected).",
-        )
-    raw_results = await app.state.long_term.search(
-        query=body.query,
-        user_id=body.user_id,
-        top_k=body.top_k,
-    )
-    chunks = [EpisodeChunk.model_validate(r) for r in raw_results]
-    return EpisodeSearchResponse(query=body.query, user_id=body.user_id, results=chunks)

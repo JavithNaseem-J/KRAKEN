@@ -22,14 +22,9 @@ def _format_chunks(
     if not filtered_chunks:
         return "No high-relevance knowledge chunks were retrieved.", False
 
-    # Prioritize authoritative knowledge base chunks (tickets, faq, sla) over past episodic memory
-    auth_chunks = [c for c in filtered_chunks if c.get("source") != "episodic_memory"]
-    epi_chunks = [c for c in filtered_chunks if c.get("source") == "episodic_memory"]
-    sorted_chunks = auth_chunks + epi_chunks
-
     parts = []
     current_chars = 0
-    for i, chunk in enumerate(sorted_chunks, 1):
+    for i, chunk in enumerate(filtered_chunks, 1):
         source = chunk.get("source", "unknown")
         content = chunk.get("content", "")
         score = chunk.get("relevance_score", 0.0)

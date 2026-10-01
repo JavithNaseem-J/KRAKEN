@@ -35,7 +35,6 @@ _WRITE_ACTION_INTENT_PHRASES: dict[str, tuple[str, ...]] = {
         "ask for details",
     ),
     "close": ("close ticket", "close the ticket", "resolve ticket", "resolve the ticket"),
-    "write_json_file": ("write json", "create json file", "save json"),
     "create_ticket": (
         "create ticket",
         "create a ticket",
@@ -175,6 +174,8 @@ class ActionPolicyRule(BaseModel):
 
 def build_action_policies() -> dict[str, ActionPolicyRule]:
     """Build policy rules from the action registry and registry-owned metadata."""
+    if set(REGISTRY) != set(ACTION_POLICY_METADATA):
+        raise ValueError("Action registry and policy metadata must have the same action names.")
     policies: dict[str, ActionPolicyRule] = {}
     for action_name, action_def in REGISTRY.items():
         metadata = ACTION_POLICY_METADATA[action_name]

@@ -40,13 +40,6 @@ def test_responder_prompt_contains_approval_status_section() -> None:
     assert "### **ACTION TAKEN**" in prompt
 
 
-def test_responder_approval_mandate_template_contains_format_vars() -> None:
-    template = get_prompt("responder", "APPROVAL_MANDATE_TEMPLATE")
-    assert isinstance(template, str)
-    assert "{selected_action}" in template
-    assert "{truncated_res}" in template
-
-
 def test_active_versions_covers_all_llm_nodes() -> None:
     expected_nodes = {"reasoner", "decider", "responder"}
     assert set(ACTIVE_VERSIONS.keys()) == expected_nodes

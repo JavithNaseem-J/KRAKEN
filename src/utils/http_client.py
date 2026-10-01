@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -8,6 +10,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from src.utils.config import get_settings
 
 _DEFAULT_ASYNC_TIMEOUT = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+_HTTPX_ASYNC_CLIENT_TYPE = httpx.AsyncClient
 
 
 def service_headers(
@@ -119,9 +122,31 @@ def _is_retryable(exc: BaseException) -> bool:
     return False
 
 
-def _is_mock_client(client: Any) -> bool:
-    """Detect unittest-mocked clients so tests keep full control of the transport."""
-    return type(client).__name__ in ("MagicMock", "AsyncMock", "Mock")
+@asynccontextmanager
+async def upstream_client(
+    url: str,
+    *,
+    timeout_seconds: float,
+    shared_client: httpx.AsyncClient | None = None,
+    client_override: Any | None = None,
+) -> AsyncGenerator[Any, None]:
+    """Choose one transport for an upstream URL; an injected client wins in tests."""
+    if client_override is not None:
+        yield client_override
+        return
+    target_app = get_in_process_app_for_url(url)
+    if target_app is not None:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=target_app),
+            base_url="http://internal",
+            timeout=timeout_seconds,
+        ) as client:
+            yield client
+    elif shared_client is not None:
+        yield shared_client
+    else:
+        async with create_async_http_client(timeout_seconds=timeout_seconds) as client:
+            yield client
 
 
 @retry(
@@ -150,15 +175,17 @@ async def internal_request(
     responses raise immediately and are never retried.
     """
     resolved_method = method.upper()
-    target_app = get_in_process_app_for_url(url)
-    if target_app is not None and not _is_mock_client(client):
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=target_app),
-            base_url="http://internal",
-            timeout=timeout_seconds,
-        ) as in_proc_client:
-            resp = await in_proc_client.request(
-                resolved_method,
+    async with upstream_client(
+        url,
+        timeout_seconds=timeout_seconds,
+        shared_client=client if isinstance(client, _HTTPX_ASYNC_CLIENT_TYPE) else None,
+        client_override=client
+        if client is not None and not isinstance(client, _HTTPX_ASYNC_CLIENT_TYPE)
+        else None,
+    ) as selected:
+        if client is not None and not isinstance(client, _HTTPX_ASYNC_CLIENT_TYPE):
+            request_fn = getattr(selected, resolved_method.lower())
+            resp = await request_fn(
                 url,
                 json=json_payload,
                 data=data,
@@ -166,19 +193,8 @@ async def internal_request(
                 content=content,
                 headers=headers,
             )
-    elif client is not None:
-        request_fn = getattr(client, resolved_method.lower())
-        resp = await request_fn(
-            url,
-            json=json_payload,
-            data=data,
-            files=files,
-            content=content,
-            headers=headers,
-        )
-    else:
-        async with create_async_http_client(timeout_seconds=timeout_seconds) as fallback_client:
-            resp = await fallback_client.request(
+        else:
+            resp = await selected.request(
                 resolved_method,
                 url,
                 json=json_payload,
@@ -218,9 +234,6 @@ def metrics_text(service_name: str) -> str:
         "# HELP kraken_service_up Liveness indicator (1 = healthy)\n"
         "# TYPE kraken_service_up gauge\n"
         f'kraken_service_up{{service="{service_name}"}} 1\n'
-        "# HELP kraken_requests_total Total HTTP requests processed\n"
-        "# TYPE kraken_requests_total counter\n"
-        f'kraken_requests_total{{service="{service_name}"}} 1\n'
     )
 
 

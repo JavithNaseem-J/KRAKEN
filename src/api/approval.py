@@ -52,6 +52,7 @@ class PendingApprovalRequest(BaseModel):
     session_id: str
     initiator_id: str = ""
     initiator_role: str = "end_user"
+    public_session_id: str | None = None
 
     @field_validator("payload", mode="before")
     @classmethod
@@ -231,6 +232,7 @@ async def create_pending(
         initiator_id=req.initiator_id,
         initiator_role=req.initiator_role,
         approval_id=req.approval_id,
+        public_session_id=req.public_session_id,
     )
 
     approval_url = print_approval_notice(
@@ -322,6 +324,7 @@ async def submit_decision(
     approver_role: str | None = Form(None),
     approver_id: str | None = Form(None),
     expected_session_id: str | None = Form(None),
+    _token: str = Depends(verify_service_token),
 ) -> HTMLResponse | JSONResponse:
     """
     Process the approve/reject form. Resolves the queue entry,
@@ -329,6 +332,9 @@ async def submit_decision(
     """
     if decision not in {"approve", "reject"}:
         raise HTTPException(status_code=400, detail="decision must be 'approve' or 'reject'.")
+
+    if decision == "approve" and (not approver_id or not approver_role):
+        raise HTTPException(status_code=403, detail="Verified approver identity is required.")
 
     if not csrf_token or not csrf_token.strip():
         raise HTTPException(status_code=403, detail="Invalid or missing CSRF token.")
@@ -376,7 +382,12 @@ async def submit_decision(
             detail=policy_eval.reason,
         )
 
-    entry = await queue.resolve(approval_id)
+    entry = await queue.resolve(
+        approval_id,
+        decision=decision,
+        approver_id=approver_id,
+        approver_role=approver_role,
+    )
 
     if entry is None:
         raise HTTPException(

@@ -14,6 +14,7 @@ from src.utils.synthetic_data import (
     validate_corpus,
     write_corpus,
 )
+from src.utils.registry import REGISTRY
 
 
 def test_same_seed_produces_identical_manifest_and_stable_order() -> None:
@@ -72,3 +73,10 @@ def test_every_capability_has_five_curated_cases() -> None:
     coverage = corpus.manifest.capability_coverage if corpus.manifest else {}
     assert len(coverage) == 15
     assert set(coverage.values()) == {5}
+
+
+def test_generated_action_risks_match_runtime_registry() -> None:
+    corpus = build_corpus()
+    assert corpus.sla["action_risk_mapping"] == {
+        name: REGISTRY[name].risk_level.value for name in sorted(REGISTRY)
+    }

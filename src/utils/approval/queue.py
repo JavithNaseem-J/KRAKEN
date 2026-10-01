@@ -9,6 +9,7 @@ from typing import Any
 
 import redis.asyncio as aioredis
 import structlog
+from redis.exceptions import WatchError
 
 from src.utils.privacy import strip_reasoning_fields
 
@@ -30,6 +31,8 @@ class ApprovalQueue:
         self._prefix = f"kraken:{self._generation}:approval:"
         self._index = f"kraken:{self._generation}:approval:index"
         self._resolved_prefix = f"kraken:{self._generation}:approval:resolved:"
+        self._claim_prefix = f"kraken:{self._generation}:approval:claim:"
+        self._result_prefix = f"kraken:{self._generation}:approval:result:"
         self._csrf_prefix = f"kraken:{self._generation}:csrf:"
         self._timeout = timeout_seconds
         self._in_memory_map: dict[str, dict[str, Any]] = {}
@@ -62,6 +65,7 @@ class ApprovalQueue:
         initiator_id: str = "",
         initiator_role: str = "end_user",
         approval_id: str | None = None,
+        public_session_id: str | None = None,
     ) -> str:
         """
         Register a new pending approval. Returns the approval_id.
@@ -77,6 +81,7 @@ class ApprovalQueue:
             "session_id": session_id,
             "initiator_id": initiator_id,
             "initiator_role": initiator_role,
+            "public_session_id": public_session_id,
             "expires_at": expires_at,
             "status": "pending",
             "dataset_generation": self._generation,
@@ -159,23 +164,51 @@ class ApprovalQueue:
         self.sweep_expired_in_memory()
         return strip_reasoning_fields(self._in_memory_map.get(approval_id))
 
-    async def resolve(self, approval_id: str) -> dict[str, Any] | None:
+    async def resolve(
+        self,
+        approval_id: str,
+        *,
+        decision: str = "reject",
+        approver_id: str | None = None,
+        approver_role: str | None = None,
+    ) -> dict[str, Any] | None:
         """
         Remove an approval from the queue and return its data.
         Returns None if already resolved or expired.
-        Uses atomic GETDEL to prevent race conditions.
+        Atomically records the decision before any resume callback is sent.
         """
         key = f"{self._prefix}{approval_id}"
 
         try:
-            data = await self._redis.getdel(key)
-            if data is not None:
-                pipe = self._redis.pipeline()
-                pipe.srem(self._index, approval_id)
-                pipe.set(f"{self._resolved_prefix}{approval_id}", "1", ex=self._timeout)
-                await pipe.execute()
-                log.info("queue.resolved", approval_id=approval_id)
-                return strip_reasoning_fields(json.loads(data))
+            async with self._redis.pipeline(transaction=True) as pipe:
+                await pipe.watch(key)
+                data = await pipe.get(key)
+                if data is not None:
+                    entry = strip_reasoning_fields(json.loads(data))
+                    expires_at = datetime.fromisoformat(entry["expires_at"])
+                    if expires_at <= datetime.now(UTC):
+                        return None
+                    resolved = {
+                        **entry,
+                        "decision": decision,
+                        "approver_id": approver_id,
+                        "approver_role": approver_role,
+                        "status": "resolved",
+                        "resolved_at": datetime.now(UTC).isoformat(),
+                    }
+                    pipe.multi()
+                    pipe.delete(key)
+                    pipe.srem(self._index, approval_id)
+                    pipe.set(
+                        f"{self._resolved_prefix}{approval_id}",
+                        json.dumps(resolved),
+                        ex=self._timeout + 3600,
+                    )
+                    await pipe.execute()
+                    log.info("queue.resolved", approval_id=approval_id)
+                    return entry
+        except WatchError:
+            return None
         except Exception as exc:
             log.warning("queue.redis_resolve_failed_using_in_memory", error=str(exc))
 
@@ -187,6 +220,40 @@ class ApprovalQueue:
             )
             log.info("queue.resolved_in_memory", approval_id=approval_id)
         return strip_reasoning_fields(entry)
+
+    async def get_decision(self, approval_id: str) -> dict[str, Any] | None:
+        """Read shared decision evidence; local fallback cannot authorize execution."""
+        raw = await self._redis.get(f"{self._resolved_prefix}{approval_id}")
+        if not raw:
+            return None
+        try:
+            entry = strip_reasoning_fields(json.loads(raw))
+        except (TypeError, ValueError):
+            return None  # Legacy resolved markers contain only "1".
+        return (
+            entry
+            if isinstance(entry, dict) and entry.get("dataset_generation") == self._generation
+            else None
+        )
+
+    async def claim_execution(self, approval_id: str) -> tuple[str, dict[str, Any] | None]:
+        """Ensure that one worker at most dispatches a verified approval."""
+        result_key = f"{self._result_prefix}{approval_id}"
+        raw = await self._redis.get(result_key)
+        if raw:
+            return "complete", json.loads(raw)
+        claimed = await self._redis.set(
+            f"{self._claim_prefix}{approval_id}", "1", ex=self._timeout + 3600, nx=True
+        )
+        if claimed:
+            return "claimed", None
+        raw = await self._redis.get(result_key)
+        return ("complete", json.loads(raw)) if raw else ("in_progress", None)
+
+    async def complete_execution(self, approval_id: str, result: dict[str, Any]) -> None:
+        await self._redis.set(
+            f"{self._result_prefix}{approval_id}", json.dumps(result), ex=self._timeout + 3600
+        )
 
     async def set_csrf_token(self, approval_id: str, token: str) -> None:
         """Store a CSRF token for an approval request."""

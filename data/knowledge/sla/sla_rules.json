@@ -48,12 +48,12 @@
   },
   "action_risk_mapping": {
     "auto_respond": "SAFE",
-    "request_info": "SAFE",
+    "close": "CRITICAL",
     "create_ticket": "SAFE",
-    "close_ticket": "MEDIUM",
-    "escalate_ticket": "MEDIUM",
+    "escalate": "CRITICAL",
+    "get_ticket_status": "SAFE",
     "quarantine_ip": "CRITICAL",
-    "unlock_account": "CRITICAL",
-    "write_json_file": "CRITICAL"
+    "request_info": "CRITICAL",
+    "unlock_account": "CRITICAL"
   }
 }

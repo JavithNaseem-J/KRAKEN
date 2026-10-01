@@ -21,7 +21,7 @@ def client(monkeypatch):
     mock_queue.get = AsyncMock(
         return_value={
             "approval_id": "test-approval-id",
-            "action_name": "write_json_file",
+            "action_name": "quarantine_ip",
             "payload": {"data": "test"},
             "session_id": "session-123",
             "expires_at": "2026-07-05T12:00:00Z",
@@ -79,7 +79,7 @@ def test_pending_creation_success(client):
     response = client.post(
         "/pending",
         json={
-            "action_name": "write_json_file",
+            "action_name": "quarantine_ip",
             "payload": {"hello": "world"},
             "session_id": "session-123",
         },
@@ -88,12 +88,13 @@ def test_pending_creation_success(client):
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["approval_id"] == "test-approval-id"
     client.app.state.queue.enqueue.assert_called_once_with(
-        action_name="write_json_file",
+        action_name="quarantine_ip",
         payload={"hello": "world"},
         session_id="session-123",
         initiator_id="",
         initiator_role="end_user",
         approval_id=None,
+        public_session_id=None,
     )
 
 
@@ -126,12 +127,23 @@ def test_submit_decision_success(client):
 
     response = client.post(
         "/approve/test-approval-id/decision",
-        data={"decision": "approve", "csrf_token": "valid-csrf-token"},
+        data={
+            "decision": "approve",
+            "csrf_token": "valid-csrf-token",
+            "approver_role": "incident_commander",
+            "approver_id": "bob",
+        },
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
     assert b"Decision Recorded" in response.content or b"approve" in response.content.lower()
 
-    client.app.state.queue.resolve.assert_called_once_with("test-approval-id")
+    client.app.state.queue.resolve.assert_called_once_with(
+        "test-approval-id",
+        decision="approve",
+        approver_id="bob",
+        approver_role="incident_commander",
+    )
 
 
 def test_submit_decision_four_eyes_blocked_for_tier1(client):
@@ -141,7 +153,9 @@ def test_submit_decision_four_eyes_blocked_for_tier1(client):
             "decision": "approve",
             "csrf_token": "valid-csrf-token",
             "approver_role": "tier1_analyst",
+            "approver_id": "bob",
         },
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "clearance" in response.json()["detail"].lower()
@@ -158,7 +172,9 @@ def test_submit_decision_four_eyes_allowed_for_incident_commander(client):
             "decision": "approve",
             "csrf_token": "valid-csrf-token",
             "approver_role": "incident_commander",
+            "approver_id": "bob",
         },
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_200_OK
 
@@ -178,6 +194,7 @@ def test_initiator_cannot_approve_own_action(client):
             "approver_id": "bob",
             "expected_session_id": "session-123",
         },
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN
     client.app.state.queue.resolve.assert_not_called()
@@ -191,6 +208,7 @@ def test_approval_session_mismatch_is_not_disclosed(client):
             "csrf_token": "valid-csrf-token",
             "expected_session_id": "different-session",
         },
+        headers=_HEADERS,
     )
     assert response.status_code == status.HTTP_404_NOT_FOUND
     client.app.state.queue.resolve.assert_not_called()

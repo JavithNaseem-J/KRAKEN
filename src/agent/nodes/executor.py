@@ -26,6 +26,7 @@ async def _register_approval(
     initiator_id: str,
     initiator_role: str,
     approval_id: str,
+    public_session_id: str | None = None,
 ) -> str:
     """Call approval service to register pending action. Returns approval_id."""
     resp = await post_with_retry(
@@ -38,6 +39,7 @@ async def _register_approval(
             "initiator_id": initiator_id,
             "initiator_role": initiator_role,
             "approval_id": approval_id,
+            "public_session_id": public_session_id,
         },
         headers=service_headers(trace_id=session_id),
     )
@@ -52,6 +54,7 @@ async def _call_action_service(
     user_id: str,
     public_session_id: str | None = None,
     public_actor_id: str | None = None,
+    approval_id: str | None = None,
 ) -> dict[str, Any]:
     """POST to action service /execute and return the result dict."""
     request = ActionRequest(
@@ -61,6 +64,7 @@ async def _call_action_service(
         user_id=user_id,
         public_session_id=public_session_id,
         public_actor_id=public_actor_id,
+        approval_id=approval_id,
     )
     try:
         resp = await post_with_retry(
@@ -160,6 +164,7 @@ async def executor_node(state: GraphState) -> dict:
                     initiator_id=public_actor_id or user_id,
                     initiator_role=operator_role,
                     approval_id=approval_id,
+                    public_session_id=public_session_id,
                 )
             except Exception as exc:
                 log.error("executor.approval_register_failed", error=str(exc))
@@ -205,6 +210,7 @@ async def executor_node(state: GraphState) -> dict:
                 user_id,
                 public_session_id,
                 public_actor_id,
+                approval_id,
             )
             results.append(crit_res)
             return {

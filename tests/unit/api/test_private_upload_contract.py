@@ -85,7 +85,7 @@ async def test_private_upload_cannot_be_retrieved_by_another_session() -> None:
             "document_id": "private.md",
             "scope": "session-a",
             "allowed_roles": ["public"],
-            "collection_version": "v2",
+            "collection_version": gateway.settings.knowledge_collection_version,
             "dataset_generation": "northstar-v1",
             "untrusted_evidence": True,
             "metadata": {},

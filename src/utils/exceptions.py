@@ -18,14 +18,6 @@ class ActionExecutionError(KRAKENBaseException):
     """Raised when an action fails during execution."""
 
 
-class PathTraversalError(KRAKENBaseException):
-    """Raised when a write target escapes the allowed workspace directory."""
-
-
-class InvalidExtensionError(KRAKENBaseException):
-    """Raised when a write target has a disallowed file extension."""
-
-
 class ActionNotFoundError(KRAKENBaseException):
     """Raised when the requested action name is not in the registry."""
 
