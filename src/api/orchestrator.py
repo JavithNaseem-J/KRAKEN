@@ -47,7 +47,7 @@ from src.utils.http_client import (
     metrics_text,
     service_headers,
 )
-from src.utils.llm import validate_llm_config
+from src.utils.llm import validate_llm_config, visible_chunk_text
 from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
 from src.utils.models.agent import QueryRequest, QueryResponse
@@ -94,18 +94,7 @@ def _responder_stream_delta(event: dict[str, Any]) -> str:
     data = event.get("data")
     if not isinstance(data, dict):
         return ""
-    content = getattr(data.get("chunk"), "content", "")
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    return "".join(
-        block.get("text", "")
-        for block in content
-        if isinstance(block, dict)
-        and block.get("type") == "text"
-        and isinstance(block.get("text"), str)
-    )
+    return visible_chunk_text(data.get("chunk"))
 
 
 def _schedule_background_task(

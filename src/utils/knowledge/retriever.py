@@ -6,11 +6,12 @@ import time
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
-from qdrant_client.models import Document, FieldCondition, Filter, MatchAny, MatchValue
+from qdrant_client.models import Document, FieldCondition, Filter, MatchAny
 
 from src.safety.policy_engine import get_policy_engine
 from src.utils.config import get_settings
 from src.utils.constants import TICKET_ID_REGEX
+from src.utils.knowledge import active_generation_conditions
 from src.utils.models.knowledge import (
     KnowledgeChunk,
     KnowledgeSource,
@@ -258,13 +259,8 @@ class KnowledgeRetriever:
                     key="allowed_roles",
                     match=MatchAny(any=["public", request.user_role]),
                 ),
-                FieldCondition(
-                    key="collection_version",
-                    match=MatchValue(value=settings.knowledge_collection_version),
-                ),
-                FieldCondition(
-                    key="dataset_generation",
-                    match=MatchValue(value=settings.synthetic_dataset_generation),
+                *active_generation_conditions(
+                    settings.knowledge_collection_version, settings.synthetic_dataset_generation
                 ),
             ]
         )
@@ -336,13 +332,9 @@ class KnowledgeRetriever:
                             key="metadata.ticket_id",
                             match=MatchAny(any=query_ids),
                         ),
-                        FieldCondition(
-                            key="collection_version",
-                            match=MatchValue(value=settings.knowledge_collection_version),
-                        ),
-                        FieldCondition(
-                            key="dataset_generation",
-                            match=MatchValue(value=settings.synthetic_dataset_generation),
+                        *active_generation_conditions(
+                            settings.knowledge_collection_version,
+                            settings.synthetic_dataset_generation,
                         ),
                     ]
                 )

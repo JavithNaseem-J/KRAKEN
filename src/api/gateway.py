@@ -369,6 +369,18 @@ async def _proxy(
         )
 
 
+def _upstream_http_error(exc: httpx.HTTPStatusError, request_id: str) -> JSONResponse:
+    try:
+        content = exc.response.json()
+    except ValueError:
+        content = {"error": exc.response.text[:300]}
+    return JSONResponse(
+        content=content,
+        status_code=exc.response.status_code,
+        headers={"X-Request-Id": request_id},
+    )
+
+
 # Routes
 @app.get("/health", tags=["ops"])
 async def health() -> dict[str, str]:
@@ -521,9 +533,10 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
         if not settings.qdrant_url or not settings.qdrant_api_key:
             return CapabilityStatus(state=CapabilityState.DEGRADED, detail="not configured")
         try:
-            from qdrant_client.models import FieldCondition, Filter, MatchValue
+            from qdrant_client.models import Filter
 
             from src.utils.cache import create_async_qdrant_client
+            from src.utils.knowledge import active_generation_conditions
 
             client = create_async_qdrant_client()
             await asyncio.wait_for(client.get_collections(), timeout=timeout)
@@ -531,16 +544,10 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
                 client.count(
                     collection_name=settings.qdrant_collection_name,
                     count_filter=Filter(
-                        must=[
-                            FieldCondition(
-                                key="collection_version",
-                                match=MatchValue(value=settings.knowledge_collection_version),
-                            ),
-                            FieldCondition(
-                                key="dataset_generation",
-                                match=MatchValue(value=settings.synthetic_dataset_generation),
-                            ),
-                        ]
+                        must=active_generation_conditions(
+                            settings.knowledge_collection_version,
+                            settings.synthetic_dataset_generation,
+                        )
                     ),
                     exact=True,
                 ),
@@ -975,15 +982,7 @@ async def approval_details_proxy(request: Request, approval_id: str) -> JSONResp
             headers={"X-Request-Id": request_id},
         )
     except httpx.HTTPStatusError as exc:
-        try:
-            content = exc.response.json()
-        except ValueError:
-            content = {"error": exc.response.text[:300]}
-        return JSONResponse(
-            content=content,
-            status_code=exc.response.status_code,
-            headers={"X-Request-Id": request_id},
-        )
+        return _upstream_http_error(exc, request_id)
     except Exception as exc:
         log.error("gateway.approval_details_proxy_failed", error=str(exc))
         return JSONResponse(
@@ -1129,15 +1128,7 @@ async def upload_knowledge(
             headers={"X-Request-Id": request_id},
         )
     except httpx.HTTPStatusError as exc:
-        try:
-            content = exc.response.json()
-        except ValueError:
-            content = {"error": exc.response.text[:300]}
-        return JSONResponse(
-            content=content,
-            status_code=exc.response.status_code,
-            headers={"X-Request-Id": request_id},
-        )
+        return _upstream_http_error(exc, request_id)
     except Exception as exc:
         log.error("gateway.upload_proxy_failed", error=exc.__class__.__name__)
         return JSONResponse(
@@ -1197,15 +1188,7 @@ async def audit_history_proxy(request: Request, trace_id: str) -> JSONResponse:
             headers={"X-Request-Id": request_id},
         )
     except httpx.HTTPStatusError as exc:
-        try:
-            content = exc.response.json()
-        except ValueError:
-            content = {"error": exc.response.text[:300]}
-        return JSONResponse(
-            content=content,
-            status_code=exc.response.status_code,
-            headers={"X-Request-Id": request_id},
-        )
+        return _upstream_http_error(exc, request_id)
     except Exception as exc:
         log.error("gateway.audit_history_proxy_failed", error=str(exc))
         return JSONResponse(

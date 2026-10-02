@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
-from src.utils.llm import get_llm, stream_llm
+from src.utils.llm import get_llm, stream_llm, visible_chunk_text
 
 log = structlog.get_logger(__name__)
 
@@ -41,22 +41,6 @@ def _action_result_payload(action_result: Any) -> dict[str, Any] | None:
     if isinstance(nested, dict):
         return nested
     return action_result
-
-
-def _stream_chunk_text(chunk: Any) -> str:
-    """Extract visible text while ignoring structured tool or reasoning chunks."""
-    content = getattr(chunk, "content", "")
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    return "".join(
-        block.get("text", "")
-        for block in content
-        if isinstance(block, dict)
-        and block.get("type") == "text"
-        and isinstance(block.get("text"), str)
-    )
 
 
 def _fallback_answer_from_action_result(action_result: Any) -> str:
@@ -260,7 +244,7 @@ async def responder_node(state: GraphState) -> dict:
         ]
         answer_parts = []
         async for chunk in stream_llm(llm, messages):
-            answer_parts.append(_stream_chunk_text(chunk))
+            answer_parts.append(visible_chunk_text(chunk))
         final_answer = "".join(answer_parts).strip()
         if not final_answer:
             raise ValueError("LLM stream completed without visible answer text.")

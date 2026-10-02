@@ -6,11 +6,12 @@ from typing import Annotated, Any
 
 import structlog
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from qdrant_client.models import Filter
 
 from src.utils.auth import verify_service_token
 from src.utils.config import get_settings
 from src.utils.http_client import simple_health_response
+from src.utils.knowledge import active_generation_conditions
 from src.utils.knowledge.retriever import KnowledgeRetriever
 from src.utils.logging import configure_logging
 from src.utils.middleware.trace_id import TraceIdMiddleware
@@ -54,16 +55,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         active_points = await client.count(
             collection_name=settings.qdrant_collection_name,
             count_filter=Filter(
-                must=[
-                    FieldCondition(
-                        key="collection_version",
-                        match=MatchValue(value=settings.knowledge_collection_version),
-                    ),
-                    FieldCondition(
-                        key="dataset_generation",
-                        match=MatchValue(value=settings.synthetic_dataset_generation),
-                    ),
-                ]
+                must=active_generation_conditions(
+                    settings.knowledge_collection_version, settings.synthetic_dataset_generation
+                )
             ),
             exact=True,
         )

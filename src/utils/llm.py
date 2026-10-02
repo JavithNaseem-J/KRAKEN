@@ -15,6 +15,22 @@ from src.utils.exceptions import LLMProviderUnavailableError
 log = structlog.get_logger(__name__)
 
 
+def visible_chunk_text(chunk: Any) -> str:
+    """Extract visible text while ignoring structured tool or reasoning chunks."""
+    content = getattr(chunk, "content", "")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        block.get("text", "")
+        for block in content
+        if isinstance(block, dict)
+        and block.get("type") == "text"
+        and isinstance(block.get("text"), str)
+    )
+
+
 class ProviderCircuitBreaker:
     def __init__(self) -> None:
         self._open_until = 0.0

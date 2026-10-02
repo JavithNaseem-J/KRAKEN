@@ -236,19 +236,4 @@ export async function streamAgentQuery(
   return finalResponse;
 }
 
-export async function exportSessionHTML(
-  sessionId: string,
-  messages: unknown[],
-  persona: { label: string; title: string },
-): Promise<Blob> {
-  const response = await fetch(`${API_URL}/v1/report/export`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: await sessionHeaders(),
-    body: JSON.stringify({ session_id: sessionId, messages, persona }),
-  });
-  if (!response.ok) throw new Error(`HTML export failed with status ${response.status}`);
-  return response.blob();
-}
-
 export type { PendingApproval, QueryResponse, RunResponse };

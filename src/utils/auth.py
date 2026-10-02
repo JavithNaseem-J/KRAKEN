@@ -156,19 +156,3 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             status_code=401,
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-
-USER_ROLE_MAP: dict[str, str] = {
-    "synthetic-operator-1": "tier1",
-    "synthetic-operator-2": "security_lead",
-    "synthetic-admin": "admin",
-}
-
-
-def resolve_user_role(user_id: str) -> str:
-    """
-    Map a user_id to an operational role for RBAC-scoped retrieval.
-    Falls back to using the user_id as-is if not found in the mapping.
-    """
-    normalized = (user_id or "public").lower().strip()
-    return USER_ROLE_MAP.get(normalized, normalized)
