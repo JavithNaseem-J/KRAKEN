@@ -126,6 +126,24 @@ async def test_action_receipt_reports_only_verified_outcome(
 
 
 @pytest.mark.asyncio
+async def test_created_ticket_receipt_shows_the_id_for_follow_up() -> None:
+    response = await responder_node(
+        {
+            "session_id": "receipt-session",
+            "selected_action": "create_ticket",
+            "action_result": {
+                "action_name": "create_ticket",
+                "success": True,
+                "result": {"ticket_id": "SYN-E3AD3A2BE183", "synthetic": True, "success": True},
+            },
+        }
+    )
+
+    assert "Ticket ID: SYN-E3AD3A2BE183" in response["final_answer"]
+    assert "No human approval was required" in response["final_answer"]
+
+
+@pytest.mark.asyncio
 async def test_action_receipt_separates_mixed_results():
     result = await responder_node(
         {

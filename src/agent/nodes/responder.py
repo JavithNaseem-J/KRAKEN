@@ -124,6 +124,8 @@ def _action_receipt(
             continue
         detail = payload.get("message") or payload.get("response")
         summary = f"{name}: completed successfully."
+        if name == "create_ticket" and payload.get("ticket_id"):
+            summary += f" Ticket ID: {payload['ticket_id']}."
         if detail:
             summary += f" {detail}"
         if payload.get("synthetic") is True:
