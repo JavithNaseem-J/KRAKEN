@@ -13,6 +13,23 @@ from src.agent.nodes.decider import DecisionOutput, decider_node
 
 class TestDeciderNode:
     @patch("src.agent.nodes.decider.get_llm")
+    def test_created_synthetic_ticket_status_uses_read_only_lookup(
+        self, mock_get_llm: MagicMock
+    ) -> None:
+        result = asyncio.run(
+            decider_node(
+                {
+                    "session_id": "session-a",
+                    "user_message": "What is the status of ticket SYN-E3AD3A2BE183?",
+                }
+            )
+        )
+
+        assert result["selected_action"] == "get_ticket_status"
+        assert result["action_payload"] == {"ticket_id": "SYN-E3AD3A2BE183"}
+        mock_get_llm.assert_not_called()
+
+    @patch("src.agent.nodes.decider.get_llm")
     def test_status_query_overrides_escalate_to_read_only_lookup(
         self, mock_get_llm: MagicMock
     ) -> None:

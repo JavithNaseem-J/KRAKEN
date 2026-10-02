@@ -99,6 +99,30 @@ async def test_ticket_scroll_uses_active_collection_version() -> None:
 
 
 @pytest.mark.asyncio
+async def test_synthetic_ticket_id_does_not_expand_to_numeric_seed_ids() -> None:
+    client = AsyncMock()
+    client.query_points.return_value = SimpleNamespace(
+        points=[_hit("unrelated-seed", settings.knowledge_collection_version, source="tickets")]
+    )
+    client.scroll.return_value = ([], None)
+
+    result = await _retriever(client).retrieve(
+        RetrievalRequest(
+            query="status of ticket SYN-E3AD3A2BE183",
+            sources=[KnowledgeSource.TICKETS],
+            session_id="test-session",
+        )
+    )
+
+    assert result.total_retrieved == 0
+    scroll_filter = client.scroll.await_args.kwargs["scroll_filter"]
+    ticket_condition = next(
+        condition for condition in scroll_filter.must if condition.key == "metadata.ticket_id"
+    )
+    assert ticket_condition.match.any == ["SYN-E3AD3A2BE183"]
+
+
+@pytest.mark.asyncio
 async def test_disposable_qdrant_only_returns_current_sla_risk_knowledge() -> None:
     client = AsyncQdrantClient(location=":memory:")
     embedder = MagicMock()

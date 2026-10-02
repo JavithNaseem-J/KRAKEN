@@ -180,7 +180,7 @@ def _heuristic_rerank(
             for t_match in ticket_matches:
                 t_lower = t_match.lower()
                 doc_t_id = str(payload.get("metadata", {}).get("ticket_id") or "").lower()
-                t_num = re.search(r"\d+", t_lower)
+                t_num = None if t_lower.startswith("syn-") else re.search(r"\d+", t_lower)
                 num_str = t_num.group(0) if t_num else ""
                 if (
                     t_lower in content_lower
@@ -293,7 +293,7 @@ class KnowledgeRetriever:
         t_lowers: list[str] = []
         for ticket_id in ticket_ids_in_query:
             t_lowers.append(ticket_id.lower())
-            match = re.search(r"(\d+)", ticket_id)
+            match = None if ticket_id.upper().startswith("SYN-") else re.search(r"(\d+)", ticket_id)
             if match:
                 number = match.group(1)
                 t_lowers.extend(
@@ -310,7 +310,7 @@ class KnowledgeRetriever:
             try:
                 expanded_ids = set(ticket_ids_in_query)
                 for tid in ticket_ids_in_query:
-                    m = re.search(r"(\d+)", tid)
+                    m = None if tid.upper().startswith("SYN-") else re.search(r"(\d+)", tid)
                     if m:
                         num = m.group(1)
                         expanded_ids.update(
