@@ -1024,8 +1024,11 @@ def validate_corpus(corpus: SyntheticCorpus) -> None:
         if scenario.capability != "role_retrieval":
             continue
         for source_id in scenario.expected_sources:
-            document = documents_by_id.get(source_id)
-            if document is None or scenario.required_role not in document.allowed_roles:
+            expected_document = documents_by_id.get(source_id)
+            if (
+                expected_document is None
+                or scenario.required_role not in expected_document.allowed_roles
+            ):
                 raise ValueError(f"role retrieval source unavailable to {scenario.required_role}")
 
     priorities = Counter(ticket.priority for ticket in corpus.tickets)
