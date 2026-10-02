@@ -199,6 +199,8 @@ class SemanticCache:
     async def init(self, *, purge_legacy: bool = True) -> None:
         """Ensure the cache collection exists. Must be awaited during service startup."""
         settings = get_settings()
+        if not settings.semantic_cache_enabled:
+            return
         if purge_legacy:
             await self._purge_legacy_reasoning_payloads()
         vector_dim = (
@@ -366,6 +368,8 @@ class SemanticCache:
 
     async def invalidate(self) -> None:
         """Make Redis exact entries unreachable and purge the Qdrant cache."""
+        if not get_settings().semantic_cache_enabled:
+            return
         if self._redis:
             self._generation_dirty = True
             generation = await self._exact_cache_generation()

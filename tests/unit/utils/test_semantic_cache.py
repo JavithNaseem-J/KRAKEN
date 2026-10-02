@@ -39,6 +39,24 @@ class TestInit:
         exists = await cache._client.collection_exists(SEMANTIC_CACHE_COLLECTION)
         assert exists is True
 
+    async def test_disabled_cache_does_not_touch_shared_storage(self, monkeypatch) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        client = MagicMock(spec=AsyncQdrantClient)
+        disabled_cache = SemanticCache(client=client)
+        disabled_cache._redis = None
+        monkeypatch.setattr(
+            "src.utils.cache.get_settings",
+            lambda: SimpleNamespace(semantic_cache_enabled=False),
+        )
+
+        await disabled_cache.init()
+        await disabled_cache.invalidate()
+
+        client.collection_exists.assert_not_called()
+        client.delete_collection.assert_not_called()
+
 
 # ── get / put ─────────────────────────────────────────────────────────────────
 
