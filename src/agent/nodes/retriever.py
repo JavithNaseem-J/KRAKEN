@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -48,6 +49,10 @@ async def retriever_node(state: GraphState) -> dict:
     ticket_id_present = bool(TICKET_ID_REGEX.search(user_message))
     if ticket_id_present:
         target_sources = list(KnowledgeSource)
+    elif re.search(r"\bP[1-4]\b", user_message, re.IGNORECASE) and re.search(
+        r"\b(approv\w*|response|resolution|target|SLA)\b", user_message, re.IGNORECASE
+    ):
+        target_sources = [KnowledgeSource.SLA]
     else:
         target_sources = [KnowledgeSource.FAQ, KnowledgeSource.SLA]
 

@@ -88,3 +88,13 @@ def test_generated_action_risks_match_runtime_registry() -> None:
     assert corpus.sla["action_risk_mapping"] == {
         name: REGISTRY[name].risk_level.value for name in sorted(REGISTRY)
     }
+
+
+def test_superseded_certificate_policy_matches_current_policy() -> None:
+    corpus = build_corpus()
+    legacy = next(doc for doc in corpus.documents if doc.document_id == "DOC-012")
+    current = next(doc for doc in corpus.documents if doc.document_id == "DOC-029")
+    assert legacy.superseded_by == current.document_id
+    assert "certificate" in legacy.title.lower() and "certificate" in current.title.lower()
+    conflict_cases = [case for case in corpus.scenarios if case.capability == "conflict_resolution"]
+    assert all("certificate" in case.query.lower() for case in conflict_cases)

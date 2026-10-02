@@ -303,10 +303,10 @@ def _scenario_groups() -> list[tuple[str, list[str], dict[str, Any]]]:
             "conflict_resolution",
             [
                 "Which certificate rotation policy is currently effective?",
-                "Is the legacy 90-day VPN exception still valid?",
-                "Resolve the conflict between old and current password guidance.",
-                "Which firewall change window supersedes the 2025 schedule?",
-                "Use the effective date to choose the current vendor access policy.",
+                "Is the legacy 90-day certificate exception still valid?",
+                "Resolve the conflict between DOC-012 and DOC-029 certificate rotation guidance.",
+                "Which certificate rotation window supersedes the old 90-day schedule?",
+                "Use the effective dates to choose the current certificate rotation policy.",
             ],
             {"expected_outcome": "current_policy_answer", "expected_sources": ["DOC-029"]},
         ),
@@ -361,6 +361,8 @@ def generate_scenarios(config: GenerationConfig) -> list[CapabilityScenario]:
                     ("DOC-009", "incident_commander"),
                 )[query_index]
                 source_defaults.update(expected_sources=[source_id], required_role=role)
+            elif capability == "sla" and query_index == 1:
+                source_defaults["required_facts"] = ["Security Lead"]
             scenarios.append(
                 CapabilityScenario(
                     scenario_id=f"SCN-{len(scenarios) + 1:03d}",
@@ -681,13 +683,13 @@ _DOCUMENT_DEFINITIONS: list[tuple[str, str, str, list[str]]] = [
         ],
     ),
     (
-        "Vendor Remote Access Standard",
-        "remote-access",
+        "Legacy Certificate Rotation Standard",
+        "platform",
         "security_lead",
         [
-            "Vendor access expires automatically.",
-            "Named accounts are required.",
-            "Demo sessions are monitored and recorded.",
+            "The old exception allowed rotation 90 days before expiry.",
+            "This exception is superseded by DOC-029.",
+            "Use the current certificate rotation standard for new work.",
         ],
     ),
     (

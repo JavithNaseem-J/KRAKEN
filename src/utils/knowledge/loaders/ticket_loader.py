@@ -19,6 +19,8 @@ def _ticket_to_text(ticket_raw: dict[str, Any]) -> str:
         f"Priority: {ticket.priority}",
         f"Category: {ticket.category}",
     ]
+    if ticket.owner_team:
+        parts.append(f"Owning team: {ticket.owner_team}")
     if ticket.description:
         parts.append(f"Description: {ticket.description}")
     if ticket.resolved_at:

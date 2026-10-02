@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     qdrant_cloud_inference_enabled: bool = True
     qdrant_inference_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     qdrant_inference_dim: int = 384
-    knowledge_collection_version: str = "v3"
+    knowledge_collection_version: str = "v4"
     synthetic_dataset_generation: str = "northstar-v1"
 
     # Public synthetic environment

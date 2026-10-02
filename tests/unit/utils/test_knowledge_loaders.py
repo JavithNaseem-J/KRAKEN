@@ -5,6 +5,8 @@ from src.utils.knowledge.loaders.faq_loader import (
     _chunk_text,
     load_faq_chunks,
 )
+from src.utils.knowledge.loaders.ticket_loader import _ticket_to_text
+from src.utils.synthetic_data import build_corpus
 
 
 def test_chunk_markdown_headers_and_tables() -> None:
@@ -51,3 +53,11 @@ def test_load_faq_chunks_has_section_titles() -> None:
         assert chunk["metadata"]["source"] == "faq"
         assert "section_title" in chunk["metadata"]
         assert len(chunk["metadata"]["section_title"]) > 0
+
+
+def test_ticket_knowledge_includes_owning_team() -> None:
+    ticket = build_corpus().tickets[0].model_dump(mode="json")
+    text = _ticket_to_text(ticket)
+    assert "Ticket ID: TCK-24001" in text
+    assert "Status: OPEN" in text
+    assert "Owning team: Remote Access" in text

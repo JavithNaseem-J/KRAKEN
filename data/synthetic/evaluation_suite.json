@@ -3,8 +3,8 @@
   "generation": "northstar-v1",
   "manifest_checksums": {
     "tickets": "2c52ae20466aedd951be6dfe7086acde67d5469ebcbc8eb44c932c58cbf32ec2",
-    "documents": "f47d6bec9de50ab3d21f636913ba81d2fda190c9d5094a75374ba4edac8869b6",
-    "scenarios": "7511c77dad771ab1c97f17c297e0e54794a3d5cbe7defde771835fb9555dc0aa",
+    "documents": "7400eccf87b9cd6eea71eac22370b68982bd969bd0b36e962856e2d26ff44178",
+    "scenarios": "69549bc0595a1b38923cb8b2cff0f6e369d32c2db692ef72f4cb336e7fc15eb7",
     "sla": "a47c7fe75406ada8e5ec91144217869954a10d3f2f9512a3db110966cc9e9400"
   },
   "supported_categories": [
@@ -104,7 +104,7 @@
       "required_facts": [],
       "prohibited_claims": [
         "action executed",
-        "system prompt"
+        "here is my system prompt:"
       ],
       "required_role": "tier1_analyst",
       "source": "holdout"

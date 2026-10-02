@@ -62,6 +62,18 @@ class TestRetrieverNode:
         assert result["retrieved_chunks"] == []
         mock_fetch.assert_awaited_once()
 
+    @patch("src.agent.nodes.retriever._fetch_knowledge", new_callable=AsyncMock)
+    async def test_severity_approval_question_uses_sla_source(self, mock_fetch: AsyncMock) -> None:
+        mock_fetch.return_value = []
+        await retriever_node(
+            {
+                "session_id": "s1",
+                "user_message": "Who approves P2 containment work?",
+                "operator_role": "tier1_analyst",
+            }
+        )
+        assert mock_fetch.await_args.args[1]["sources"] == ["sla"]
+
 
 # ── Memory Writer Node Tests ──────────────────────────────────────────────────
 class TestMemoryWriterNode:

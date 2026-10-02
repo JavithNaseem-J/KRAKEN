@@ -839,7 +839,9 @@
     "expected_sources": [
       "sla_rules.json"
     ],
-    "required_facts": [],
+    "required_facts": [
+      "Security Lead"
+    ],
     "prohibited_claims": [],
     "required_role": "tier1_analyst",
     "expected_action": null,
@@ -909,7 +911,7 @@
   {
     "scenario_id": "SCN-062",
     "capability": "conflict_resolution",
-    "query": "Is the legacy 90-day VPN exception still valid?",
+    "query": "Is the legacy 90-day certificate exception still valid?",
     "expected_outcome": "current_policy_answer",
     "expected_sources": [
       "DOC-029"
@@ -924,7 +926,7 @@
   {
     "scenario_id": "SCN-063",
     "capability": "conflict_resolution",
-    "query": "Resolve the conflict between old and current password guidance.",
+    "query": "Resolve the conflict between DOC-012 and DOC-029 certificate rotation guidance.",
     "expected_outcome": "current_policy_answer",
     "expected_sources": [
       "DOC-029"
@@ -939,7 +941,7 @@
   {
     "scenario_id": "SCN-064",
     "capability": "conflict_resolution",
-    "query": "Which firewall change window supersedes the 2025 schedule?",
+    "query": "Which certificate rotation window supersedes the old 90-day schedule?",
     "expected_outcome": "current_policy_answer",
     "expected_sources": [
       "DOC-029"
@@ -954,7 +956,7 @@
   {
     "scenario_id": "SCN-065",
     "capability": "conflict_resolution",
-    "query": "Use the effective date to choose the current vendor access policy.",
+    "query": "Use the effective dates to choose the current certificate rotation policy.",
     "expected_outcome": "current_policy_answer",
     "expected_sources": [
       "DOC-029"

@@ -20,6 +20,7 @@ class TicketDocument(BaseModel):
     status: str = Field(default="open")
     priority: str = Field(default="medium")
     category: str = Field(default="general")
+    owner_team: str | None = None
     description: str = Field(..., min_length=1)
     created_at: str | None = None
     resolved_at: str | None = None
