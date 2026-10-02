@@ -7,7 +7,7 @@ Effective: 2026-02-01
 Access scope: security_lead
 
 ## Purpose
-This synthetic Northstar policy defines controlled security operations for training and capability verification.
+This Northstar policy defines controlled security operations for the demo workflow.
 
 ## Required controls
 - Preserve DLP event evidence.
@@ -15,4 +15,4 @@ This synthetic Northstar policy defines controlled security operations for train
 - Critical exfiltration requires incident command.
 
 ## Evidence and escalation
-Record the synthetic ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.
+Record the ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.

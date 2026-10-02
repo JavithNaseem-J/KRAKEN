@@ -483,7 +483,7 @@ def quarantine_ip_handler(
         "synthetic": True,
         "dataset_generation": generation,
         "ip": clean_ip,
-        "status": "blocked_in_synthetic_environment",
+        "status": "blocked_in_demo_data",
         "synthetic_target": "northstar-perimeter-firewall",
         "transaction_id": tx_id,
         "job_id": job_id,
@@ -493,15 +493,15 @@ def quarantine_ip_handler(
             "zone": "untrust",
             "action": "drop",
             "synthetic_sessions_terminated": random.randint(1, 7),
-            "commit_status": "SYNTHETIC_ONLY",
+            "commit_status": "DEMO_ONLY",
         },
-        "verification_status": "SYNTHETIC_STATE_CHANGED_NO_EXTERNAL_FIREWALL_CALLED",
+        "verification_status": "DEMO_STATE_CHANGED_NO_EXTERNAL_FIREWALL_CALLED",
         "executed_at": timestamp,
         "reason": clean_reason,
         "evidence": evidence or "",
         "message": (
-            f"Quarantined {clean_ip} inside synthetic generation {generation}. "
-            f"No external firewall was called (Synthetic Job: {job_id}, Tx: {tx_id})."
+            f"Quarantined {clean_ip} in Northstar demo records ({generation}). "
+            f"No external firewall was called (Demo Job: {job_id}, Tx: {tx_id})."
         ),
     }
 
@@ -531,7 +531,7 @@ def unlock_account_handler(
         "synthetic": True,
         "dataset_generation": generation,
         "user_email": clean_email,
-        "status": "unlocked_in_synthetic_environment",
+        "status": "unlocked_in_demo_data",
         "synthetic_target": "northstar-identity-directory",
         "transaction_id": tx_id,
         "lockout_cleared": False,
@@ -539,14 +539,14 @@ def unlock_account_handler(
             "is_locked_out": False,
             "account_enabled": True,
             "bad_password_count": 0,
-            "reconciliation": "SYNTHETIC_ONLY",
+            "reconciliation": "DEMO_ONLY",
         },
-        "verification_status": "SYNTHETIC_STATE_CHANGED_NO_EXTERNAL_IDP_CALLED",
+        "verification_status": "DEMO_STATE_CHANGED_NO_EXTERNAL_IDP_CALLED",
         "executed_at": timestamp,
         "reason": clean_reason,
         "evidence": evidence or "",
         "message": (
-            f"Unlocked {clean_email} inside synthetic generation {generation}. "
-            f"No external identity provider was called (Synthetic Tx: {tx_id})."
+            f"Unlocked {clean_email} in Northstar demo records ({generation}). "
+            f"No external identity provider was called (Demo Tx: {tx_id})."
         ),
     }

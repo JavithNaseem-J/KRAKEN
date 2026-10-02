@@ -7,7 +7,7 @@ Effective: 2026-06-01
 Access scope: admin
 
 ## Purpose
-This synthetic Northstar policy defines controlled iam operations for training and capability verification.
+This Northstar policy defines controlled iam operations for the demo workflow.
 
 ## Required controls
 - Use just-in-time elevation.
@@ -15,4 +15,4 @@ This synthetic Northstar policy defines controlled iam operations for training a
 - Break-glass activity is audited.
 
 ## Evidence and escalation
-Record the synthetic ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.
+Record the ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.

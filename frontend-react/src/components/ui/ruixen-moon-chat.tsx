@@ -376,11 +376,8 @@ export default function RuixenMoonChat({
             />
           </div>
 
-          {/* Caution / Disclaimer Footer */}
+          {/* Caution Footer */}
           <div className="mt-3.5 text-center px-4">
-            <p className="mb-1 text-[10px] font-semibold tracking-[0.16em] text-purple-300">
-              SYNTHETIC ENVIRONMENT
-            </p>
             <p className="text-[11px] font-mono tracking-tight text-neutral-400/90 leading-relaxed uppercase">
               KRAKEN CAN MAKE MISTAKES. VERIFY IMPORTANT SECURITY INFORMATION.
             </p>

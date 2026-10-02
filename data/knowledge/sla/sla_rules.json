@@ -1,11 +1,11 @@
 {
-  "service": "Northstar Synthetic Enterprise Operations SLA",
+  "service": "Northstar Demo Enterprise Operations SLA",
   "version": "3.0.0",
   "dataset_generation": "northstar-v1",
   "severities": {
     "P1": {
       "name": "Critical",
-      "description": "Active compromise, broad outage, or synthetic data exfiltration.",
+      "description": "Active compromise, broad outage, or demo data exfiltration.",
       "response_time_minutes": 15,
       "resolution_time_hours": 2,
       "approval_level": "Incident Commander",

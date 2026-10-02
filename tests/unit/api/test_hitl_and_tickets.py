@@ -22,7 +22,7 @@ def test_quarantine_ip_handler():
     assert res["success"] is True
     assert res["mode"] == "synthetic"
     assert res["synthetic"] is True
-    assert res["status"] == "blocked_in_synthetic_environment"
+    assert res["status"] == "blocked_in_demo_data"
     assert res["ip"] == "198.51.100.45"
     assert "DENY_PERIMETER_198.51.100.45" in res["firewall_rule"]
     assert "transaction_id" in res
@@ -37,7 +37,7 @@ def test_unlock_account_handler():
     assert res["success"] is True
     assert res["mode"] == "synthetic"
     assert res["synthetic"] is True
-    assert res["status"] == "unlocked_in_synthetic_environment"
+    assert res["status"] == "unlocked_in_demo_data"
     assert res["user_email"] == "alice.smith@northstar.example"
     assert "transaction_id" in res
     assert res["lockout_cleared"] is False

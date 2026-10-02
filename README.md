@@ -1,6 +1,6 @@
 # KRAKEN — Knowledge Retrieval & Autonomous Knowledge Execution Network
 
-> KRAKEN is a portfolio demonstration of grounded IT and security support over synthetic data. It answers policy questions, manages synthetic tickets, pauses critical actions for an approval decision, and records best-effort audit events in a SHA-256 chain.
+> KRAKEN is a production-grade portfolio project for AI-assisted IT and security support. It answers policy questions, manages tickets, pauses critical actions for an approval decision, and records best-effort audit events in a SHA-256 chain using a self-contained Northstar demo dataset.
 
 For the interview walkthrough, measured checks, cleanup decisions, and limits, see the [portfolio guide](docs/portfolio.md).
 
@@ -8,12 +8,12 @@ For the interview walkthrough, measured checks, cleanup decisions, and limits, s
 
 ## ⚡ Why KRAKEN? (Problem & Features)
 
-An AI support workflow needs grounded answers and a visible decision point before risky changes. KRAKEN demonstrates those controls with test personas and synthetic operations. It has no measured business impact or real users.
+An AI support workflow needs grounded answers and a visible decision point before risky changes. KRAKEN demonstrates those controls through a deployed application with demo roles and application-owned records. It has no measured business impact or external users.
 
 - **Grounded Vector RAG**: KRAKEN searches trusted documents and user-uploaded session files before answering. It uses Qdrant vector search to find relevant information.
 - **Approval for Risky Actions**: If an action is marked `CRITICAL`, KRAKEN pauses and requires a verified decision record before execution. Public personas simulate roles; they do not establish two independent humans.
 - **Tamper-Detectable Audit Logs**: KRAKEN stores action records in PostgreSQL. Each record is linked with SHA-256 hashes using `previous_hash` and `entry_hash`, so changes can be detected when delivery succeeds. Audit delivery is best-effort.
-- **Synthetic Test Environment**: The `northstar-v1` dataset includes 500 tickets and 30 documents. Actions run in this sandbox, not against real infrastructure.
+- **Northstar Demo Dataset**: The `northstar-v1` dataset includes 500 tickets and 30 documents. Actions update KRAKEN's own records; no external corporate systems are connected.
 - **Private Model Reasoning**: Internal LLM reasoning stays inside the agent workflow. It is not exposed through public APIs, SSE streams, audit logs, or browser storage.
 - **Session Memory and Caching**: Redis stores session history and approval state. Qdrant stores knowledge and semantic cache entries.
 
@@ -40,7 +40,7 @@ graph TD
     subgraph Infra["Data & Provider Layer"]
         Knowledge -->|Vectors & Embeddings| Qdrant[(Qdrant Cloud Vector DB)]
         Memory -->|Session State & Cache| Redis[(Redis)]
-        Action -->|Synthetic Tickets & Metadata| Postgres[(PostgreSQL)]
+        Action -->|Tickets & Metadata| Postgres[(PostgreSQL)]
         Audit -->|SHA-256 Audit Chain| Postgres
         Orchestrator -->|ReAct Reasoning & Prompts| LLM[Groq / OpenAI API]
     end
@@ -98,9 +98,9 @@ stateDiagram-v2
 |---|---:|---|
 | **Automated tests** | **340 Python unit/eval, 7 backend integration, 9 frontend passed** | Local `pytest` and `vitest` runs on this change; suites in `tests/unit`, `tests/evals`, `tests/integration`, `frontend-react` |
 | **Offline evaluator** | **50 cases**; 100.0% source recall, 100.0% required-fact coverage, 100.0% response-contract compliance, 0 prohibited-claim violations, 0 request errors | Latest local offline evaluator run; harness in `tests/evals/eval_harness.py` |
-| **Synthetic corpus (`northstar-v1`)** | **500 tickets, 30 documents, 75 capability scenarios** | `data/synthetic/manifest.json` |
+| **Northstar demo corpus (`northstar-v1`)** | **500 tickets, 30 documents, 75 capability scenarios** | `data/synthetic/manifest.json` |
 
-The offline evaluator is fixture-based and checks the evaluator contract. It does not measure live model quality. No verified staging latency or live quality result is included yet.
+The offline evaluator is fixture-based and checks the evaluator contract. It does not measure live model quality. A partial live run exposed six overconstrained or misassigned golden-case expectations; the public rate limit stopped the remaining 34 cases. The case definitions have been corrected, but no verified full-suite quality or staging latency result is included yet.
 
 ---
 
@@ -148,4 +148,4 @@ Open `http://localhost:8000` for the React UI, or call the REST API directly.
 
 ## 🔮 Future Work
 
-The next evidence step is to ingest knowledge version `v3` in staging, run the live golden suite and repeated SSE measurements against the intended commit, and publish the redacted results. A durable audit outbox would be needed before claiming guaranteed audit delivery.
+The next evidence step is to deploy the current corpus on a dedicated test target, run the corrected golden suite and repeated SSE measurements against the intended commit, and inspect any remaining failures. The public deployment's 20-query-per-hour limit cannot support that run. A durable audit outbox would be needed before claiming guaranteed audit delivery.

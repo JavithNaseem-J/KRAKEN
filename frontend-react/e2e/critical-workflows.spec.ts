@@ -17,7 +17,7 @@ test.describe('KRAKEN critical workflows', () => {
 
   test('creates a safe synthetic ticket', async ({ page }) => {
     await openPublicSessionPage(page);
-    await expect(page.getByText('SYNTHETIC ENVIRONMENT')).toBeVisible();
+    await expect(page.getByText('KRAKEN CAN MAKE MISTAKES. VERIFY IMPORTANT SECURITY INFORMATION.')).toBeVisible();
 
     const result = await sendChatMessage(
       page,

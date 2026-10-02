@@ -164,7 +164,7 @@ class TestTicketHandlers:
         assert res["mode"] == "synthetic"
         assert res["synthetic"] is True
         assert res["dataset_generation"] == "northstar-v1"
-        assert res["status"] == "blocked_in_synthetic_environment"
+        assert res["status"] == "blocked_in_demo_data"
         assert "synthetic_receipt" in res
         assert "NO_EXTERNAL_FIREWALL_CALLED" in res["verification_status"]
         assert "No external firewall was called" in res["message"]
@@ -180,7 +180,7 @@ class TestTicketHandlers:
         assert res["mode"] == "synthetic"
         assert res["synthetic"] is True
         assert res["dataset_generation"] == "northstar-v1"
-        assert res["status"] == "unlocked_in_synthetic_environment"
+        assert res["status"] == "unlocked_in_demo_data"
         assert res["lockout_cleared"] is False
         assert "synthetic_receipt" in res
         assert "NO_EXTERNAL_IDP_CALLED" in res["verification_status"]

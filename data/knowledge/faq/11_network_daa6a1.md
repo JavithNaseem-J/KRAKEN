@@ -7,7 +7,7 @@ Effective: 2026-04-01
 Access scope: security_lead
 
 ## Purpose
-This synthetic Northstar policy defines controlled network operations for training and capability verification.
+This Northstar policy defines controlled network operations for the demo workflow.
 
 ## Required controls
 - Broad source ranges are prohibited.
@@ -15,4 +15,4 @@ This synthetic Northstar policy defines controlled network operations for traini
 - Use 198.51.100.0/24 for examples.
 
 ## Evidence and escalation
-Record the synthetic ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.
+Record the ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.

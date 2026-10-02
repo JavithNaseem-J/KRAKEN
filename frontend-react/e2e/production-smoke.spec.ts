@@ -14,10 +14,10 @@ test.describe('KRAKEN production smoke', () => {
     expect(await response.text()).toMatch(/ok|healthy|gateway/i);
   });
 
-  test('loads the public synthetic environment shell', async ({ page }) => {
+  test('loads the public portfolio application', async ({ page }) => {
     await openPublicSessionPage(page);
     await expect(page.getByText('KRAKEN', { exact: true }).first()).toBeVisible();
-    await expect(page.getByText('SYNTHETIC ENVIRONMENT')).toBeVisible();
+    await expect(page.getByText('KRAKEN CAN MAKE MISTAKES. VERIFY IMPORTANT SECURITY INFORMATION.')).toBeVisible();
     await expect(page.getByPlaceholder('Type your security or helpdesk query...')).toBeVisible();
   });
 

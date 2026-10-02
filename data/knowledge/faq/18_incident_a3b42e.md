@@ -7,7 +7,7 @@ Effective: 2026-03-01
 Access scope: public
 
 ## Purpose
-This synthetic Northstar policy defines controlled incident operations for training and capability verification.
+This Northstar policy defines controlled incident operations for the demo workflow.
 
 ## Required controls
 - P1 covers active compromise or broad outage.
@@ -15,4 +15,4 @@ This synthetic Northstar policy defines controlled incident operations for train
 - P3 and P4 cover routine service work.
 
 ## Evidence and escalation
-Record the synthetic ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.
+Record the ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.

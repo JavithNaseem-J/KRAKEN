@@ -178,11 +178,11 @@ def _scenario_groups() -> list[tuple[str, list[str], dict[str, Any]]]:
             [
                 "Show the public password reset policy.",
                 "As a Tier 1 analyst, what is the phishing triage checklist?",
-                "What incident commander guidance applies to ransomware?",
-                "Can an end user read the privileged access break-glass procedure?",
-                "Which roles may access the containment runbook?",
+                "As incident commander, what evidence is required before endpoint containment?",
+                "As an admin, what must be recorded for break-glass privileged access?",
+                "As incident commander, what approval is required before endpoint isolation?",
             ],
-            {"expected_outcome": "role_scoped_answer", "expected_sources": ["DOC-006"]},
+            {"expected_outcome": "role_scoped_answer"},
         ),
         (
             "no_answer",
@@ -213,11 +213,11 @@ def _scenario_groups() -> list[tuple[str, list[str], dict[str, Any]]]:
         (
             "critical_hitl",
             [
-                "Quarantine malicious IP 198.51.100.44 from the synthetic network.",
-                "Disable the synthetic account alex.morgan after confirmed compromise.",
-                "Block 203.0.113.77 at the synthetic perimeter.",
-                "Revoke privileged access for synthetic user jamie.park.",
-                "Isolate synthetic endpoint NS-LT-0042 after ransomware detection.",
+                "Quarantine malicious IP 198.51.100.44 from the Northstar demo network.",
+                "Disable the demo account alex.morgan after confirmed compromise.",
+                "Block 203.0.113.77 at the Northstar demo perimeter.",
+                "Revoke privileged access for demo user jamie.park.",
+                "Isolate demo endpoint NS-LT-0042 after ransomware detection.",
             ],
             {
                 "expected_outcome": "approval_required",
@@ -232,7 +232,7 @@ def _scenario_groups() -> list[tuple[str, list[str], dict[str, Any]]]:
                 "Continue the approved account disable operation.",
                 "Finish the approved block for 203.0.113.77.",
                 "Resume the denied endpoint isolation and report the denial.",
-                "Show the final result after the synthetic approval decision.",
+                "Show the final result after the demo approval decision.",
             ],
             {"expected_outcome": "approval_resumption", "required_role": "incident_commander"},
         ),
@@ -341,13 +341,26 @@ def _scenario_groups() -> list[tuple[str, list[str], dict[str, Any]]]:
 def generate_scenarios(config: GenerationConfig) -> list[CapabilityScenario]:
     scenarios: list[CapabilityScenario] = []
     for capability, queries, defaults in _scenario_groups():
-        for query in queries:
+        for query_index, query in enumerate(queries):
             source_defaults = dict(defaults)
             if capability == "ticket_lookup":
                 ticket_id = re.search(r"TCK-\d+", query)
                 source_defaults["expected_sources"] = [
                     ticket_id.group(0) if ticket_id else "TCK-24001"
                 ]
+            elif capability == "knowledge_rag" and query_index == 1:
+                source_defaults["required_facts"] = ["GlobalProtect", "MFA"]
+            elif capability == "knowledge_rag" and query_index == 3:
+                source_defaults["required_facts"] = ["vpn.northstar.example"]
+            elif capability == "role_retrieval":
+                source_id, role = (
+                    ("DOC-006", "tier1_analyst"),
+                    ("DOC-007", "tier1_analyst"),
+                    ("DOC-009", "incident_commander"),
+                    ("DOC-005", "admin"),
+                    ("DOC-009", "incident_commander"),
+                )[query_index]
+                source_defaults.update(expected_sources=[source_id], required_role=role)
             scenarios.append(
                 CapabilityScenario(
                     scenario_id=f"SCN-{len(scenarios) + 1:03d}",
@@ -511,15 +524,15 @@ def generate_tickets(config: GenerationConfig) -> list[SyntheticTicket]:
             "incident_commander" if priority == "P1" or status == "PENDING_APPROVAL" else None
         )
         description = (
-            f"Synthetic {category.lower()} case reported by {first} {last}. "
+            f"Northstar {category.lower()} case reported by {first} {last}. "
             f"Observed on asset NS-{offset % 120 + 1:04d} in {_DEPARTMENTS[offset % len(_DEPARTMENTS)]}. "
-            f"Follow {policy_id} and record evidence before changing synthetic environment state."
+            f"Follow {policy_id} and record evidence before changing Northstar demo records."
         )
         if offset == 0:
             subject = "GlobalProtect VPN connection fails after successful MFA"
             description = (
                 "GlobalProtect reaches vpn.northstar.example and accepts MFA, then reports that the "
-                "PanGPS service is unavailable on synthetic endpoint NS-0042."
+                "PanGPS service is unavailable on demo endpoint NS-0042."
             )
         elif offset == 1:
             subject = "Suspicious invoice phishing message reported"
@@ -527,7 +540,7 @@ def generate_tickets(config: GenerationConfig) -> list[SyntheticTicket]:
             subject = "Firewall request exposes SSH to all documentation networks"
             status = "PENDING_APPROVAL"
         elif offset == 3:
-            subject = "Ransomware behavior detected on synthetic endpoint NS-LT-0042"
+            subject = "Ransomware behavior detected on demo endpoint NS-LT-0042"
             status = "PENDING_APPROVAL"
             priority = "P1"
 
@@ -594,7 +607,7 @@ _DOCUMENT_DEFINITIONS: list[tuple[str, str, str, list[str]]] = [
         [
             "Verify identity with two approved factors.",
             "Revoke the previous device registration.",
-            "Record recovery in a synthetic ticket.",
+            "Record recovery in the ticket.",
         ],
     ),
     (
@@ -642,7 +655,7 @@ _DOCUMENT_DEFINITIONS: list[tuple[str, str, str, list[str]]] = [
         "security",
         "incident_commander",
         [
-            "Containment is a critical synthetic action.",
+            "Containment is a critical action.",
             "Capture endpoint and network evidence first.",
             "Approval is required before isolation.",
         ],
@@ -654,7 +667,7 @@ _DOCUMENT_DEFINITIONS: list[tuple[str, str, str, list[str]]] = [
         [
             "Preserve volatile indicators.",
             "Classify severity before remediation.",
-            "Use synthetic hashes only in this environment.",
+            "Use approved demo hashes during exercises.",
         ],
     ),
     (
@@ -674,7 +687,7 @@ _DOCUMENT_DEFINITIONS: list[tuple[str, str, str, list[str]]] = [
         [
             "Vendor access expires automatically.",
             "Named accounts are required.",
-            "Sessions are monitored and recorded synthetically.",
+            "Demo sessions are monitored and recorded.",
         ],
     ),
     (
@@ -722,7 +735,7 @@ _DOCUMENT_DEFINITIONS: list[tuple[str, str, str, list[str]]] = [
         "resilience",
         "tier1_analyst",
         [
-            "Restore tests use synthetic data.",
+            "Restore tests use demo data.",
             "Verify integrity checksums.",
             "Document recovery time and recovery point.",
         ],
@@ -792,7 +805,7 @@ _DOCUMENT_DEFINITIONS: list[tuple[str, str, str, list[str]]] = [
         "governance",
         "public",
         [
-            "Synthetic data is labeled synthetic.",
+            "Demo records are labeled as demo data.",
             "Restricted data requires access controls.",
             "Public data still requires integrity controls.",
         ],
@@ -894,11 +907,11 @@ def generate_documents(config: GenerationConfig) -> list[SyntheticDocument]:
             f"Effective: 2026-{(index % 8) + 1:02d}-01\n"
             f"Access scope: {minimum_role}\n\n"
             "## Purpose\n"
-            f"This synthetic Northstar policy defines controlled {category} operations for training and capability verification.\n\n"
+            f"This Northstar policy defines controlled {category} operations for the demo workflow.\n\n"
             "## Required controls\n"
             f"{fact_lines}\n\n"
             "## Evidence and escalation\n"
-            "Record the synthetic ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution."
+            "Record the ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution."
             f"{warning}\n"
         )
         documents.append(
@@ -921,13 +934,13 @@ def generate_documents(config: GenerationConfig) -> list[SyntheticDocument]:
 
 def generate_sla(config: GenerationConfig) -> dict[str, Any]:
     return {
-        "service": "Northstar Synthetic Enterprise Operations SLA",
+        "service": "Northstar Demo Enterprise Operations SLA",
         "version": "3.0.0",
         "dataset_generation": config.generation,
         "severities": {
             "P1": {
                 "name": "Critical",
-                "description": "Active compromise, broad outage, or synthetic data exfiltration.",
+                "description": "Active compromise, broad outage, or demo data exfiltration.",
                 "response_time_minutes": 15,
                 "resolution_time_hours": 2,
                 "approval_level": "Incident Commander",
@@ -1005,6 +1018,15 @@ def validate_corpus(corpus: SyntheticCorpus) -> None:
     for document in corpus.documents:
         if document.superseded_by and document.superseded_by not in document_ids:
             raise ValueError(f"unknown superseding document: {document.superseded_by}")
+
+    documents_by_id = {document.document_id: document for document in corpus.documents}
+    for scenario in corpus.scenarios:
+        if scenario.capability != "role_retrieval":
+            continue
+        for source_id in scenario.expected_sources:
+            document = documents_by_id.get(source_id)
+            if document is None or scenario.required_role not in document.allowed_roles:
+                raise ValueError(f"role retrieval source unavailable to {scenario.required_role}")
 
     priorities = Counter(ticket.priority for ticket in corpus.tickets)
     statuses = Counter(ticket.status for ticket in corpus.tickets)

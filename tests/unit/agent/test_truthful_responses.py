@@ -104,7 +104,7 @@ async def test_responder_node_approved_hitl_action():
         (
             "approved",
             {"success": True, "result": {"message": "Synthetic action", "synthetic": True}},
-            "synthetic environment state only",
+            "Northstar demo records only",
             "Transaction ID",
         ),
     ],

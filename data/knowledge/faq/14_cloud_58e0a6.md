@@ -7,7 +7,7 @@ Effective: 2026-07-01
 Access scope: tier1_analyst
 
 ## Purpose
-This synthetic Northstar policy defines controlled cloud operations for training and capability verification.
+This Northstar policy defines controlled cloud operations for the demo workflow.
 
 ## Required controls
 - Use roles instead of long-lived keys.
@@ -15,4 +15,4 @@ This synthetic Northstar policy defines controlled cloud operations for training
 - Review inactive grants monthly.
 
 ## Evidence and escalation
-Record the synthetic ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.
+Record the ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.

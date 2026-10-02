@@ -7,7 +7,7 @@ Effective: 2026-08-01
 Access scope: public
 
 ## Purpose
-This synthetic Northstar policy defines controlled security operations for training and capability verification.
+This Northstar policy defines controlled security operations for the demo workflow.
 
 ## Required controls
 - Store secrets in managed secret storage.
@@ -15,4 +15,4 @@ This synthetic Northstar policy defines controlled security operations for train
 - Rotate exposed values immediately.
 
 ## Evidence and escalation
-Record the synthetic ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.
+Record the ticket, source document ID, decision, and trace ID. Escalate when required facts are missing; never invent approval or external execution.

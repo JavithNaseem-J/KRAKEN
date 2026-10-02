@@ -379,6 +379,4 @@ def _dispatch_synthetic(
             "response": str(payload.get("response_text", "")),
             "evidence_cited": str(payload.get("evidence", "")),
         }
-    raise ActionExecutionError(
-        f"Action '{action_name}' is unavailable in the public synthetic environment."
-    )
+    raise ActionExecutionError(f"Action '{action_name}' is unavailable in this demo application.")

@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from src.utils.registry import REGISTRY
 from src.utils.synthetic_data import (
     GenerationConfig,
     SyntheticCorpus,
@@ -14,7 +15,6 @@ from src.utils.synthetic_data import (
     validate_corpus,
     write_corpus,
 )
-from src.utils.registry import REGISTRY
 
 
 def test_same_seed_produces_identical_manifest_and_stable_order() -> None:
@@ -53,6 +53,14 @@ def test_invalid_reference_and_non_reserved_values_are_rejected() -> None:
         scan_for_unsafe_values({"email": "person@example.com"})
     with pytest.raises(ValueError, match="non-documentation IP"):
         scan_for_unsafe_values({"address": "8.8.8.8"})
+
+
+def test_role_retrieval_cases_only_expect_accessible_documents() -> None:
+    corpus = build_corpus()
+    role_case = next(case for case in corpus.scenarios if case.scenario_id == "SCN-014")
+    role_case.required_role = "end_user"
+    with pytest.raises(ValueError, match="role retrieval source unavailable"):
+        validate_corpus(corpus)
 
 
 def test_written_corpus_matches_manifest_checksums(tmp_path: Path) -> None:

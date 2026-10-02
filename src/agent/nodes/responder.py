@@ -129,7 +129,7 @@ def _action_receipt(
         if detail:
             summary += f" {detail}"
         if payload.get("synthetic") is True:
-            summary += " This changed synthetic environment state only."
+            summary += " This changed Northstar demo records only."
         for key, label in (("transaction_id", "Transaction ID"), ("job_id", "Job ID")):
             if payload.get(key):
                 summary += f" {label}: {payload[key]}."
