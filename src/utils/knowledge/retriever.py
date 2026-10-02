@@ -194,6 +194,18 @@ def _heuristic_rerank(
         ):
             boost += 0.15
 
+        severity = re.search(r"\bP[1-4]\b", query, re.IGNORECASE)
+        if (
+            severity
+            and payload.get("source") == KnowledgeSource.SLA.value
+            and re.search(
+                rf"^SLA Severity Level: {severity.group().upper()}\b",
+                content_lower,
+                re.IGNORECASE,
+            )
+        ):
+            boost += 1.0
+
         final_score = min(1.0, max(0.0, round(base_score * boost, 4)))
         reranked.append((hit, final_score))
 

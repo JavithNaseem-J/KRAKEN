@@ -10,7 +10,7 @@ from qdrant_client.models import PointStruct
 
 from src.utils.knowledge.ingest import ensure_collection, upsert_chunks_async
 from src.utils.knowledge.loaders.sla_loader import load_sla_chunks
-from src.utils.knowledge.retriever import KnowledgeRetriever, settings
+from src.utils.knowledge.retriever import KnowledgeRetriever, _heuristic_rerank, settings
 from src.utils.models.knowledge import KnowledgeSource, RetrievalRequest
 
 
@@ -35,6 +35,18 @@ def _retriever(client: AsyncMock) -> KnowledgeRetriever:
     embedder = MagicMock()
     embedder.embed_query.return_value = [0.1] * 384
     return KnowledgeRetriever(client=client, embedder=embedder)
+
+
+def test_exact_sla_severity_survives_relevance_threshold() -> None:
+    p2 = _hit("p2", settings.knowledge_collection_version, source="sla")
+    p2.payload["content"] = "SLA Severity Level: P2 (High)\nRequired Approval Level: Security Lead"
+    p1 = _hit("p1", settings.knowledge_collection_version, source="sla")
+    p1.payload["content"] = (
+        "SLA Severity Level: P1 (Critical)\nRequired Approval Level: Incident Commander"
+    )
+    ranked = _heuristic_rerank("Who approves P2 containment work?", [(p2, 0.03), (p1, 0.029)])
+    assert ranked[0][0].id == "p2"
+    assert ranked[0][1] >= 0.4
 
 
 @pytest.mark.asyncio
