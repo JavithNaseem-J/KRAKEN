@@ -132,6 +132,18 @@ class EvaluationReport(BaseModel):
 
 Responder = Callable[[GoldenCase], tuple[dict[str, Any], float]]
 
+_PROVIDER_FALLBACK_MARKERS = (
+    "the ai provider is temporarily unavailable",
+    "provider could not complete",
+    "llm_provider_unavailable",
+)
+
+
+def _is_provider_fallback(answer: Any) -> bool:
+    return isinstance(answer, str) and any(
+        marker in answer.casefold() for marker in _PROVIDER_FALLBACK_MARKERS
+    )
+
 
 def load_suite() -> tuple[EvaluationSuite, list[GoldenCase]]:
     suite = EvaluationSuite.model_validate_json(SUITE_PATH.read_text(encoding="utf-8"))
@@ -203,6 +215,8 @@ def score_response(
         else None,
         response_origin="cache"
         if isinstance(response.get("cache"), dict) and response["cache"].get("hit") is True
+        else "provider_fallback"
+        if _is_provider_fallback(answer)
         else "unknown",
     )
     if judge_enabled:
@@ -375,6 +389,7 @@ def measure_stream(
     first_delta_ms: float | None = None
     terminal_ms: float | None = None
     cache_hit = False
+    terminal_answer: Any = None
     error: str | None = None
     disconnected = False
     with client.stream(
@@ -404,19 +419,26 @@ def measure_stream(
                     break
             if event.get("node") == "done" and event.get("status") == "end":
                 terminal_ms = round((time.perf_counter() - started) * 1000, 1)
+                terminal_response = event.get("response")
+                if isinstance(terminal_response, dict):
+                    terminal_answer = terminal_response.get("answer")
                 break
     if not disconnected and terminal_ms is None and error is None:
         error = "stream ended without terminal event"
+    if cache_hit:
+        category = "cache"
+    elif message.strip().casefold() in {"hi", "hello", "hey"}:
+        category = "greeting"
+    elif _is_provider_fallback(terminal_answer):
+        category = "provider_fallback"
+    elif first_delta_ms is not None:
+        category = "generated"
+    else:
+        category = "terminal_only_unknown"
     return {
         "session_id": session_id,
         "verified_role": role,
-        "category": "cache"
-        if cache_hit
-        else (
-            "greeting"
-            if message.strip().casefold() in {"hi", "hello", "hey"}
-            else "generated_or_fallback"
-        ),
+        "category": category,
         "first_delta_ms": first_delta_ms,
         "terminal_ms": terminal_ms,
         "disconnected_after_delta": disconnected,

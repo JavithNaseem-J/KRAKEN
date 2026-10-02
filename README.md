@@ -74,7 +74,7 @@ stateDiagram-v2
 
     ActionExecution --> Responder: Action Receipt
     Responder --> MemoryWriter: Synthesize Final Grounded Answer
-    MemoryWriter --> [*]: Stream SSE / Output
+    MemoryWriter --> [*]: Return response / SSE terminal event
 ```
 
 ---
@@ -100,7 +100,7 @@ stateDiagram-v2
 | **Offline evaluator** | **50 cases**; 100.0% source recall, 100.0% required-fact coverage, 100.0% response-contract compliance, 0 prohibited-claim violations, 0 request errors | Latest local offline evaluator run; harness in `tests/evals/eval_harness.py` |
 | **Northstar demo corpus (`northstar-v1`)** | **500 tickets, 30 documents, 75 capability scenarios** | `data/synthetic/manifest.json` |
 
-The offline evaluator is fixture-based and checks the evaluator contract. It does not measure live model quality. A partial live run exposed six overconstrained or misassigned golden-case expectations; the public rate limit stopped the remaining 34 cases. The case definitions have been corrected, but no verified full-suite quality or staging latency result is included yet.
+The offline evaluator is fixture-based and checks the evaluator contract. It does not measure live model quality. A full 50-case run on an isolated local staging target returned 48 passes, 100% source recall, 77.8% required-fact coverage against an 80% threshold, and no request errors. The result fails the live quality gate. Repeated SSE runs found terminal responses but no visible answer deltas for substantive questions. The [portfolio guide](docs/portfolio.md) gives the target setup, sample counts, and limits.
 
 ---
 
@@ -138,7 +138,7 @@ Open `http://localhost:8000` for the React UI, or call the REST API directly.
 | **UI** | `GET /` | Serve the compiled React app |
 | **Operations** | `GET /health`, `GET /ready`, `GET /version`, `GET /metrics` | Liveness, readiness, build identity, and Prometheus metrics |
 | **Sessions** | `POST /v1/session`, `GET /v1/sessions/{session_id}`, `POST /v1/session/persona`, `POST /v1/session/reset`, `GET /v1/session/status` | Create, inspect, update persona, reset, and check session state |
-| **Agent** | `POST /v1/run`, `POST /v1/run/stream` | Run the agent synchronously or stream responses over SSE |
+| **Agent** | `POST /v1/run`, `POST /v1/run/stream` | Run the agent synchronously or receive SSE events; substantive answers currently finish without visible deltas in the measured path |
 | **Approvals** | `GET /approve/{approval_id}/details`, `POST /approve/{approval_id}/decision` | Review and approve/reject HITL-gated actions |
 | **Knowledge** | `POST /v1/knowledge/upload` | Upload session-scoped knowledge files |
 | **Reports** | `POST /v1/report/export` | Export an HTML report for a trace/session |
@@ -148,4 +148,4 @@ Open `http://localhost:8000` for the React UI, or call the REST API directly.
 
 ## 🔮 Future Work
 
-The next evidence step is to deploy the current corpus on a dedicated test target, run the corrected golden suite and repeated SSE measurements against the intended commit, and inspect any remaining failures. The public deployment's 20-query-per-hour limit cannot support that run. A durable audit outbox would be needed before claiming guaranteed audit delivery.
+The next engineering step is to have the normal read-only answer path emit visible responder deltas, then measure first-answer latency and early disconnects on a target with hosted-service parity. The two required-fact misses in the 50-case live run also need repeat evaluation after that change. A durable audit outbox would be needed before claiming guaranteed audit delivery.

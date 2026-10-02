@@ -245,6 +245,7 @@ def test_stream_measurement_requires_terminal_and_records_disconnect() -> None:
             disconnect_after_delta=True,
         )
     assert complete["first_delta_ms"] is not None and complete["terminal_ms"] is not None
+    assert complete["category"] == "greeting"
     assert disconnected["disconnected_after_delta"] is True and disconnected["terminal_ms"] is None
     assert summarize_stream_samples([complete, disconnected])["greeting"]["terminal_samples"] == 1
     with httpx.Client(
@@ -278,6 +279,19 @@ def test_stream_measurement_keeps_cache_and_missing_delta_out_of_generated_sampl
     summary = summarize_stream_samples([cached])
     assert summary["cache"]["samples"] == 1
     assert summary["cache"]["first_delta_samples"] == 0
+
+    fallback_events = (
+        'data: {"node":"done","status":"end","response":'
+        '{"answer":"The AI provider is temporarily unavailable."}}\n\n'
+    )
+    with httpx.Client(
+        base_url="https://example.test", transport=_live_transport(stream=fallback_events)
+    ) as client:
+        fallback = measure_stream(
+            client, message="VPN?", role="tier1_analyst", generation="northstar-v1"
+        )
+    assert fallback["category"] == "provider_fallback"
+    assert fallback["first_delta_ms"] is None
 
     error_event = 'data: {"node":"error","status":"error","message":"provider unavailable"}\n\n'
     with httpx.Client(
