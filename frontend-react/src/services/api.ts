@@ -151,12 +151,16 @@ export async function submitApprovalDecision(
     session_csrf_token: session.csrf_token,
   });
   const { data } = await axios.post<{
+    status: 'ok' | 'error';
     session_id: string;
     agent_response?: QueryResponse;
   }>(`${API_URL}/approve/${approvalId}/decision`, body, {
     withCredentials: true,
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   });
+  if (data.status !== 'ok' || (decision === 'approve' && !data.agent_response)) {
+    throw new Error('Decision recorded, but execution could not be confirmed. Check status before retrying.');
+  }
   return { session_id: data.session_id || '', agent_response: data.agent_response };
 }
 

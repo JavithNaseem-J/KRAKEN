@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { pollSessionStatus, streamAgentQuery } from './api';
+import { bootstrapPublicSession, pollSessionStatus, streamAgentQuery, submitApprovalDecision } from './api';
 
 vi.mock('axios', () => ({
   default: {
@@ -26,6 +26,26 @@ describe('pollSessionStatus', () => {
     });
     expect(axios.get).toHaveBeenCalledWith('/v1/session/status', { withCredentials: true });
     expect(axios.post).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitApprovalDecision', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each([
+    { status: 'error', agent_response: null },
+    { status: 'ok', agent_response: null },
+  ])('does not confirm execution without a successful callback: %j', async (decisionResponse) => {
+    vi.mocked(axios.post)
+      .mockResolvedValueOnce({ data: { csrf_token: 'session-csrf' } })
+      .mockResolvedValueOnce({ data: decisionResponse });
+    await bootstrapPublicSession(true);
+
+    await expect(submitApprovalDecision('approval-1', 'approve', 'approval-csrf')).rejects.toThrow(
+      'execution could not be confirmed',
+    );
   });
 });
 
