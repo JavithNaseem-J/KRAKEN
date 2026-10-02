@@ -53,6 +53,8 @@ test.describe('KRAKEN critical workflows', () => {
     await page.getByRole('button', { name: 'Authorize Execution' }).click();
     const body = await (await decision).json();
 
+    expect(body.status).toBe('ok');
+    expect(body.decision).toBe('approve');
     expect(body.agent_response).toBeTruthy();
     assertNoReasoning(body);
     await expect(page.getByText(/APPROVED & EXECUTED/i)).toBeVisible({ timeout: 120_000 });
@@ -78,7 +80,8 @@ test.describe('KRAKEN critical workflows', () => {
     await page.getByRole('button', { name: 'Deny Request' }).click();
     const body = await (await decision).json();
 
-    expect(body.status).toMatch(/reject|denied/i);
+    expect(body.status).toBe('ok');
+    expect(body.decision).toBe('reject');
     expect(body.agent_response).toBeFalsy();
     assertNoReasoning(body);
     await expect(page.getByText('REJECTED', { exact: true })).toBeVisible();

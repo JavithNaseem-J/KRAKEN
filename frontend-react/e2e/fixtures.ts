@@ -161,7 +161,8 @@ export async function installKrakenApiFixture(page: Page): Promise<void> {
       contentType: 'application/json',
       body: JSON.stringify({
         session_id: SESSION_ID,
-        status: state.approvalStatus.toLowerCase(),
+        status: 'ok',
+        decision,
         ...(decision === 'approve' ? { agent_response: approvedActionResponse() } : {}),
       }),
     });
