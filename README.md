@@ -2,7 +2,6 @@
 
 > KRAKEN is a production-grade portfolio project for AI-assisted IT and security support. It answers policy questions, manages tickets, pauses critical actions for an approval decision, and records best-effort audit events in a SHA-256 chain using a self-contained Northstar demo dataset.
 
-For the interview walkthrough, measured checks, cleanup decisions, and limits, see the [portfolio guide](docs/portfolio.md).
 
 ---
 
