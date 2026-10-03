@@ -206,10 +206,24 @@ def score_response(
         else set()
     )
     action_result = response.get("action_result")
+    retrieved = response.get("retrieved_chunks")
+    retrieved_ids: set[str] = set()
+    for chunk in retrieved if isinstance(retrieved, list) else []:
+        if not isinstance(chunk, dict):
+            continue
+        metadata = chunk.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        for value in (
+            chunk.get("document_id"),
+            metadata.get("document_id"),
+            metadata.get("rule_id"),
+        ):
+            if isinstance(value, str):
+                retrieved_ids.add(value.casefold())
     source_evidence = (
         {str(action_result.get("ticket_id", "")).casefold()}
         if case.expected_outcome == "ticket_details" and isinstance(action_result, dict)
-        else cited_sources
+        else cited_sources | retrieved_ids
     )
     source_recall = _coverage(
         [source.casefold() in source_evidence for source in case.expected_sources]
@@ -625,7 +639,10 @@ def _judge(case: GoldenCase, response: dict[str, Any]) -> JudgeResult:
     if not response.get("retrieved_chunks"):
         return JudgeResult(status="unavailable", error="MissingRetrievedChunks")
     try:
-        from tests.evals.llm_judge import evaluate_rag_response
+        if __package__:
+            from .llm_judge import evaluate_rag_response
+        else:
+            from llm_judge import evaluate_rag_response
 
         judged = evaluate_rag_response(
             query=case.query,
@@ -681,15 +698,17 @@ def main() -> int:
         parser.error("--ragas requires --mode live with observed retrieval context")
 
     suite, cases = load_suite()
+    if args.case:
+        cases = [case for case in cases if case.case_id == args.case]
+        if not cases:
+            parser.error(f"unknown case ID: {args.case}")
     excluded_count = 0
     if args.mode == "live":
         # Provider outages require fault injection; normal live requests cannot verify this category.
         excluded_count = sum(case.category == "provider_fallback" for case in cases)
         cases = [case for case in cases if case.category != "provider_fallback"]
-    if args.case:
-        cases = [case for case in cases if case.case_id == args.case]
         if not cases:
-            parser.error(f"unknown case ID: {args.case}")
+            parser.error("provider fallback cases require a fault-injection target")
 
     if args.mode in {"live", "stream"}:
         provider = None

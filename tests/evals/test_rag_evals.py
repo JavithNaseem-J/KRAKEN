@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -64,14 +65,24 @@ class TestEvaluateRagResponse:
         assert result.faithfulness is None
         assert result.context_recall is None
 
+    @patch("tests.evals.llm_judge.get_settings")
     @patch("tests.evals.llm_judge.ContextRecall")
     @patch("tests.evals.llm_judge.Faithfulness")
-    @patch("tests.evals.llm_judge._get_ragas_llm")
+    @patch("tests.evals.llm_judge.llm_factory")
+    @patch("tests.evals.llm_judge.AsyncOpenAI")
     def test_ragas_receives_real_context_and_reference(
-        self, mock_llm: MagicMock, mock_faith: MagicMock, mock_recall: MagicMock
+        self,
+        mock_client: MagicMock,
+        mock_llm: MagicMock,
+        mock_faith: MagicMock,
+        mock_recall: MagicMock,
+        mock_settings: MagicMock,
     ) -> None:
-        mock_faith.return_value.score.return_value.value = 0.92
-        mock_recall.return_value.score.return_value.value = 0.88
+        mock_settings.return_value = SimpleNamespace(
+            llm_api_key="test", llm_base_url="https://example.test", llm_model="test"
+        )
+        mock_faith.return_value.ascore = AsyncMock(return_value=SimpleNamespace(value=0.92))
+        mock_recall.return_value.ascore = AsyncMock(return_value=SimpleNamespace(value=0.88))
         result = evaluate_rag_response(
             query="What is the SLA?",
             chunks=[{"content": "P1 response is 1 hour"}, {"content": ""}],
@@ -79,13 +90,17 @@ class TestEvaluateRagResponse:
             reference_facts=["P1", "1 hour"],
         )
         assert result == EvaluationResult(faithfulness=0.92, context_recall=0.88)
+        mock_llm.assert_called_once()
+        assert (
+            mock_llm.call_args.kwargs["client"] is mock_client.return_value.__aenter__.return_value
+        )
         mock_faith.assert_called_once_with(llm=mock_llm.return_value)
-        mock_faith.return_value.score.assert_called_once_with(
+        mock_faith.return_value.ascore.assert_awaited_once_with(
             user_input="What is the SLA?",
             response="P1 response is 1 hour.",
             retrieved_contexts=["P1 response is 1 hour"],
         )
-        mock_recall.return_value.score.assert_called_once_with(
+        mock_recall.return_value.ascore.assert_awaited_once_with(
             user_input="What is the SLA?",
             retrieved_contexts=["P1 response is 1 hour"],
             reference="P1. 1 hour",
@@ -307,6 +322,35 @@ def test_source_name_in_answer_does_not_count_as_retrieved_source() -> None:
 
     assert result.source_recall == 0.0
     assert result.passed is False
+
+
+def test_canonical_document_id_in_retrieval_metadata_counts_as_source() -> None:
+    case = GoldenCase(
+        case_id="HOLDOUT-999",
+        category="knowledge_rag",
+        query="How does VPN work?",
+        expected_outcome="grounded_answer",
+        expected_sources=["DOC-001"],
+        required_facts=["MFA"],
+        source="holdout",
+    )
+    response = {
+        "answer": "VPN requires MFA",
+        "sources": ["faq"],
+        "retrieved_chunks": [
+            {
+                "source": "faq",
+                "document_id": "remote_access.md",
+                "metadata": {"document_id": "DOC-001"},
+                "content": "VPN requires MFA",
+            }
+        ],
+    }
+
+    result = score_response(case, response, 0.0)
+
+    assert result.source_recall == 1.0
+    assert result.passed is True
 
 
 def test_ticket_id_must_match_structured_lookup_result() -> None:
