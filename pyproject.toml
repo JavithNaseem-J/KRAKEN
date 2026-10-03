@@ -38,6 +38,10 @@ dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
 ]
+eval = [
+    "langchain-community==0.4.1",
+    "ragas==0.4.3",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

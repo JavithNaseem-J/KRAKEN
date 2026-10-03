@@ -1,10 +1,9 @@
 """
-Tests for the LLM-as-a-Judge RAG evaluator.
+Tests for deterministic and RAGAS evaluation.
 
 Validates:
   - EvaluationResult Pydantic model validates correctly
-  - Evaluator produces valid scores in [0.0, 1.0] for each metric
-  - Mocked evaluator produces deterministic output
+  - RAGAS receives observed chunks and reference facts
 """
 
 from __future__ import annotations
@@ -35,100 +34,62 @@ from tests.evals.llm_judge import EvaluationResult, evaluate_rag_response
 
 class TestEvaluationResult:
     def test_valid_scores_accepted(self) -> None:
-        result = EvaluationResult(
-            faithfulness=0.85,
-            context_recall=0.70,
-            answer_relevance=0.90,
-            reasoning="All claims grounded in chunks.",
-        )
+        result = EvaluationResult(faithfulness=0.85, context_recall=0.70)
         assert 0.0 <= result.faithfulness <= 1.0
         assert 0.0 <= result.context_recall <= 1.0
-        assert 0.0 <= result.answer_relevance <= 1.0
 
     def test_boundary_scores_accepted(self) -> None:
         result = EvaluationResult(
             faithfulness=0.0,
             context_recall=1.0,
-            answer_relevance=0.5,
         )
         assert result.faithfulness == 0.0
         assert result.context_recall == 1.0
-        assert result.answer_relevance == 0.5
 
     def test_score_above_one_rejected(self) -> None:
         with pytest.raises(ValueError):
-            EvaluationResult(faithfulness=1.5, context_recall=0.5, answer_relevance=0.5)
+            EvaluationResult(faithfulness=1.5, context_recall=0.5)
 
     def test_score_below_zero_rejected(self) -> None:
         with pytest.raises(ValueError):
-            EvaluationResult(faithfulness=-0.1, context_recall=0.5, answer_relevance=0.5)
+            EvaluationResult(faithfulness=-0.1, context_recall=0.5)
 
-    def test_default_reasoning(self) -> None:
-        result = EvaluationResult(faithfulness=0.8, context_recall=0.8, answer_relevance=0.8)
-        assert result.reasoning == ""
+    def test_missing_context_score_is_explicit(self) -> None:
+        assert EvaluationResult().faithfulness is None
 
 
 class TestEvaluateRagResponse:
-    @patch("tests.evals.llm_judge._get_judge_llm")
-    def test_returns_evaluation_result(self, mock_get_llm: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.invoke.return_value = EvaluationResult(
-            faithfulness=0.92,
-            context_recall=0.88,
-            answer_relevance=0.85,
-            reasoning="Good grounding.",
-        )
-        mock_get_llm.return_value = mock_llm
+    def test_zero_chunks_are_not_scored(self) -> None:
+        result = evaluate_rag_response(query="test query", chunks=[], answer="some answer")
+        assert result.faithfulness is None
+        assert result.context_recall is None
 
+    @patch("tests.evals.llm_judge.ContextRecall")
+    @patch("tests.evals.llm_judge.Faithfulness")
+    @patch("tests.evals.llm_judge._get_ragas_llm")
+    def test_ragas_receives_real_context_and_reference(
+        self, mock_llm: MagicMock, mock_faith: MagicMock, mock_recall: MagicMock
+    ) -> None:
+        mock_faith.return_value.score.return_value.value = 0.92
+        mock_recall.return_value.score.return_value.value = 0.88
         result = evaluate_rag_response(
             query="What is the SLA?",
-            chunks=[{"content": "SLA response is 1 hour for P1 tickets"}],
-            answer="The SLA response time for P1 tickets is 1 hour.",
+            chunks=[{"content": "P1 response is 1 hour"}, {"content": ""}],
+            answer="P1 response is 1 hour.",
+            reference_facts=["P1", "1 hour"],
         )
-
-        assert isinstance(result, EvaluationResult)
-        assert 0.0 <= result.faithfulness <= 1.0
-        assert 0.0 <= result.context_recall <= 1.0
-        assert 0.0 <= result.answer_relevance <= 1.0
-
-    @patch("tests.evals.llm_judge._get_judge_llm")
-    def test_zero_chunks_handled(self, mock_get_llm: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.invoke.return_value = EvaluationResult(
-            faithfulness=0.3,
-            context_recall=0.1,
-            answer_relevance=0.5,
+        assert result == EvaluationResult(faithfulness=0.92, context_recall=0.88)
+        mock_faith.assert_called_once_with(llm=mock_llm.return_value)
+        mock_faith.return_value.score.assert_called_once_with(
+            user_input="What is the SLA?",
+            response="P1 response is 1 hour.",
+            retrieved_contexts=["P1 response is 1 hour"],
         )
-        mock_get_llm.return_value = mock_llm
-
-        result = evaluate_rag_response(
-            query="test query",
-            chunks=[],
-            answer="some answer",
+        mock_recall.return_value.score.assert_called_once_with(
+            user_input="What is the SLA?",
+            retrieved_contexts=["P1 response is 1 hour"],
+            reference="P1. 1 hour",
         )
-
-        assert result.faithfulness == 0.3
-        assert result.context_recall == 0.1
-
-    @patch("tests.evals.llm_judge._get_judge_llm")
-    def test_invoke_called_with_messages(self, mock_get_llm: MagicMock) -> None:
-        mock_llm = MagicMock()
-        mock_llm.invoke.return_value = EvaluationResult(
-            faithfulness=0.7,
-            context_recall=0.7,
-            answer_relevance=0.7,
-        )
-        mock_get_llm.return_value = mock_llm
-
-        evaluate_rag_response(
-            query="test",
-            chunks=[{"content": "test chunk"}],
-            answer="test answer",
-        )
-
-        mock_llm.invoke.assert_called_once()
-        call_args = mock_llm.invoke.call_args[0][0]
-        assert len(call_args) == 2  # system + user messages
 
 
 def test_manifest_linked_suite_covers_supported_categories() -> None:
@@ -331,6 +292,55 @@ def test_deterministic_scoring_rejects_reasoning_and_prohibited_claims() -> None
     assert result.prohibited_claims == ["secret value"]
 
 
+def test_source_name_in_answer_does_not_count_as_retrieved_source() -> None:
+    case = GoldenCase(
+        case_id="HOLDOUT-999",
+        category="knowledge_rag",
+        query="How does VPN work?",
+        expected_outcome="grounded_answer",
+        expected_sources=["DOC-001"],
+        required_facts=["MFA"],
+        source="holdout",
+    )
+
+    result = score_response(case, {"answer": "DOC-001 says MFA", "sources": []}, 0.0)
+
+    assert result.source_recall == 0.0
+    assert result.passed is False
+
+
+def test_ticket_id_must_match_structured_lookup_result() -> None:
+    _, cases = load_suite()
+    case = next(case for case in cases if case.category == "ticket_lookup")
+    response, latency = offline_responder(case)
+    response["action_result"]["ticket_id"] = "SYN-WRONG"
+
+    result = score_response(case, response, latency)
+
+    assert result.source_recall == 0.0
+    assert result.passed is False
+
+
+def test_no_answer_requires_a_grounded_refusal() -> None:
+    _, cases = load_suite()
+    case = next(case for case in cases if case.case_id == "HOLDOUT-003")
+
+    fabricated = score_response(
+        case, {"answer": "The board earned ten million dollars.", "sources": []}, 0.0
+    )
+    refused = score_response(
+        case,
+        {
+            "answer": "KRAKEN does not have enough permitted internal evidence to answer this request.",
+            "sources": [],
+        },
+        0.0,
+    )
+
+    assert fabricated.passed is False
+    assert refused.passed is True
+
+
 def test_case_failure_does_not_stop_later_cases() -> None:
     _, cases = load_suite()
     calls = 0
@@ -350,9 +360,10 @@ def test_case_failure_does_not_stop_later_cases() -> None:
 
 
 def test_optional_judge_outage_does_not_change_deterministic_score() -> None:
-    _, cases = load_suite()
+    suite, cases = load_suite()
     case = cases[0]
     response, latency = offline_responder(case)
+    response["retrieved_chunks"] = [{"content": "Policy response is grounded."}]
 
     with patch("tests.evals.llm_judge.evaluate_rag_response", side_effect=TimeoutError):
         result = score_response(case, response, latency, judge_enabled=True)
@@ -360,6 +371,23 @@ def test_optional_judge_outage_does_not_change_deterministic_score() -> None:
     assert result.passed is True
     assert result.judge.status == "unavailable"
     assert result.judge.error == "TimeoutError"
+
+    report = build_report(suite, [case], [result], mode="live", judge_requested=True)
+    assert report.status == "failed"
+
+
+def test_ragas_requires_observed_retrieval_context() -> None:
+    suite, cases = load_suite()
+    case = next(case for case in cases if case.category == "knowledge_rag")
+    response, latency = offline_responder(case)
+
+    result = score_response(case, response, latency, judge_enabled=True)
+    report = build_report(suite, [case], [result], mode="live", judge_requested=True)
+
+    assert result.passed is True
+    assert result.judge.status == "unavailable"
+    assert report.metrics.ragas_evaluated == 0
+    assert report.status == "failed"
 
 
 def test_reports_are_labeled_and_redacted(tmp_path, monkeypatch) -> None:

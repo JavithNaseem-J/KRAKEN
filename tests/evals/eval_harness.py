@@ -81,10 +81,9 @@ class EvaluationSuite(BaseModel):
 
 
 class JudgeResult(BaseModel):
-    status: Literal["disabled", "available", "unavailable"] = "disabled"
+    status: Literal["disabled", "available", "unavailable", "not_applicable"] = "disabled"
     faithfulness: float | None = None
     context_recall: float | None = None
-    answer_relevance: float | None = None
     error: str | None = None
 
 
@@ -105,12 +104,17 @@ class CaseResult(BaseModel):
 
 
 class EvaluationMetrics(BaseModel):
+    case_pass_rate: float
     source_recall: float
     required_fact_coverage: float
     response_contract: float
     prohibited_claim_violations: int
     request_errors: int
     average_latency_seconds: float
+    ragas_evaluated: int = 0
+    ragas_eligible: int = 0
+    ragas_faithfulness: float | None = None
+    ragas_context_recall: float | None = None
 
 
 class EvaluationReport(BaseModel):
@@ -196,14 +200,60 @@ def score_response(
     )
     serialized = json.dumps(response, sort_keys=True, default=str).casefold()
     answer_text = str(answer or "").casefold()
-    source_recall = _coverage([source.casefold() in serialized for source in case.expected_sources])
+    cited_sources = (
+        {source.casefold() for source in response["sources"] if isinstance(source, str)}
+        if isinstance(response.get("sources"), list)
+        else set()
+    )
+    action_result = response.get("action_result")
+    source_evidence = (
+        {str(action_result.get("ticket_id", "")).casefold()}
+        if case.expected_outcome == "ticket_details" and isinstance(action_result, dict)
+        else cited_sources
+    )
+    source_recall = _coverage(
+        [source.casefold() in source_evidence for source in case.expected_sources]
+    )
     fact_coverage = _coverage([fact.casefold() in answer_text for fact in case.required_facts])
     violations = [claim for claim in case.prohibited_claims if claim.casefold() in serialized]
+    action = response.get("action_taken")
+    if case.expected_outcome == "grounded_no_answer":
+        outcome_ok = (
+            "does not have enough permitted internal evidence" in answer_text
+            and not cited_sources
+            and action in (None, "auto_respond")
+            and not action_result
+        )
+    elif case.expected_outcome == "ticket_details":
+        outcome_ok = (
+            action == "get_ticket_status"
+            and isinstance(action_result, dict)
+            and action_result.get("success") is True
+            and all(source.casefold() in answer_text for source in case.expected_sources)
+        )
+    elif case.expected_outcome == "cache_safe_answer":
+        cache = response.get("cache")
+        outcome_ok = (
+            isinstance(cache, dict)
+            and cache.get("hit") is True
+            and not _is_provider_fallback(answer)
+            and action in (None, "auto_respond")
+        )
+    elif case.expected_outcome == "truthful_fallback":
+        outcome_ok = _is_provider_fallback(answer) and action in (None, "auto_respond")
+    else:
+        outcome_ok = not _is_provider_fallback(answer) and action in (None, "auto_respond")
 
     result = CaseResult(
         case_id=case.case_id,
         category=case.category,
-        passed=contract_ok and source_recall == 1.0 and fact_coverage == 1.0 and not violations,
+        passed=(
+            contract_ok
+            and outcome_ok
+            and source_recall == 1.0
+            and fact_coverage == 1.0
+            and not violations
+        ),
         source_recall=source_recall,
         required_fact_coverage=fact_coverage,
         response_contract=float(contract_ok),
@@ -266,6 +316,8 @@ def build_report(
     model: str | None = None,
     cache_mode: str = "controlled",
     target_sha: str | None = None,
+    excluded_count: int = 0,
+    judge_requested: bool = False,
 ) -> EvaluationReport:
     if len(cases) != len(results):
         raise ValueError("case and result counts must match")
@@ -275,17 +327,38 @@ def build_report(
     fact_results = [
         result for case, result in zip(cases, results, strict=True) if case.required_facts
     ]
+    eligible = (
+        [result for result in results if result.judge.status != "not_applicable"]
+        if judge_requested
+        else []
+    )
+    judged = [result for result in eligible if result.judge.status == "available"]
     metrics = EvaluationMetrics(
+        case_pass_rate=_mean([float(item.passed) for item in results]),
         source_recall=_mean([item.source_recall for item in source_results]),
         required_fact_coverage=_mean([item.required_fact_coverage for item in fact_results]),
         response_contract=_mean([item.response_contract for item in results]),
         prohibited_claim_violations=sum(len(item.prohibited_claims) for item in results),
         request_errors=sum(item.error is not None for item in results),
         average_latency_seconds=_mean([item.latency_seconds for item in results]),
+        ragas_evaluated=len(judged),
+        ragas_eligible=len(eligible),
+        ragas_faithfulness=_mean(
+            [item.judge.faithfulness for item in judged if item.judge.faithfulness is not None]
+        )
+        if judged
+        else None,
+        ragas_context_recall=_mean(
+            [item.judge.context_recall for item in judged if item.judge.context_recall is not None]
+        )
+        if any(item.judge.context_recall is not None for item in judged)
+        else None,
     )
     thresholds = suite.thresholds
     passed = (
-        metrics.source_recall >= thresholds.source_recall
+        all(item.passed for item in results)
+        and (not judge_requested or bool(judged) and len(judged) == len(eligible))
+        and metrics.source_recall >= thresholds.source_recall
         and metrics.required_fact_coverage >= thresholds.required_fact_coverage
         and metrics.response_contract >= thresholds.response_contract
         and metrics.prohibited_claim_violations <= thresholds.prohibited_claim_violations
@@ -302,6 +375,7 @@ def build_report(
         provider=provider,
         model=model,
         cache_mode=cache_mode,
+        excluded_count=excluded_count,
         case_count=len(results),
         metrics=metrics,
         thresholds=thresholds,
@@ -310,8 +384,21 @@ def build_report(
 
 
 def offline_responder(case: GoldenCase) -> tuple[dict[str, Any], float]:
-    answer = " ".join(case.required_facts) or "Synthetic policy response is grounded."
-    return {"answer": answer, "sources": case.expected_sources}, 0.0
+    answer = " ".join(case.required_facts) or "Policy response is grounded."
+    response: dict[str, Any] = {"answer": answer, "sources": case.expected_sources}
+    if case.expected_outcome == "grounded_no_answer":
+        response["answer"] = (
+            "KRAKEN does not have enough permitted internal evidence to answer this request."
+        )
+    elif case.expected_outcome == "ticket_details":
+        response["answer"] = f"Ticket Information: {case.expected_sources[0]} {answer}"
+        response["action_taken"] = "get_ticket_status"
+        response["action_result"] = {"success": True, "ticket_id": case.expected_sources[0]}
+    elif case.expected_outcome == "cache_safe_answer":
+        response["cache"] = {"hit": True}
+    elif case.expected_outcome == "truthful_fallback":
+        response["answer"] = "The AI provider is temporarily unavailable. No action was performed."
+    return response, 0.0
 
 
 def target_revision(client: httpx.Client, expected_sha: str | None = None) -> str:
@@ -358,6 +445,13 @@ def establish_case_session(client: httpx.Client, role: str, generation: str) -> 
 def make_live_responder(client: httpx.Client, generation: str) -> Responder:
     def respond(case: GoldenCase) -> tuple[dict[str, Any], float]:
         session_id, csrf_token = establish_case_session(client, case.required_role, generation)
+        if case.expected_outcome == "cache_safe_answer":
+            warmup = client.post(
+                "/v1/run",
+                json={"message": case.query},
+                headers={"X-CSRF-Token": csrf_token},
+            )
+            warmup.raise_for_status()
         started = time.perf_counter()
         response = client.post(
             "/v1/run",
@@ -507,6 +601,7 @@ def write_reports(report: EvaluationReport, json_path: Path, junit_path: Path) -
 def print_report(report: EvaluationReport) -> None:
     print(
         f"AI evaluation {report.status}: mode={report.mode} cases={report.case_count} "
+        f"case_pass_rate={report.metrics.case_pass_rate:.1%} "
         f"source_recall={report.metrics.source_recall:.1%} "
         f"fact_coverage={report.metrics.required_fact_coverage:.1%} "
         f"contract={report.metrics.response_contract:.1%} "
@@ -516,9 +611,19 @@ def print_report(report: EvaluationReport) -> None:
     for result in report.cases:
         if not result.passed:
             print(f"  failed: {result.case_id} ({result.category}) {result.error or 'metrics'}")
+    if report.metrics.ragas_eligible:
+        print(
+            f"RAGAS: {report.metrics.ragas_evaluated}/{report.metrics.ragas_eligible} "
+            f"eligible cases, faithfulness={report.metrics.ragas_faithfulness}, "
+            f"context_recall={report.metrics.ragas_context_recall}"
+        )
 
 
 def _judge(case: GoldenCase, response: dict[str, Any]) -> JudgeResult:
+    if case.category in {"ticket_lookup", "no_answer", "provider_fallback"}:
+        return JudgeResult(status="not_applicable")
+    if not response.get("retrieved_chunks"):
+        return JudgeResult(status="unavailable", error="MissingRetrievedChunks")
     try:
         from tests.evals.llm_judge import evaluate_rag_response
 
@@ -526,12 +631,14 @@ def _judge(case: GoldenCase, response: dict[str, Any]) -> JudgeResult:
             query=case.query,
             chunks=response.get("retrieved_chunks", []),
             answer=str(response.get("answer", "")),
+            reference_facts=case.required_facts,
         )
+        if judged.faithfulness is None:
+            return JudgeResult(status="unavailable", error="MissingRetrievedChunkText")
         return JudgeResult(
             status="available",
             faithfulness=judged.faithfulness,
             context_recall=judged.context_recall,
-            answer_relevance=judged.answer_relevance,
         )
     except Exception as exc:  # noqa: BLE001 - judge evidence is explicitly optional
         return JudgeResult(status="unavailable", error=exc.__class__.__name__)
@@ -554,14 +661,14 @@ def _mean(values: list[float]) -> float:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="KRAKEN deterministic AI evaluation")
+    parser = argparse.ArgumentParser(description="KRAKEN AI evaluation")
     parser.add_argument("--mode", choices=("offline", "live", "stream"), default="offline")
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--api-key", default=os.getenv("EVAL_API_KEY", ""))
     parser.add_argument("--expected-sha", help="Require an exact target /version commit SHA")
     parser.add_argument("--timeout-seconds", type=float, default=120.0)
     parser.add_argument("--cache-mode", default="configured")
-    parser.add_argument("--judge", action="store_true")
+    parser.add_argument("--ragas", "--judge", dest="judge", action="store_true")
     parser.add_argument("--case")
     parser.add_argument(
         "--samples", type=int, default=5, help="Stream measurements per selected case"
@@ -570,8 +677,15 @@ def main() -> int:
     parser.add_argument("--json-report", type=Path, default=Path("reports/ai-evaluation.json"))
     parser.add_argument("--junit-report", type=Path, default=Path("reports/ai-evaluation.xml"))
     args = parser.parse_args()
+    if args.judge and args.mode != "live":
+        parser.error("--ragas requires --mode live with observed retrieval context")
 
     suite, cases = load_suite()
+    excluded_count = 0
+    if args.mode == "live":
+        # Provider outages require fault injection; normal live requests cannot verify this category.
+        excluded_count = sum(case.category == "provider_fallback" for case in cases)
+        cases = [case for case in cases if case.category != "provider_fallback"]
     if args.case:
         cases = [case for case in cases if case.case_id == args.case]
         if not cases:
@@ -658,6 +772,8 @@ def main() -> int:
         model=model,
         cache_mode="controlled" if args.mode == "offline" else args.cache_mode,
         target_sha=target_sha,
+        excluded_count=excluded_count,
+        judge_requested=args.judge,
     )
     write_reports(report, args.json_report, args.junit_report)
     print_report(report)
