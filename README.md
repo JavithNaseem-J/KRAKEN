@@ -18,6 +18,8 @@ KRAKEN answers policy and ticket questions, creates support tickets, and stages 
 | Offline evaluator fixture | 50/50 cases passed | Tests scoring and response contracts; answers are built from expected facts |
 | Substantive SSE samples | 0/10 emitted visible answer deltas; 10/10 ended with a terminal event | Older local staging run; first-visible-answer latency remains unmeasured |
 
+The **1.0 RAGAS scores are not 100% AI accuracy**. This one cached case expected document `DOC-001` and three phrases: `GlobalProtect`, `vpn.northstar.example`, and `MFA`. They were present, and the RAGAS judge rated the answer as supported by the retrieved text. This does not estimate success across new questions, fresh generations, or agent actions.
+
 The [portfolio guide](docs/portfolio.md#verification-and-evidence) records the evaluation setup and limits. The RAGAS result is one public-site cache hit; the full live staging and SSE numbers are from an older revision. Reports are local and ignored by Git. The committed [corpus manifest](data/synthetic/manifest.json) defines 500 demo tickets, 30 documents, and 75 capability scenarios. The evaluator exercises 50 cases from the [suite definition](data/synthetic/evaluation_suite.json); it is not an external benchmark.
 
 ## Architecture
