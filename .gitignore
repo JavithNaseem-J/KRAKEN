@@ -67,7 +67,6 @@ Desktop.ini
 /openspec/
 
 # Local project material excluded from the deployment repository
-/README.md
 /LICENSE
 /.env.example
 /main.py
