@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 import structlog
@@ -390,10 +390,22 @@ async def health() -> dict[str, str]:
 
 @app.get("/version", tags=["ops"])
 async def version_info() -> JSONResponse:
-    """Return only immutable, non-secret build identity."""
+    """Return non-secret build identity and effective evaluation configuration."""
     build_info = load_build_info(settings.environment)
     return JSONResponse(
-        content=build_info.model_dump(mode="json"),
+        content={
+            **build_info.model_dump(mode="json"),
+            "knowledge_collection_version": settings.knowledge_collection_version,
+            "dataset_generation": settings.synthetic_dataset_generation,
+            "llm_model": settings.llm_model,
+            "llm_endpoint_host": urlparse(settings.llm_base_url).hostname or "unknown",
+            "embedding_provider": settings.embedding_provider,
+            "embedding_model": (
+                settings.qdrant_inference_model
+                if settings.qdrant_cloud_inference_enabled
+                else settings.embedding_model
+            ),
+        },
         headers={"Cache-Control": "no-store"},
     )
 
@@ -500,20 +512,6 @@ def _inference_capability_status(
 async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
     timeout = settings.capability_probe_timeout_seconds
 
-    def manifest_generation() -> CapabilityStatus:
-        try:
-            from src.utils.synthetic_data import load_manifest
-
-            manifest = load_manifest()
-            return _generation_capability_status(
-                settings.synthetic_dataset_generation, "manifest", manifest.generation
-            )
-        except Exception:
-            return CapabilityStatus(
-                state=CapabilityState.DEGRADED,
-                detail="manifest unavailable",
-            )
-
     async def groq() -> CapabilityStatus:
         from src.utils.llm_probe import probe_chat_completion
 
@@ -533,32 +531,55 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
         if not settings.qdrant_url or not settings.qdrant_api_key:
             return CapabilityStatus(state=CapabilityState.DEGRADED, detail="not configured")
         try:
-            from qdrant_client.models import Filter
+            from qdrant_client.models import FieldCondition, Filter, MatchValue
 
             from src.utils.cache import create_async_qdrant_client
             from src.utils.knowledge import active_generation_conditions
 
             client = create_async_qdrant_client()
-            await asyncio.wait_for(client.get_collections(), timeout=timeout)
-            active_points = await asyncio.wait_for(
-                client.count(
-                    collection_name=settings.qdrant_collection_name,
-                    count_filter=Filter(
-                        must=active_generation_conditions(
-                            settings.knowledge_collection_version,
-                            settings.synthetic_dataset_generation,
-                        )
+            try:
+                await asyncio.wait_for(client.get_collections(), timeout=timeout)
+                active_points = await asyncio.wait_for(
+                    client.count(
+                        collection_name=settings.qdrant_collection_name,
+                        count_filter=Filter(
+                            must=active_generation_conditions(
+                                settings.knowledge_collection_version,
+                                settings.synthetic_dataset_generation,
+                            )
+                        ),
+                        exact=True,
                     ),
-                    exact=True,
-                ),
-                timeout=timeout,
-            )
-            await client.close()
-            if active_points.count < 1:
-                return CapabilityStatus(
-                    state=CapabilityState.DEGRADED,
-                    detail="active knowledge generation unavailable",
+                    timeout=timeout,
                 )
+                if active_points.count < 1:
+                    return CapabilityStatus(
+                        state=CapabilityState.DEGRADED,
+                        detail="active knowledge generation unavailable",
+                    )
+                indexed_tickets = await asyncio.wait_for(
+                    client.count(
+                        collection_name=settings.qdrant_collection_name,
+                        count_filter=Filter(
+                            must=[
+                                FieldCondition(key="source", match=MatchValue(value="tickets")),
+                                *active_generation_conditions(
+                                    settings.knowledge_collection_version,
+                                    settings.synthetic_dataset_generation,
+                                ),
+                            ]
+                        ),
+                        exact=True,
+                    ),
+                    timeout=timeout,
+                )
+                if indexed_tickets.count < 1:
+                    return CapabilityStatus(
+                        state=CapabilityState.DEGRADED,
+                        detail="indexed ticket seeds unavailable",
+                    )
+            finally:
+                await client.close()
             return CapabilityStatus(state=CapabilityState.READY)
         except Exception:
             return CapabilityStatus(state=CapabilityState.DEGRADED, detail="provider unavailable")
@@ -680,7 +701,7 @@ async def _probe_runtime_capabilities(request: Request) -> ReadinessResponse:
 
     semantic_cache_state = await semantic_cache()
     capabilities = {
-        "synthetic_dataset": manifest_generation(),
+        "synthetic_dataset": qdrant_state,
         "groq": groq_state,
         "qdrant_storage": qdrant_state,
         "qdrant_inference": inference_state,

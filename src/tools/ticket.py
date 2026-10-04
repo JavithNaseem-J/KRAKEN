@@ -10,6 +10,7 @@ from typing import Any
 import structlog
 
 from src.utils.exceptions import ActionExecutionError
+from src.utils.synthetic_tickets import fetch_indexed_tickets
 
 from ..safety.path_validator import WORKSPACE_ROOT, atomic_write_json
 
@@ -81,16 +82,16 @@ def _init_pg_tickets_table(pool: Any) -> None:
 
 
 def _load_seed_tickets() -> list[dict[str, Any]]:
-    """Load canonical tickets first, with workspace state only as a fallback."""
+    """Load canonical tickets from local files or the active vector index."""
     for p in (_SEED_FILE, _TICKETS_FILE):
         if p.exists():
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                if isinstance(data, list):
+                if isinstance(data, list) and data:
                     return data
             except Exception:
                 continue
-    return []
+    return fetch_indexed_tickets()
 
 
 # File-Based Fallback
@@ -99,21 +100,10 @@ def _load_tickets() -> list[dict[str, Any]]:
     WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
 
     if not _TICKETS_FILE.exists():
-        if _SEED_FILE.exists():
-            try:
-                content = _SEED_FILE.read_text(encoding="utf-8")
-                _TICKETS_FILE.write_text(content, encoding="utf-8")
-                log.info(
-                    "ticket_handler.init_workspace_db", src=str(_SEED_FILE), dest=str(_TICKETS_FILE)
-                )
-            except Exception as exc:
-                log.error("ticket_handler.init_db_error", error=str(exc))
-                raise ActionExecutionError(
-                    f"Failed to initialize workspace ticket database: {exc}"
-                ) from exc
-        else:
-            log.warning("ticket_handler.no_db_found")
-            raise ActionExecutionError("Ticket database file and seed file are both missing.")
+        seeds = _load_seed_tickets()
+        if not seeds:
+            raise ActionExecutionError("Ticket database and indexed seed records are unavailable.")
+        atomic_write_json(_TICKETS_FILE, seeds)
 
     try:
         data = json.loads(_TICKETS_FILE.read_text(encoding="utf-8"))
@@ -300,12 +290,14 @@ def execute_get_ticket_status(ticket_id: str) -> dict[str, Any]:
         "ticket_id": resolved_id,
         "status": ticket.get("status", "UNKNOWN"),
         "priority": ticket.get("priority", "UNKNOWN"),
+        "owner_team": ticket.get("owner_team", "Unassigned"),
         "subject": ticket.get("subject") or ticket.get("title", ""),
         "category": ticket.get("category", ""),
         "user_id": ticket.get("user_id") or ticket.get("user", ""),
         "description": ticket.get("description", ""),
         "created_at": ticket.get("created_at", ""),
         "updated_at": ticket.get("updated_at", ""),
+        "resolved_at": ticket.get("resolved_at"),
     }
 
 

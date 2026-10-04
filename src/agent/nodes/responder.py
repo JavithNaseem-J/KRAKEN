@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -18,6 +19,19 @@ _PROVIDER_UNAVAILABLE_ANSWER = (
     "The AI provider is temporarily unavailable, so KRAKEN cannot compose a "
     "grounded answer right now. No operational action was performed. Please retry shortly."
 )
+_NO_EVIDENCE_PATTERN = re.compile(
+    r"\b(?:do not|don't|does not|doesn't|cannot|can't|couldn't)\s+"
+    r"(?:have|find|verify|provide|answer)\b.{0,90}\b"
+    r"(?:information|evidence|documentation|data|answer|request|question)\b"
+    r"|\b(?:no|insufficient)\s+(?:permitted\s+|internal\s+|relevant\s+)?"
+    r"(?:information|evidence|documentation|data)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _is_unsupported_answer(answer: str) -> bool:
+    normalized = answer[:350].replace("’", "'").replace("‘", "'")
+    return bool(_NO_EVIDENCE_PATTERN.search(normalized)) or answer == _PROVIDER_UNAVAILABLE_ANSWER
 
 
 def _truncate_result(result: Any) -> str:
@@ -56,10 +70,12 @@ def _fallback_answer_from_action_result(action_result: Any) -> str:
             f"- **Subject:** {payload.get('subject') or payload.get('title', 'Untitled')}\n"
             f"- **Status:** `{payload.get('status', 'UNKNOWN')}`\n"
             f"- **Priority:** `{payload.get('priority', 'N/A')}`\n"
+            f"- **Owner team:** {payload.get('owner_team', 'Unassigned')}\n"
             f"- **Category:** {payload.get('category', 'General')}\n"
             f"- **User:** {payload.get('user_id') or payload.get('user', 'Unknown')}\n"
             f"- **Updated:** {payload.get('updated_at', 'Unknown')}\n"
             f"- **Description:** {payload.get('description', 'No description.')}"
+            + (f"\n- **Resolution:** {payload['resolution']}" if payload.get("resolution") else "")
         )
 
     if payload.get("message"):
@@ -210,6 +226,8 @@ async def responder_node(state: GraphState) -> dict:
         return {
             "final_answer": early_answer,
             "action_explanation": explanation,
+            "insufficient_knowledge": state.get("insufficient_knowledge", False)
+            or (selected_action == "auto_respond" and _is_unsupported_answer(early_answer)),
             "messages": [{"role": "assistant", "content": early_answer}],
         }
 
@@ -281,5 +299,7 @@ async def responder_node(state: GraphState) -> dict:
     return {
         "final_answer": final_answer,
         "action_explanation": explanation,
+        "insufficient_knowledge": state.get("insufficient_knowledge", False)
+        or (selected_action in (None, "auto_respond") and _is_unsupported_answer(final_answer)),
         "messages": [{"role": "assistant", "content": final_answer}],
     }

@@ -18,6 +18,16 @@ _STATUS_KEYWORDS: frozenset[str] = frozenset(
         "ticket status",
         "check status",
         "what is the status",
+        "details",
+        "who owns",
+        "owning team",
+        "owner",
+        "priority",
+        "resolved",
+        "resolution",
+        "summarize",
+        "summary",
+        "current state",
     }
 )
 
@@ -73,7 +83,21 @@ _WRITE_ACTION_INTENT_PHRASES: dict[str, tuple[str, ...]] = {
 
 def is_ticket_status_query(user_message: str) -> bool:
     normalized_message = re.sub(r"[^a-z0-9]+", " ", user_message.lower()).strip()
-    return any(keyword in normalized_message for keyword in _STATUS_KEYWORDS)
+    if not TICKET_ID_REGEX.search(user_message):
+        return False
+    write_phrases = (
+        phrase for phrases in _WRITE_ACTION_INTENT_PHRASES.values() for phrase in phrases
+    )
+    if any(re.search(rf"\b{re.escape(phrase)}\b", normalized_message) for phrase in write_phrases):
+        return False
+    if re.search(
+        r"\b(?:set|mark|reassign|increase|decrease|modify|remove|delete|update|change|edit|assign|reopen|resolve|close)\b",
+        normalized_message,
+    ):
+        return False
+    return any(
+        re.search(rf"\b{re.escape(wording)}\b", normalized_message) for wording in _STATUS_KEYWORDS
+    )
 
 
 def should_override_to_auto_respond(user_message: str, proposed_action: str) -> tuple[bool, bool]:

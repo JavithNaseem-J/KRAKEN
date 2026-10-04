@@ -45,8 +45,6 @@ COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --chown=kraken:kraken src/ /app/src/
-COPY --chown=kraken:kraken data/ /app/data/
-COPY --chown=kraken:kraken main.py /app/main.py
 COPY --from=frontend-builder --chown=kraken:kraken /frontend/dist/ /app/frontend-react/dist/
 
 RUN BUILD_TIME="${KRAKEN_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" \

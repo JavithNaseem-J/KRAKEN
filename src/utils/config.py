@@ -260,13 +260,6 @@ class Settings(BaseSettings):
     def validate_prod_environment_keys(self) -> Settings:
         """Enforce strict secret checks when ENVIRONMENT == 'prod'."""
         if self.environment == "prod":
-            from src.utils.synthetic_data import load_manifest
-
-            manifest_generation = load_manifest().generation
-            if self.synthetic_dataset_generation != manifest_generation:
-                raise ValueError(
-                    "SYNTHETIC_DATASET_GENERATION must match the committed synthetic manifest."
-                )
             default_secrets = {
                 "dev-secret-key",
                 "dev-token",

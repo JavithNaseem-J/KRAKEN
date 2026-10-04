@@ -74,5 +74,6 @@ testpaths    = ["tests"]
 python_files = ["test_*.py"]
 markers = [
     "integration: mark test as integration test requiring multiple running components or test clients",
+    "agent_outcome: direct state assertions for agent tool and approval workflows",
 ]
 addopts = "-m \"not integration\""

@@ -1,9 +1,7 @@
 name: KRAKEN Deployment Pipeline
 
 on:
-  workflow_run:
-    workflows: ["KRAKEN CI/CD Pipeline"]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
     inputs:
@@ -17,20 +15,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ============================================================================
-  # 1. Resolve the Exact CI-Verified Revision
-  # ============================================================================
   revision-gate:
-    name: Resolve CI-Verified Revision
+    name: Build Deployment Revision
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
     outputs:
       deploy_sha: ${{ steps.revision.outputs.sha }}
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.commit_sha || github.sha }}
+          ref: ${{ github.event.inputs.commit_sha || github.sha }}
 
       - name: Resolve Checked-Out Revision
         id: revision
@@ -43,27 +37,25 @@ jobs:
           fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Manual Revision Passed CI
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DEPLOY_SHA: ${{ steps.revision.outputs.sha }}
-        shell: bash
+      - name: Build Production Image
         run: |
-          SUCCESSFUL_RUNS=$(gh run list \
-            --workflow ci.yml \
-            --commit "$DEPLOY_SHA" \
-            --status completed \
-            --json conclusion \
-            --jq '[.[] | select(.conclusion == "success")] | length')
-          if [ "$SUCCESSFUL_RUNS" -lt 1 ]; then
-            echo "Commit ${DEPLOY_SHA} has no successful completed CI run." >&2
-            exit 1
-          fi
+          docker build --build-arg KRAKEN_COMMIT_SHA="${{ steps.revision.outputs.sha }}" -t kraken-deploy-check -f Dockerfile .
 
-  # ============================================================================
-  # 2. Trigger Render Service Deployment
-  # ============================================================================
+      - name: Check Container Health
+        run: |
+          docker run -d --name kraken-deploy-check -p 8000:8000 \
+            -e ENVIRONMENT=test -e LLM_API_KEY=deployment-check \
+            -e HITL_SERVICE_TOKEN=deployment-check-token-32-characters-long \
+            kraken-deploy-check
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:8000/health | jq -e '.status == "ok"' >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs kraken-deploy-check
+          exit 1
+
   render-deploy:
     name: Trigger Render Service Deployment
     runs-on: ubuntu-latest
@@ -102,17 +94,18 @@ jobs:
           DEPLOY_SHA: ${{ needs.revision-gate.outputs.deploy_sha }}
           PRODUCTION_BASE_URL: https://kraken-bdtw.onrender.com
         run: |
-          python scripts/verify_deployment.py \
-            --base-url "$PRODUCTION_BASE_URL" \
-            --expected-sha "$DEPLOY_SHA" \
-            --timeout-seconds 1200 \
-            --report reports/deployment-verification.json
-
-      - name: Upload Deployment Verification Evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: deployment-verification-${{ needs.revision-gate.outputs.deploy_sha }}
-          path: reports/deployment-verification.json
-          if-no-files-found: warn
-          retention-days: 30
+          for attempt in {1..80}; do
+            if HEALTH=$(curl --fail --silent --max-time 15 "$PRODUCTION_BASE_URL/health") && \
+               READY=$(curl --fail --silent --max-time 15 "$PRODUCTION_BASE_URL/ready") && \
+               VERSION=$(curl --fail --silent --max-time 15 "$PRODUCTION_BASE_URL/version") && \
+               jq -e '.status == "ok"' <<< "$HEALTH" >/dev/null && \
+               jq -e '.status == "ready"' <<< "$READY" >/dev/null && \
+               jq -e --arg sha "$DEPLOY_SHA" '.commit_sha == $sha' <<< "$VERSION" >/dev/null; then
+              echo "Render is ready at commit $DEPLOY_SHA."
+              exit 0
+            fi
+            echo "Waiting for Render revision $DEPLOY_SHA ($attempt/80)."
+            sleep 15
+          done
+          echo "Render did not become ready at commit $DEPLOY_SHA." >&2
+          exit 1

@@ -6,8 +6,10 @@ from functools import lru_cache
 from typing import Any
 
 import structlog
+from langchain_core.exceptions import OutputParserException
 from langchain_openai import ChatOpenAI
-from pydantic import SecretStr
+from openai import BadRequestError
+from pydantic import SecretStr, ValidationError
 
 from src.utils.config import get_settings
 from src.utils.exceptions import LLMProviderUnavailableError
@@ -43,6 +45,12 @@ class ProviderCircuitBreaker:
             result = await runnable.ainvoke(messages)
             self._open_until = 0.0
             return result
+        except (OutputParserException, ValidationError) as exc:
+            log.warning("llm.output_invalid", error=exc.__class__.__name__)
+            raise
+        except BadRequestError:
+            log.warning("llm.request_rejected", status_code=400)
+            raise
         except Exception as exc:
             self._open_until = now + get_settings().provider_circuit_breaker_seconds
             log.warning("llm.provider_call_failed", provider_error=exc.__class__.__name__)
@@ -56,6 +64,12 @@ class ProviderCircuitBreaker:
             async for chunk in runnable.astream(messages):
                 yield chunk
             self._open_until = 0.0
+        except (OutputParserException, ValidationError) as exc:
+            log.warning("llm.output_invalid", error=exc.__class__.__name__)
+            raise
+        except BadRequestError:
+            log.warning("llm.request_rejected", status_code=400)
+            raise
         except Exception as exc:
             self._open_until = now + get_settings().provider_circuit_breaker_seconds
             log.warning("llm.provider_stream_failed", provider_error=exc.__class__.__name__)

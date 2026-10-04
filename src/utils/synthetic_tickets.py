@@ -11,6 +11,62 @@ from typing import Any
 from src.utils.config import Settings, get_settings
 from src.utils.exceptions import ActionExecutionError
 
+_SEED_FILE = (
+    Path(__file__).resolve().parents[2] / "data" / "knowledge" / "tickets" / "synthetic_tickets.json"
+)
+
+
+def fetch_indexed_tickets(
+    ticket_id: str | None = None, *, settings: Settings | None = None
+) -> list[dict[str, Any]]:
+    """Read the indexed seed records when the local corpus is absent."""
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import FieldCondition, Filter, MatchValue
+
+    from src.utils.knowledge import active_generation_conditions
+
+    settings = settings or get_settings()
+    if not settings.qdrant_url:
+        raise ActionExecutionError("Indexed ticket data is unavailable.")
+    conditions = [
+        FieldCondition(key="source", match=MatchValue(value="tickets")),
+        FieldCondition(key="scope", match=MatchValue(value="shared")),
+        *active_generation_conditions(
+            settings.knowledge_collection_version, settings.synthetic_dataset_generation
+        ),
+    ]
+    if ticket_id:
+        conditions.append(
+            FieldCondition(
+                key="metadata.ticket_id", match=MatchValue(value=ticket_id.strip().upper())
+            )
+        )
+    client = QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key, timeout=10)
+    records: list[dict[str, Any]] = []
+    offset = None
+    try:
+        while True:
+            points, offset = client.scroll(
+                collection_name=settings.qdrant_collection_name,
+                scroll_filter=Filter(must=conditions),
+                limit=1 if ticket_id else 256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            records.extend(
+                raw
+                for point in points
+                if isinstance(point.payload, dict)
+                and isinstance(raw := point.payload.get("metadata", {}).get("raw"), dict)
+            )
+            if ticket_id or offset is None:
+                return records
+    except Exception as exc:
+        raise ActionExecutionError("Indexed ticket data is unavailable.") from exc
+    finally:
+        client.close()
+
 
 class SyntheticTicketRepository:
     """Immutable seed tickets plus expiring, session-private overlays."""
@@ -33,20 +89,20 @@ class SyntheticTicketRepository:
 
     @staticmethod
     def _load_seeds() -> dict[str, dict[str, Any]]:
-        path = (
-            Path(__file__).resolve().parents[2]
-            / "data"
-            / "knowledge"
-            / "tickets"
-            / "synthetic_tickets.json"
-        )
-        records = json.loads(path.read_text(encoding="utf-8"))
+        records = json.loads(_SEED_FILE.read_text(encoding="utf-8")) if _SEED_FILE.exists() else []
         result: dict[str, dict[str, Any]] = {}
         for record in records:
             ticket_id = str(record.get("ticket_id") or record.get("id") or "").upper()
             if ticket_id:
                 result[ticket_id] = copy.deepcopy(record)
         return result
+
+    def _seed(self, ticket_id: str) -> dict[str, Any] | None:
+        if ticket_id not in self._seeds and not _SEED_FILE.exists():
+            records = fetch_indexed_tickets(ticket_id, settings=self.settings)
+            if records:
+                self._seeds[ticket_id] = records[0]
+        return self._seeds.get(ticket_id)
 
     def _scope(self, session_id: str) -> dict[str, Any]:
         self.cleanup()
@@ -100,7 +156,7 @@ class SyntheticTicketRepository:
             scope = self._scope(session_id)
             ticket = scope["created"].get(normalized)
             if ticket is None:
-                ticket = scope["overlays"].get(normalized) or self._seeds.get(normalized)
+                ticket = scope["overlays"].get(normalized) or self._seed(normalized)
             if ticket is None:
                 raise ActionExecutionError(f"Ticket '{ticket_id}' not found.")
             return copy.deepcopy(ticket)
@@ -158,7 +214,7 @@ class SyntheticTicketRepository:
             current = scope["created"].get(normalized)
             is_created = current is not None
             if current is None:
-                current = scope["overlays"].get(normalized) or self._seeds.get(normalized)
+                current = scope["overlays"].get(normalized) or self._seed(normalized)
             if current is None:
                 raise ActionExecutionError(f"Ticket '{ticket_id}' not found.")
             self._consume_write(scope)

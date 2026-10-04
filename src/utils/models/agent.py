@@ -44,7 +44,6 @@ class QueryResponse(BaseModel):
     )
     cache: CacheMetadata = Field(default_factory=CacheMetadata)
 
-    @field_validator("action_result", "retrieved_chunks", mode="before")
-    @classmethod
-    def remove_private_reasoning(cls, value: Any) -> Any:
-        return strip_reasoning_fields(value)
+    _remove_private_reasoning = field_validator("action_result", "retrieved_chunks", mode="before")(
+        strip_reasoning_fields
+    )

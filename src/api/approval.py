@@ -54,10 +54,7 @@ class PendingApprovalRequest(BaseModel):
     initiator_role: str = "end_user"
     public_session_id: str | None = None
 
-    @field_validator("payload", mode="before")
-    @classmethod
-    def remove_private_reasoning(cls, value: Any) -> Any:
-        return strip_reasoning_fields(value)
+    _remove_private_reasoning = field_validator("payload", mode="before")(strip_reasoning_fields)
 
 
 # Helper: Notify Orchestrator Callback with Retry/Backoff

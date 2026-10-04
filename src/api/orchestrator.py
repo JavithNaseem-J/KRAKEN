@@ -1215,7 +1215,9 @@ def _build_response(
         answer=str(answer_val),
         action_taken=state.get("selected_action"),
         action_result=state.get("action_result"),
-        sources=[c["source"] for c in formatted_chunks],
+        sources=(
+            [] if state.get("insufficient_knowledge") else [c["source"] for c in formatted_chunks]
+        ),
         retrieved_chunks=formatted_chunks,
         chunk_scores=chunk_scores,
         trace_id=resolved_trace_id,

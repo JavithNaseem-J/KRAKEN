@@ -42,10 +42,7 @@ class ActionRequest(BaseModel):
     public_actor_id: str | None = None
     approval_id: str | None = None
 
-    @field_validator("payload", mode="before")
-    @classmethod
-    def remove_private_reasoning(cls, value: Any) -> Any:
-        return strip_reasoning_fields(value)
+    _remove_private_reasoning = field_validator("payload", mode="before")(strip_reasoning_fields)
 
 
 class ActionResult(BaseModel):

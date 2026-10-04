@@ -21,7 +21,6 @@ class AuditLogRequest(BaseModel):
     result: dict[str, Any] | None = None
     hitl_decision: str | None = None
 
-    @field_validator("payload", "result", mode="before")
-    @classmethod
-    def remove_private_reasoning(cls, value: Any) -> Any:
-        return strip_reasoning_fields(value)
+    _remove_private_reasoning = field_validator("payload", "result", mode="before")(
+        strip_reasoning_fields
+    )

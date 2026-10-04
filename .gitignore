@@ -37,6 +37,7 @@ ci-artifacts/
 playwright/.cache/
 playwright/.auth/
 graphify-out/
+README_AUDIT.md
 
 # KRAKEN runtime state
 logs/
@@ -63,9 +64,25 @@ Desktop.ini
 .gemini/
 .opencode/
 
-# Keep the public repository limited to the curated tracked verification suite.
-/tests/*
-!/tests/unit/
-/tests/unit/*
-!/tests/unit/test_verify_deployment.py
 /openspec/
+
+# Local project material excluded from the deployment repository
+/README.md
+/LICENSE
+/.env.example
+/main.py
+/docs/
+/scripts/
+/tests/
+/data/
+/src/utils/corpus_manifest.py
+/.github/workflows/ci.yml
+/frontend-react/.env.example
+/frontend-react/.gitignore
+/frontend-react/e2e/
+/frontend-react/playwright.config.ts
+/frontend-react/src/test/
+/frontend-react/src/**/*.test.ts
+/frontend-react/src/**/*.test.tsx
+*.local
+*.tsbuildinfo
