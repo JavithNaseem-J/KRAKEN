@@ -2,7 +2,7 @@
 
 KRAKEN is a portfolio project that demonstrates how an AI support agent can answer questions from a controlled knowledge base, create tickets, and require human approval before a critical action. It uses Northstar demo records and roles. Firewall and account actions change application-owned demo state; they do not operate real security systems.
 
-**Click Here:** [Live](https://kraken-bdtw.onrender.com)
+**Live:** [Click Here](https://kraken-bdtw.onrender.com)
 
 **Stack:** Python 3.12, FastAPI, LangGraph, Qdrant, Redis, PostgreSQL, React, TypeScript, and Docker.
 
