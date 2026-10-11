@@ -28,16 +28,17 @@ _STATUS_KEYWORDS: frozenset[str] = frozenset(
         "summarize",
         "summary",
         "current state",
+        "show ticket",
     }
 )
 
 _QUARANTINE_INTENT_PATTERN = re.compile(
     r"\b(?:quarantine|block|isolate)\s+"
-    r"(?:(?:the|malicious|suspicious|source|remote)\s+){0,3}ip\b"
+    r"(?:(?:the|demo|malicious|suspicious|source|remote)\s+){0,3}ip\b"
 )
 _QUARANTINE_ADDRESS_PATTERN = re.compile(
     r"\b(?:quarantine|block|isolate)\s+"
-    r"(?:(?:the|malicious|suspicious|source|remote)\s+){0,3}"
+    r"(?:(?:the|demo|malicious|suspicious|source|remote)\s+){0,3}"
     r"(?:ip\s+)?(?:\d{1,3}\.){3}\d{1,3}\b"
 )
 
@@ -75,6 +76,7 @@ _WRITE_ACTION_INTENT_PHRASES: dict[str, tuple[str, ...]] = {
     "unlock_account": (
         "unlock account",
         "unlock the account",
+        "unlock demo account",
         "unlock user",
         "restore account access",
     ),
@@ -118,7 +120,7 @@ def should_override_to_auto_respond(user_message: str, proposed_action: str) -> 
     if proposed_action == "create_ticket":
         has_explicit_intent = has_explicit_intent or bool(
             re.search(
-                r"\b(?:create|open|raise|file|submit)\b(?:\s+\w+){0,4}\s+ticket\b",
+                r"\b(?:create|open|raise|file|submit)\b(?:\s+[\w-]+){0,5}\s+(?:ticket|request)\b",
                 normalized_message,
             )
         )

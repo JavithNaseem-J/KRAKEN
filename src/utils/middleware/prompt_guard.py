@@ -12,7 +12,24 @@ PROMPT_INJECTION_PATTERNS = [
     re.compile(r"act\s+as\s+if", re.IGNORECASE),
     re.compile(r"new\s+persona", re.IGNORECASE),
     re.compile(r"override\s+(all\s+)?(safety\s+guidelines|system)", re.IGNORECASE),
+    re.compile(
+        r"act\s+as\s+(?:an?\s+)?(?:admin(?:istrator)?|developer|system)\b.*\bbypass\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:disable|bypass|turn\s+off)\b.{0,40}\b(?:prompt\s+guard|approval\s+rules?|safety\s+rules?|guardrails?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"treat\s+(?:this|the)\s+(?:message|request)\s+as\s+(?:an?\s+)?(?:developer|system)\s+instruction",
+        re.IGNORECASE,
+    ),
     re.compile(r"system\s*prompt\s*:", re.IGNORECASE),
+    re.compile(
+        r"\b(?:print|dump|show|list| reveal|export)\b.{0,60}\b"
+        r"(?:environment\s+variables?|secret(?:s)?|api\s+keys?|credentials?)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"<\s*\|im_start\|\s*>", re.IGNORECASE),
     re.compile(r"\[\s*INST\s*\]", re.IGNORECASE),
 ]

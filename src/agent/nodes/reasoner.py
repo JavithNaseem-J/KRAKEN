@@ -58,6 +58,15 @@ async def reasoner_node(state: GraphState) -> dict:
     # pyrefly: ignore [bad-argument-type]
     chunks_text, has_valid_chunks = _format_chunks(retrieved_chunks, threshold=0.40)
 
+    if has_valid_chunks:
+        return {
+            "reasoning": (
+                f"Authorized evidence was retrieved in {len(retrieved_chunks)} chunk(s). "
+                "Use the retrieved text directly and preserve its facts."
+            ),
+            "insufficient_knowledge": False,
+        }
+
     operational_intent = any(
         term in user_message.lower()
         for term in (
