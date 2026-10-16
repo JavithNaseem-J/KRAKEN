@@ -456,19 +456,30 @@ async def responder_node(state: GraphState) -> dict:
             "insufficient_knowledge": False,
             "messages": [{"role": "assistant", "content": private_answer}],
         }
-
-    grounded_answer = _grounded_knowledge_answer(user_message, retrieved_chunks)
-    if (
-        selected_action in (None, "auto_respond")
-        and grounded_answer
-        and evidence != "Unsupported privileged-access operation."
-    ):
+    if state.get("error") == "llm_provider_unavailable":
+        fallback = _fallback_answer_from_action_result(action_result)
+        if not fallback and retrieved_chunks:
+            fallback = _grounded_knowledge_answer(user_message, retrieved_chunks)
+        final_answer = fallback or _PROVIDER_UNAVAILABLE_ANSWER
         return {
-            "final_answer": grounded_answer,
-            "action_explanation": "Answered directly from authorized retrieved evidence.",
+            "final_answer": final_answer,
+            "action_explanation": "Provider unavailable; using deterministic fallback.",
             "insufficient_knowledge": False,
-            "messages": [{"role": "assistant", "content": grounded_answer}],
+            "messages": [{"role": "assistant", "content": final_answer}],
         }
+
+    has_untrusted_evidence = any(
+        (chunk.get("metadata") or {}).get("untrusted_evidence") for chunk in retrieved_chunks
+    )
+    if selected_action in (None, "auto_respond") and has_untrusted_evidence:
+        grounded_answer = _grounded_knowledge_answer(user_message, retrieved_chunks)
+        if grounded_answer:
+            return {
+                "final_answer": grounded_answer,
+                "action_explanation": "Answered directly from authorized retrieved evidence.",
+                "insufficient_knowledge": False,
+                "messages": [{"role": "assistant", "content": grounded_answer}],
+            }
 
     early_answer = _fallback_answer_from_action_result(action_result) if selected_action else ""
     if selected_action not in (None, "auto_respond") and (
@@ -533,6 +544,8 @@ async def responder_node(state: GraphState) -> dict:
     except Exception as exc:
         log.error("responder.llm_error", error=exc.__class__.__name__)
         fallback_answer = _fallback_answer_from_action_result(action_result)
+        if not fallback_answer and retrieved_chunks:
+            fallback_answer = _grounded_knowledge_answer(user_message, retrieved_chunks)
         final_answer = fallback_answer or _PROVIDER_UNAVAILABLE_ANSWER
 
     if not final_answer or not final_answer.strip():

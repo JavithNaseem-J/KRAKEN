@@ -11,7 +11,6 @@ from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
 from src.safety.policy_engine import (
     get_policy_engine,
-    is_ticket_status_query,
     should_override_to_auto_respond,
 )
 from src.utils.config import get_settings
@@ -21,31 +20,6 @@ from src.utils.registry import REGISTRY, get_action
 
 log = structlog.get_logger(__name__)
 settings = get_settings()
-
-
-def _ticket_status_fast_path(user_message: str) -> dict[str, Any] | None:
-    if not is_ticket_status_query(user_message):
-        return None
-
-    match = TICKET_ID_REGEX.search(user_message)
-    if not match:
-        return None
-
-    ticket_id = match.group(0).upper()
-    payload = {"ticket_id": ticket_id}
-    return {
-        "selected_action": "get_ticket_status",
-        "selected_actions": [
-            {
-                "action_name": "get_ticket_status",
-                "action_payload": payload,
-                "risk_level": "SAFE",
-            }
-        ],
-        "action_payload": payload,
-        "risk_level": "SAFE",
-        "evidence": f"Read-only ticket status lookup requested for {ticket_id}.",
-    }
 
 
 def _get_available_actions_prompt() -> str:
@@ -72,81 +46,6 @@ class DecisionOutput(BaseModel):
     evidence: str = ""
 
 
-_EMAIL_REGEX = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
-_IPV4_REGEX = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-_CREATE_REQUEST_REGEX = re.compile(
-    r"\b(?:create|open|file|raise|submit)\b.*?"
-    r"\b(?P<priority>low|medium|high|critical)(?:-priority)?\s+"
-    r"(?P<category>[a-z][a-z-]*(?:\s+[a-z][a-z-]*){0,2}?)\s+"
-    r"(?:ticket|request)\s+for\s+(?P<user>.+?)"
-    r"(?=\s+(?:to|about)\b|:|[.!?]?$)",
-    re.IGNORECASE,
-)
-
-
-def _explicit_action_decision(user_message: str) -> DecisionOutput | None:
-    ticket = TICKET_ID_REGEX.search(user_message)
-    email = _EMAIL_REGEX.search(user_message)
-    ip = _IPV4_REGEX.search(user_message)
-    lowered = user_message.lower()
-    action_payload: tuple[str, dict[str, str]] | None = None
-
-    if ticket and re.search(r"\bescalate\b", lowered):
-        action_payload = "escalate", {"ticket_id": ticket.group(0).upper(), "reason": user_message}
-    elif ticket and re.search(r"\bclose\b", lowered):
-        action_payload = "close", {"ticket_id": ticket.group(0).upper(), "reason": user_message}
-    elif ticket and re.search(r"\b(?:request|ask for)\b.{0,40}\b(?:more information|details|information)\b", lowered):
-        action_payload = "request_info", {"ticket_id": ticket.group(0).upper(), "reason": user_message}
-    elif email and re.search(r"\bunlock\b.{0,40}\baccount\b", lowered):
-        action_payload = "unlock_account", {"user_email": email.group(0), "reason": user_message}
-    elif ip and re.search(r"\b(?:quarantine|block|isolate)\b", lowered):
-        action_payload = "quarantine_ip", {"ip": ip.group(0), "reason": user_message}
-    else:
-        request = _CREATE_REQUEST_REGEX.search(user_message)
-        if request:
-            action_payload = "create_ticket", {
-                "user_name": request.group("user").strip(),
-                "category": re.sub(r"[-_]+", " ", request.group("category")).lower(),
-                "priority": request.group("priority").lower(),
-                "description": user_message,
-            }
-
-    if action_payload is None:
-        return None
-    action, payload = action_payload
-    return DecisionOutput(
-        selected_action=action,
-        action_payload=payload,
-        evidence="Explicit operator request.",
-    )
-
-
-def _unsupported_operation_response(user_message: str) -> dict[str, Any] | None:
-    """Refuse operations that have no registered tool implementation."""
-    patterns = (
-        r"\bdisable\b.{0,80}\b(?:demo\s+)?account\b",
-        r"\bisolate\b.{0,80}\b(?:demo\s+)?endpoint\b",
-        r"\b(?:continue|resume)\b.{0,80}\b(?:account\s+disable|endpoint\s+isolation)\b",
-    )
-    if not any(re.search(pattern, user_message, re.IGNORECASE) for pattern in patterns):
-        return None
-    response_text = (
-        "KRAKEN cannot perform that operation because no supported tool is registered for it. "
-        "No action was performed."
-    )
-    evidence = "Unsupported operation was requested."
-    payload = {"ticket_id": None, "response_text": response_text, "evidence": evidence}
-    return {
-        "selected_action": "auto_respond",
-        "selected_actions": [
-            {"action_name": "auto_respond", "action_payload": payload, "risk_level": "SAFE"}
-        ],
-        "action_payload": payload,
-        "risk_level": "SAFE",
-        "evidence": evidence,
-    }
-
-
 async def decider_node(state: GraphState) -> dict:
     """
     Select action + validate risk level against registry.
@@ -159,63 +58,18 @@ async def decider_node(state: GraphState) -> dict:
     operator_role = state.get("operator_role", "end_user")
     reasoning = state.get("reasoning", "No reasoning available.")
 
-    if re.search(
-        r"\brevoke\b.{0,80}\b(?:privileged|administrative|admin)\s+access\b",
-        user_message,
-        re.IGNORECASE,
-    ):
-        response_text = (
-            "KRAKEN cannot revoke privileged access because that operation is not supported "
-            "by an available tool. No action was performed."
-        )
-        payload = {
-            "ticket_id": None,
-            "response_text": response_text,
-            "evidence": "Unsupported privileged-access operation.",
-        }
-
-        return {
-            "selected_action": "auto_respond",
-            "selected_actions": [
-                {
-                    "action_name": "auto_respond",
-                    "action_payload": payload,
-                    "risk_level": "SAFE",
-                }
-            ],
-            "action_payload": payload,
-            "risk_level": "SAFE",
-            "evidence": payload["evidence"],
-        }
-
-    unsupported = _unsupported_operation_response(user_message)
-    if unsupported is not None:
-        return unsupported
-
-    status_lookup = _ticket_status_fast_path(user_message)
-    if status_lookup is not None:
-        log.info("decider.ticket_status_fast_path", session_id=session_id)
-        return status_lookup
-
     human_content = f"User request: {user_message}\n\nAnalysis:\n{reasoning}"
 
     try:
-        decision = _explicit_action_decision(user_message)
-        if decision is None and state.get("retrieved_chunks"):
-            decision = DecisionOutput(
-                selected_action="auto_respond",
-                evidence="Authorized knowledge was retrieved for a read-only response.",
-            )
-        if decision is None:
-            available_actions = _get_available_actions_prompt()
-            system_prompt = get_prompt("decider", "SYSTEM_PROMPT_TEMPLATE").format(
-                available_actions=available_actions
-            )
-            structured_llm = get_llm().with_structured_output(DecisionOutput, method="json_mode")
-            decision = await invoke_llm(
-                structured_llm,
-                [SystemMessage(content=system_prompt), HumanMessage(content=human_content)],
-            )
+        available_actions = _get_available_actions_prompt()
+        system_prompt = get_prompt("decider", "SYSTEM_PROMPT_TEMPLATE").format(
+            available_actions=available_actions
+        )
+        structured_llm = get_llm().with_structured_output(DecisionOutput, method="json_mode")
+        decision = await invoke_llm(
+            structured_llm,
+            [SystemMessage(content=system_prompt), HumanMessage(content=human_content)],
+        )
 
         action_name = decision.selected_action.strip() if decision.selected_action else ""
 
@@ -238,21 +92,27 @@ async def decider_node(state: GraphState) -> dict:
                 is_status_query=is_status_query,
                 query=user_message[:50],
             )
-            if is_status_query:
-                status_lookup = _ticket_status_fast_path(user_message)
-                if status_lookup is not None:
-                    return status_lookup
-            action_name = "auto_respond"
-            actions_to_process = [
-                ActionDecision(
-                    selected_action="auto_respond",
-                    action_payload={
-                        "ticket_id": None,
-                        "response_text": f"Direct response for query: {user_message[:100]}",
-                        "evidence": "Knowledge base verified documentation.",
-                    },
-                )
-            ]
+            ticket_match = TICKET_ID_REGEX.search(user_message)
+            if is_status_query and ticket_match:
+                action_name = "get_ticket_status"
+                actions_to_process = [
+                    ActionDecision(
+                        selected_action="get_ticket_status",
+                        action_payload={"ticket_id": ticket_match.group(0).upper()},
+                    )
+                ]
+            else:
+                action_name = "auto_respond"
+                actions_to_process = [
+                    ActionDecision(
+                        selected_action="auto_respond",
+                        action_payload={
+                            "ticket_id": None,
+                            "response_text": f"Direct response for query: {user_message[:100]}",
+                            "evidence": "Knowledge base verified documentation.",
+                        },
+                    )
+                ]
 
         verified_actions: list[dict[str, Any]] = []
         highest_risk: str = "SAFE"
@@ -261,7 +121,9 @@ async def decider_node(state: GraphState) -> dict:
             act_payload: dict[str, Any]
             if isinstance(act, ActionDecision):
                 act_name = act.selected_action.strip() if act.selected_action else ""
-                act_payload = dict(act.action_payload) if isinstance(act.action_payload, dict) else {}
+                act_payload = (
+                    dict(act.action_payload) if isinstance(act.action_payload, dict) else {}
+                )
             elif isinstance(act, dict):
                 act_name = str(act.get("action_name") or act.get("selected_action") or "").strip()
                 raw_payload = act.get("action_payload")
@@ -313,7 +175,8 @@ async def decider_node(state: GraphState) -> dict:
                 if act_risk == "CRITICAL":
                     highest_risk = "CRITICAL"
                 payload = dict(act_payload)
-                payload["evidence"] = str(decision.evidence) if decision.evidence else ""
+                if "evidence" in act_def.parameter_schema:
+                    payload["evidence"] = str(decision.evidence) if decision.evidence else ""
                 verified_actions.append(
                     {
                         "action_name": act_name,
@@ -356,10 +219,6 @@ async def decider_node(state: GraphState) -> dict:
 
     except Exception as exc:
         log.error("decider.error", session_id=session_id, error=exc.__class__.__name__)
-        read_only_fallback = _ticket_status_fast_path(user_message)
-        if read_only_fallback is not None:
-            log.info("decider.provider_failure_ticket_fallback", session_id=session_id)
-            return read_only_fallback
         return {
             "selected_action": None,
             "action_payload": None,

@@ -115,7 +115,7 @@ def should_override_to_auto_respond(user_message: str, proposed_action: str) -> 
         return False, False
 
     normalized_message = re.sub(r"[^a-z0-9]+", " ", user_message.lower()).strip()
-    is_status_query = is_ticket_status_query(normalized_message)
+    is_status_query = is_ticket_status_query(user_message)
     has_explicit_intent = any(phrase in normalized_message for phrase in intent_phrases)
     if proposed_action == "create_ticket":
         has_explicit_intent = has_explicit_intent or bool(

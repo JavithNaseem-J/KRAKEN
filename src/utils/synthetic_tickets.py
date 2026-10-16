@@ -12,7 +12,11 @@ from src.utils.config import Settings, get_settings
 from src.utils.exceptions import ActionExecutionError
 
 _SEED_FILE = (
-    Path(__file__).resolve().parents[2] / "data" / "knowledge" / "tickets" / "synthetic_tickets.json"
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "knowledge"
+    / "tickets"
+    / "synthetic_tickets.json"
 )
 
 

@@ -257,12 +257,8 @@ class KnowledgeRetriever:
         source_values = [s.value for s in request.sources]
         access_conditions = [
             FieldCondition(key="source", match=MatchAny(any=source_values)),
-            FieldCondition(
-                key="scope", match=MatchAny(any=["shared", request.session_id])
-            ),
-            FieldCondition(
-                key="allowed_roles", match=MatchAny(any=["public", request.user_role])
-            ),
+            FieldCondition(key="scope", match=MatchAny(any=["shared", request.session_id])),
+            FieldCondition(key="allowed_roles", match=MatchAny(any=["public", request.user_role])),
             *active_generation_conditions(
                 settings.knowledge_collection_version, settings.synthetic_dataset_generation
             ),

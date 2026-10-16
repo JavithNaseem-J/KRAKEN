@@ -8,6 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from src.agent.state import GraphState
 from src.prompts.registry import get_prompt
+from src.utils.constants import TICKET_ID_REGEX
 from src.utils.llm import get_llm, invoke_llm
 
 log = structlog.get_logger(__name__)
@@ -58,16 +59,7 @@ async def reasoner_node(state: GraphState) -> dict:
     # pyrefly: ignore [bad-argument-type]
     chunks_text, has_valid_chunks = _format_chunks(retrieved_chunks, threshold=0.40)
 
-    if has_valid_chunks:
-        return {
-            "reasoning": (
-                f"Authorized evidence was retrieved in {len(retrieved_chunks)} chunk(s). "
-                "Use the retrieved text directly and preserve its facts."
-            ),
-            "insufficient_knowledge": False,
-        }
-
-    operational_intent = any(
+    operational_intent = bool(TICKET_ID_REGEX.search(user_message)) or any(
         term in user_message.lower()
         for term in (
             "create ticket",
@@ -76,6 +68,7 @@ async def reasoner_node(state: GraphState) -> dict:
             "escalate",
             "unlock",
             "quarantine",
+            "status",
         )
     )
     if not has_valid_chunks and not operational_intent:

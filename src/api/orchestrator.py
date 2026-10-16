@@ -937,14 +937,18 @@ async def run_stream(body: QueryRequest) -> StreamingResponse:
                 response = _build_response(body.session_id, snapshot.values)
                 if not first_delta_emitted and response.answer:
                     first_delta_emitted = True
-                    yield "data: " + json.dumps(
-                        {
-                            "node": "responder",
-                            "status": "delta",
-                            "content": response.answer,
-                            "elapsed_ms": round((time.monotonic() - start) * 1000),
-                        }
-                    ) + "\n\n"
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {
+                                "node": "responder",
+                                "status": "delta",
+                                "content": response.answer,
+                                "elapsed_ms": round((time.monotonic() - start) * 1000),
+                            }
+                        )
+                        + "\n\n"
+                    )
                 _schedule_background_task(
                     _semantic_cache_store(body, response, cache_query_value, cache_scope),
                     task_name=f"semantic-cache-store:{body.session_id}",
