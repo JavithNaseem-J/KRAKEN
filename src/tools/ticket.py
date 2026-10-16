@@ -450,6 +450,64 @@ def execute_create_ticket(
     }
 
 
+_in_memory_quarantined_ips: set[str] = set()
+_in_memory_unlocked_accounts: set[str] = set()
+_security_redis = None
+
+
+def _get_security_redis():
+    global _security_redis
+    if _security_redis is not None:
+        return _security_redis
+    from src.utils.config import get_settings
+
+    settings = get_settings()
+    if settings.redis_url:
+        try:
+            import redis
+
+            _security_redis = redis.Redis.from_url(
+                settings.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=2,
+            )
+        except Exception:
+            _security_redis = None
+    return _security_redis
+
+
+def get_synthetic_quarantined_ips(generation: str | None = None) -> set[str]:
+    """Retrieve the set of quarantined IPs recorded in the synthetic store."""
+    from src.utils.config import get_settings
+
+    gen = generation or get_settings().synthetic_dataset_generation
+    r = _get_security_redis()
+    if r is not None:
+        try:
+            members = r.smembers(f"kraken:{gen}:synthetic:quarantined_ips")
+            if members:
+                return set(members)
+        except Exception:
+            pass
+    return set(_in_memory_quarantined_ips)
+
+
+def get_synthetic_unlocked_accounts(generation: str | None = None) -> set[str]:
+    """Retrieve the set of unlocked accounts recorded in the synthetic store."""
+    from src.utils.config import get_settings
+
+    gen = generation or get_settings().synthetic_dataset_generation
+    r = _get_security_redis()
+    if r is not None:
+        try:
+            members = r.smembers(f"kraken:{gen}:synthetic:unlocked_accounts")
+            if members:
+                return set(members)
+        except Exception:
+            pass
+    return set(_in_memory_unlocked_accounts)
+
+
 def quarantine_ip_handler(
     ip: str, reason: str | None = None, evidence: str | None = None
 ) -> dict[str, Any]:
@@ -465,7 +523,30 @@ def quarantine_ip_handler(
     timestamp = datetime.now(UTC).isoformat()
     from src.utils.config import get_settings
 
-    generation = get_settings().synthetic_dataset_generation
+    settings = get_settings()
+    generation = settings.synthetic_dataset_generation
+
+    if clean_ip:
+        _in_memory_quarantined_ips.add(clean_ip)
+        r = _get_security_redis()
+        if r is not None:
+            try:
+                r.sadd(f"kraken:{generation}:synthetic:quarantined_ips", clean_ip)
+                r.hset(
+                    f"kraken:{generation}:synthetic:quarantine_records",
+                    clean_ip,
+                    json.dumps(
+                        {
+                            "ip": clean_ip,
+                            "reason": clean_reason,
+                            "job_id": job_id,
+                            "transaction_id": tx_id,
+                            "quarantined_at": timestamp,
+                        }
+                    ),
+                )
+            except Exception as exc:
+                log.warning("action.quarantine_ip.redis_error", error=str(exc))
 
     log.info("action.quarantine_ip_dry_run", ip=clean_ip, reason=clean_reason, job_id=job_id)
     return {
@@ -511,7 +592,29 @@ def unlock_account_handler(
     timestamp = datetime.now(UTC).isoformat()
     from src.utils.config import get_settings
 
-    generation = get_settings().synthetic_dataset_generation
+    settings = get_settings()
+    generation = settings.synthetic_dataset_generation
+
+    if clean_email:
+        _in_memory_unlocked_accounts.add(clean_email)
+        r = _get_security_redis()
+        if r is not None:
+            try:
+                r.sadd(f"kraken:{generation}:synthetic:unlocked_accounts", clean_email)
+                r.hset(
+                    f"kraken:{generation}:synthetic:unlock_records",
+                    clean_email,
+                    json.dumps(
+                        {
+                            "user_email": clean_email,
+                            "reason": clean_reason,
+                            "transaction_id": tx_id,
+                            "unlocked_at": timestamp,
+                        }
+                    ),
+                )
+            except Exception as exc:
+                log.warning("action.unlock_account.redis_error", error=str(exc))
 
     log.info(
         "action.unlock_account_dry_run", user_email=clean_email, reason=clean_reason, tx_id=tx_id

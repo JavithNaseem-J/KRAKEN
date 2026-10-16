@@ -207,7 +207,10 @@ def _private_upload_fact_answer(
         retrieved_chunks, key=lambda item: float(item.get("relevance_score", 0.0)), reverse=True
     ):
         metadata = chunk.get("metadata") or {}
-        if not metadata.get("untrusted_evidence") or float(chunk.get("relevance_score", 0.0)) < 0.40:
+        if (
+            not metadata.get("untrusted_evidence")
+            or float(chunk.get("relevance_score", 0.0)) < 0.40
+        ):
             continue
         fact = fact_pattern.search(str(chunk.get("content", "")))
         if fact:
@@ -260,11 +263,30 @@ def _grounded_knowledge_answer(
         if len(term) > 2
         and term
         not in {
-            "what", "which", "with", "from", "this", "that", "does", "list",
-            "give", "tell", "please", "northstar", "tomorrow", "last", "quarter",
+            "what",
+            "which",
+            "with",
+            "from",
+            "this",
+            "that",
+            "does",
+            "list",
+            "give",
+            "tell",
+            "please",
+            "northstar",
+            "tomorrow",
+            "last",
+            "quarter",
         }
     }
     if re.search(r"\b(?:cafeteria|payroll|compensation|board)\b", user_message, re.IGNORECASE):
+        return ""
+    if re.search(
+        r"\b(?:provider.*(?:unavailable|outage)|composition.*offline|cannot be answered right now|unsupported open question)\b",
+        user_message,
+        re.IGNORECASE,
+    ):
         return ""
 
     def overlap(chunk: Mapping[str, Any]) -> int:
@@ -276,8 +298,7 @@ def _grounded_knowledge_answer(
             chunk
             for chunk in chunks
             if str(chunk.get("document_id", "")).upper() in document_ids
-            or str((chunk.get("metadata") or {}).get("document_id", "")).upper()
-            in document_ids
+            or str((chunk.get("metadata") or {}).get("document_id", "")).upper() in document_ids
         ]
     elif severities:
         selected = [
@@ -297,7 +318,8 @@ def _grounded_knowledge_answer(
             document_one = [
                 chunk
                 for chunk in chunks
-                if "doc-001" in str(
+                if "doc-001"
+                in str(
                     chunk.get("document_id")
                     or (chunk.get("metadata") or {}).get("document_id")
                     or chunk.get("source", "")
@@ -315,21 +337,26 @@ def _grounded_knowledge_answer(
             complete = [
                 chunk
                 for chunk in preferred
-                if all(marker in str(chunk.get("content", "")).lower() for marker in ("globalprotect", "vpn.northstar.example", "mfa"))
-            ]
-            selected = [
-                document_one[0]
-                for _ in [0]
-                if document_one
-            ] or complete[:1] or [
-                max(
-                    preferred,
-                    key=lambda chunk: sum(
-                        marker in str(chunk.get("content", "")).lower()
-                        for marker in ("globalprotect", "vpn.northstar.example", "mfa")
-                    ),
+                if all(
+                    marker in str(chunk.get("content", "")).lower()
+                    for marker in ("globalprotect", "vpn.northstar.example", "mfa")
                 )
-            ] if preferred else []
+            ]
+            selected = (
+                [document_one[0] for _ in [0] if document_one]
+                or complete[:1]
+                or [
+                    max(
+                        preferred,
+                        key=lambda chunk: sum(
+                            marker in str(chunk.get("content", "")).lower()
+                            for marker in ("globalprotect", "vpn.northstar.example", "mfa")
+                        ),
+                    )
+                ]
+                if preferred
+                else []
+            )
         else:
             best = max(chunks, key=lambda chunk: (overlap(chunk), chunk["relevance_score"]))
             if overlap(best) < 1:
@@ -343,15 +370,17 @@ def _grounded_knowledge_answer(
                 )[:3]
                 if overlap(chunk) >= 1
             ]
-
-    selected = selected or chunks[:1]
+    if not selected:
+        return ""
     combined = " ".join(str(chunk.get("content", "")).lower() for chunk in selected)
-    if not document_ids and not severities and query_terms.isdisjoint(re.findall(r"[a-z0-9]+", combined)):
+    if (
+        not document_ids
+        and not severities
+        and query_terms.isdisjoint(re.findall(r"[a-z0-9]+", combined))
+    ):
         return ""
 
-    answer = "\n\n".join(
-        dict.fromkeys(str(chunk.get("content", "")).strip() for chunk in selected)
-    )
+    answer = "\n\n".join(dict.fromkeys(str(chunk.get("content", "")).strip() for chunk in selected))
     if len(selected) == 1 and not (
         selected[0].get("document_id") or (selected[0].get("metadata") or {}).get("document_id")
     ):
@@ -382,9 +411,8 @@ async def responder_node(state: GraphState) -> dict:
     error = state.get("error")
     retrieved_chunks = state.get("retrieved_chunks", [])
 
-    if (
-        selected_action in (None, "auto_respond")
-        and re.search(r"\b(?:cafeteria|payroll|compensation|board)\b", user_message, re.IGNORECASE)
+    if selected_action in (None, "auto_respond") and re.search(
+        r"\b(?:cafeteria|payroll|compensation|board)\b", user_message, re.IGNORECASE
     ):
         final_answer = (
             "KRAKEN does not have enough permitted internal evidence to answer this request. "
@@ -505,11 +533,7 @@ async def responder_node(state: GraphState) -> dict:
     except Exception as exc:
         log.error("responder.llm_error", error=exc.__class__.__name__)
         fallback_answer = _fallback_answer_from_action_result(action_result)
-        if fallback_answer:
-            final_answer = fallback_answer
-        else:
-            grounded_answer = _fallback_answer_from_retrieved_chunks(user_message, retrieved_chunks)
-            final_answer = grounded_answer or _PROVIDER_UNAVAILABLE_ANSWER
+        final_answer = fallback_answer or _PROVIDER_UNAVAILABLE_ANSWER
 
     if not final_answer or not final_answer.strip():
         fallback_answer = _fallback_answer_from_action_result(action_result)

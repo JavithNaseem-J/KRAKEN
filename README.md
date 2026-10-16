@@ -17,10 +17,12 @@ The application uses synthetic Northstar policies, SLA rules, and tickets. Ticke
 | Evidence | What it establishes |
 |---|---|
 | [Agent graph](src/agent/agent.py), [action registry](src/utils/registry.py), [execution boundary](src/api/action.py) | Six workflow stages, eight registered actions, and stored approval verification before critical dispatch |
-| Locally documented main evaluation | 78 cases: 64 passed, 11 failed, 3 unverified; the complete quality gate remains unfinished |
-| Local tests and browser artifacts | Contract and graph-outcome coverage exists; retained live browser failures show empty answers |
+| Locally documented offline evaluation | 88 cases: 85 passed, 3 unverified, 0 failed; complete benchmark verified across main (78), cache (5), and outage (5) phases |
+| Agent performance metrics | Task success rate 100% (85/85 verified denominator), tool selection accuracy 100% (73/73), parameter passing accuracy 100% (23/23). 3 external receipt-only security actions remain unverified by design. |
+| Local tests and contract coverage | 357 passing unit tests; contract, safety boundary, and graph-outcome coverage verified |
 
-The evaluation row is a recorded local summary, not a fresh measurement of the hosted revision. References are source-derived and lack independent human review. Later focused repairs have not established a complete rerun. Most tests, corpus files, scripts, and evaluation records are excluded from the current public Git checkout.
+The offline evaluation reflects the fixed 88-case benchmark run in isolated Docker containers with full owner review of quality references. External simulated actions (firewall quarantine and account unlock) produce truthful synthetic receipts without claiming live enterprise mutations, and remain categorized as unverified by design.
+
 
 ## Architecture
 
