@@ -14,12 +14,6 @@ The application uses synthetic Northstar policies, SLA rules, and tickets. Ticke
 
 ## Evidence
 
-| Evidence | What it establishes |
-|---|---|
-| [Agent graph](src/agent/agent.py), [action registry](src/utils/registry.py), [execution boundary](src/api/action.py) | Six workflow stages, eight registered actions, and stored approval verification before critical dispatch |
-| Locally documented offline evaluation | 78 main benchmark cases: 66 passed, 12 failed, 0 unverified; authentic model decision routing and execution verified |
-| Local tests and contract coverage | 358 passing unit tests; contract, safety boundary, and graph-outcome coverage verified |
-
 ### Agent decision and execution
 
 | Metric | Score |
@@ -31,7 +25,6 @@ The application uses synthetic Northstar policies, SLA rules, and tickets. Ticke
 | Prompt injection refusal | 80.00% |
 | Provider outage fallback | 100.00% |
 
-These scores evaluate the 78-case offline evaluation benchmark with genuine LLM routing (Cerebras `gpt-oss-120b`) and verified state transitions. Tool selection achieves 100.00% (63/63 eligible actions), parameter passing is 95.65% (22/23), and tool execution confirms 100.00% (61/61) persisted state in Redis and PostgreSQL without artificial shortcuts or deterministic regex bypasses. Task success rate reflects 66 passes out of 78 total cases (84.62%). The 12 authentic failures stem from strict literal substring matching on natural conversational phrasing (7 cases), minor extraction differences (2 cases), session TTL drift (2 cases), and one prompt-injection refusal.
 
 ### Knowledge retrieval and ranking
 
@@ -42,7 +35,6 @@ These scores evaluate the 78-case offline evaluation benchmark with genuine LLM 
 | Mean Reciprocal Rank (MRR) | 88.21% |
 | NDCG@5 | 89.33% |
 
-These ranking scores evaluate 28 eligible FAQ and SLA knowledge queries against reviewer-approved passage references at K=5. Precision@5 reflects a fixed five-slot denominator where queries typically match only one or two authoritative passages in the synthetic corpus. MRR confirms that the primary relevant document is positioned at the top rank in over 90% of queries.
 
 ### RAG answer quality (RAGAS)
 
@@ -50,9 +42,6 @@ These ranking scores evaluate 28 eligible FAQ and SLA knowledge queries against 
 |---|---|
 | Faithfulness | 78.46% |
 | Context recall | 89.29% |
-
-These metrics evaluate generative synthesis using the Cerebras `gpt-oss-120b` judge model across 28 evaluated knowledge cases against reviewed reference answers. Unlike static verbatim excerpt returns, answers are dynamically synthesized by the LLM from retrieved context. Faithfulness (78.46%) reflects authentic generation adherence to retrieved facts, while Context recall (89.29%) measures how completely retrieved chunks cover the required information.
-
 
 
 ## Architecture
